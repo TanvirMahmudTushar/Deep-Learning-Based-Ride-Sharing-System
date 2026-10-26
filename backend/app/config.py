@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     use_geocoding: bool = True
     nominatim_url: str = "https://nominatim.openstreetmap.org"
     # Nominatim's usage policy requires an identifying User-Agent; add a contact email if you deploy.
-    geocoder_user_agent: str = "DeepRide/0.2 (ride-sharing research prototype)"
+    geocoder_user_agent: str = "Cholo/0.2 (ride-sharing research prototype)"
     geocoder_email: str | None = None
     city_lat: float = 23.8103
     city_lng: float = 90.4125
