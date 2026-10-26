@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "DeepRide",
+  title: "Cholo",
   description: "Deep learning–driven ride-sharing for Dhaka: bike, CNG and car rides with predictive matching, ETAs and safety alerts.",
 };
 

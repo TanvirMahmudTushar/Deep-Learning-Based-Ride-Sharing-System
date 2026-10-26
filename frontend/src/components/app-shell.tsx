@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, type ReactNode } from "react";
-import { Bell, BellOff, BellRing, LogOut, Route } from "lucide-react";
+import { LottieSvg } from "lottie-react";
+import { Bell, BellOff, BellRing, LogOut } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import logoAnimation from "@/assets/cholo-logo.json";
 import { useNotificationPermission } from "@/lib/notifications";
 import { useRealtime } from "@/lib/realtime";
 import { clearSession, homeFor, useSession } from "@/lib/session";
@@ -28,10 +30,10 @@ const PORTAL_NAME: Record<Role, string> = { user: "Passenger", rider: "Rider", a
 export function Brand() {
   return (
     <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight">
-      <span className="grid size-7 place-items-center rounded-lg bg-primary text-primary-foreground">
-        <Route className="size-4" />
+      <span className="block h-9 w-16 shrink-0 overflow-hidden">
+        <LottieSvg src={logoAnimation} autoplay loop aria-hidden style={{ width: "100%", height: "100%" }} />
       </span>
-      DeepRide
+      Cholo
     </Link>
   );
 }
