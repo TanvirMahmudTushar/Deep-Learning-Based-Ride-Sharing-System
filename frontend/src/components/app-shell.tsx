@@ -27,7 +27,7 @@ import { clearSession, homeFor, useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
 import type { Profile, Role } from "@/lib/types";
 
-const PORTAL_NAME: Record<Role, string> = { user: "Passenger", rider: "Rider", admin: "Admin" };
+const PORTAL_NAME: Record<Role, string> = { user: "Passenger", rider: "Rider", admin: "Admin", support: "Support agent" };
 
 export function Logo({ className }: { className?: string }) {
   return (
@@ -217,8 +217,12 @@ export function PortalShell({
         {nav && <PortalNav items={nav} />}
         <div className="ml-auto flex items-center gap-2">
           {actions}
-          <LiveIndicator />
-          <NotificationButton />
+          {role !== "support" && (
+            <>
+              <LiveIndicator />
+              <NotificationButton />
+            </>
+          )}
           <UserMenu profile={profile} />
         </div>
       </header>

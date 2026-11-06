@@ -51,3 +51,8 @@ def rider_h(client):
 @pytest.fixture(scope="session")
 def admin_h(client):
     return login(client, "admin@ride.local", "admin123")
+
+
+@pytest.fixture(scope="session")
+def support_h(client):
+    return login(client, "support@ride.local", "support123")
