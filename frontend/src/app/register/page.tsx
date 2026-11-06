@@ -19,9 +19,11 @@ import { VEHICLE_LABEL } from "@/lib/format";
 import { saveSession } from "@/lib/session";
 import type { AuthResponse, VehicleType } from "@/lib/types";
 
+type SignupRole = "user" | "rider" | "support";
+
 function RegisterForm() {
   const as = useSearchParams().get("as");
-  const [role, setRole] = useState<"user" | "rider">(as === "rider" ? "rider" : "user");
+  const [role, setRole] = useState<SignupRole>(as === "rider" || as === "support" ? as : "user");
   const [vehicleType, setVehicleType] = useState<VehicleType>("bike");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -60,13 +62,14 @@ function RegisterForm() {
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle className="text-xl">Create an account</CardTitle>
-          <CardDescription>Riders are reviewed by an admin before they can go online.</CardDescription>
+          <CardDescription>An admin reviews riders and support agents before they can start.</CardDescription>
         </CardHeader>
         <CardContent>
-          <Tabs value={role} onValueChange={(v) => setRole(v as "user" | "rider")} className="mb-5">
-            <TabsList className="grid w-full grid-cols-2">
+          <Tabs value={role} onValueChange={(v) => setRole(v as SignupRole)} className="mb-5">
+            <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="user">I need rides</TabsTrigger>
               <TabsTrigger value="rider">I want to drive</TabsTrigger>
+              <TabsTrigger value="support">Support staff</TabsTrigger>
             </TabsList>
           </Tabs>
           <form onSubmit={onSubmit} className="space-y-4">
@@ -94,6 +97,10 @@ function RegisterForm() {
               <Input id="password" name="password" type="password" required minLength={PASSWORD_MIN_LENGTH} maxLength={72} autoComplete="new-password" />
               <p className="text-xs text-muted-foreground">At least {PASSWORD_MIN_LENGTH} characters.</p>
             </div>
+
+            {role === "support" && (
+              <p className="rounded-lg border p-3 text-sm text-muted-foreground">You can log in straight away, but you won&apos;t see any trips or reports until an admin approves your account.</p>
+            )}
 
             {role === "rider" && (
               <div className="space-y-4 rounded-lg border p-4">

@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
 
 from app.models import Profile, Rider, Vehicle
+from app.realtime import ADMINS, emit
 from app.schemas import AuthOut, LoginIn, PasswordChangeIn, ProfileOut, ProfileUpdateIn, RegisterIn
 from app.security import DB, CurrentUser, create_token, hash_password, verify_password
 from app.services import login_throttle
@@ -10,7 +11,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 def profile_out(p: Profile) -> ProfileOut:
-    return ProfileOut(id=p.id, full_name=p.full_name, email=p.email, phone=p.phone, role=p.role)
+    return ProfileOut(id=p.id, full_name=p.full_name, email=p.email, phone=p.phone, role=p.role, approval_status=p.approval_status)
 
 
 @router.post("/register", response_model=AuthOut, status_code=status.HTTP_201_CREATED)
@@ -27,9 +28,13 @@ def register(body: RegisterIn, db: DB):
         phone=body.phone.strip(),
         password_hash=hash_password(body.password),
         role=body.role,
+        # Support agents can see other people's trips, so they get no access until an admin approves them.
+        approval_status="pending" if body.role == "support" else None,
     )
     db.add(profile)
     db.flush()
+    if body.role == "support":
+        emit(db, ADMINS, "support.changed", notify=("New support agent", f"{profile.full_name} is waiting for approval."))
     if body.role == "rider":
         rider = Rider(profile_id=profile.id, license_no=body.license_no.strip(), status="pending")
         db.add(rider)

@@ -108,7 +108,7 @@ export function useSession(): SessionState {
 }
 
 export function homeFor(role: Profile["role"]) {
-  return role === "admin" ? "/admin" : role === "rider" ? "/rider" : "/user";
+  return role === "admin" ? "/admin" : role === "rider" ? "/rider" : role === "support" ? "/support" : "/user";
 }
 
 /** Where to go after logging in: back to the page that asked for it, if it's in this role's portal. */

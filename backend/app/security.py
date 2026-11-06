@@ -76,6 +76,15 @@ def require_role(*roles: str):
     return dep
 
 
+def require_staff(user: Annotated[Profile, Depends(current_user)]) -> Profile:
+    """Admins, and support agents an admin has approved. Checked on every request, so removing access is immediate."""
+    if user.role == "admin" or (user.role == "support" and user.approval_status == "approved"):
+        return user
+    if user.role == "support":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Your support account is waiting for admin approval")
+    raise HTTPException(status.HTTP_403_FORBIDDEN, "This action needs the admin or support role")
+
+
 def current_rider(
     user: Annotated[Profile, Depends(require_role("rider"))],
     db: Annotated[Session, Depends(get_db)],
@@ -90,4 +99,5 @@ DB = Annotated[Session, Depends(get_db)]
 CurrentUser = Annotated[Profile, Depends(current_user)]
 Passenger = Annotated[Profile, Depends(require_role("user"))]
 Admin = Annotated[Profile, Depends(require_role("admin"))]
+Staff = Annotated[Profile, Depends(require_staff)]
 CurrentRider = Annotated[Rider, Depends(current_rider)]

@@ -30,6 +30,7 @@ const EVENT_KEYS: Record<string, string[]> = {
   "profile.updated": ["/api/rider/me", "/api/rider/documents"],
   "earnings.updated": ["/api/rider/earnings", "/api/rider/me"],
   "payments.changed": ["/api/admin/payments", "/api/admin/stats"],
+  "support.changed": ["/api/admin/support-agents", "/api/admin/stats"],
 };
 
 /** Events worth a sound even when the tab is visible. */
@@ -54,7 +55,8 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
   const session = useSession();
   const { mutate } = useSWRConfig();
   const [connected, setConnected] = useState(false);
-  const profileId = session.status === "authenticated" ? session.profile.id : null;
+  // Support agents get no events (they go to admins only), so their pages keep polling at the fast rate.
+  const profileId = session.status === "authenticated" && session.profile.role !== "support" ? session.profile.id : null;
 
   useEffect(() => {
     if (!profileId) return;
