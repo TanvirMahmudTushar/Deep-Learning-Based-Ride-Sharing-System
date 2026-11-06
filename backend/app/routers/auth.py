@@ -1,9 +1,10 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
 
 from app.models import Profile, Rider, Vehicle
 from app.schemas import AuthOut, LoginIn, PasswordChangeIn, ProfileOut, ProfileUpdateIn, RegisterIn
 from app.security import DB, CurrentUser, create_token, hash_password, verify_password
+from app.services import login_throttle
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -39,10 +40,22 @@ def register(body: RegisterIn, db: DB):
 
 
 @router.post("/login", response_model=AuthOut)
-def login(body: LoginIn, db: DB):
-    profile = db.scalar(select(Profile).where(Profile.email == body.email.strip().lower()))
+def login(body: LoginIn, request: Request, db: DB):
+    email = body.email.strip().lower()
+    ip = request.client.host if request.client else "unknown"
+    wait = login_throttle.retry_after(email, ip)
+    if wait:
+        minutes = max(1, round(wait / 60))
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            f"Too many failed attempts. Try again in about {minutes} minute{'s' if minutes != 1 else ''}.",
+            headers={"Retry-After": str(wait)},
+        )
+    profile = db.scalar(select(Profile).where(Profile.email == email))
     if profile is None or not verify_password(body.password, profile.password_hash):
+        login_throttle.record_failure(email, ip)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong email or password")
+    login_throttle.clear(email, ip)
     return AuthOut(token=create_token(profile), profile=profile_out(profile))
 
 
@@ -59,9 +72,11 @@ def update_me(body: ProfileUpdateIn, user: CurrentUser, db: DB):
     return profile_out(user)
 
 
-@router.post("/password", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/password", response_model=AuthOut)
 def change_password(body: PasswordChangeIn, user: CurrentUser, db: DB):
     if not verify_password(body.current_password, user.password_hash):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Current password is wrong")
     user.password_hash = hash_password(body.new_password)
     db.commit()
+    # Older tokens stop working now; this one keeps the current device logged in.
+    return AuthOut(token=create_token(user), profile=profile_out(user))

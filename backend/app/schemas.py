@@ -1,7 +1,8 @@
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, PlainSerializer
+from pydantic import AfterValidator, BaseModel, Field, PlainSerializer
+from pydantic_core import PydanticCustomError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -25,11 +26,21 @@ class LatLng(BaseModel):
 # --- auth ---------------------------------------------------------------------------------
 
 
+def _fits_bcrypt(password: str) -> str:
+    # bcrypt's limit is in bytes, so a 72-character password in Bangla, say, can still be too long.
+    if len(password.encode()) > 72:
+        raise PydanticCustomError("password_too_long", "Password is too long. Use fewer characters.")
+    return password
+
+
+NewPassword = Annotated[str, Field(min_length=8, max_length=72), AfterValidator(_fits_bcrypt)]
+
+
 class RegisterIn(BaseModel):
     full_name: str = Field(min_length=2, max_length=120)
     email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=160)
     phone: str = Field(min_length=6, max_length=32)
-    password: str = Field(min_length=6, max_length=72)
+    password: NewPassword
     role: Literal["user", "rider"] = "user"
     license_no: str | None = Field(default=None, max_length=40)
     vehicle_type: VehicleType | None = None
@@ -280,7 +291,7 @@ class ProfileUpdateIn(BaseModel):
 
 class PasswordChangeIn(BaseModel):
     current_password: str
-    new_password: str = Field(min_length=6, max_length=72)
+    new_password: NewPassword
 
 
 # --- rider portal ---------------------------------------------------------------------------
