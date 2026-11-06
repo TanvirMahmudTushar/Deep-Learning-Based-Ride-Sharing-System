@@ -1,7 +1,9 @@
-from pydantic import field_validator
+import secrets
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-DEFAULT_JWT_SECRET = "dev-only-secret-change-me-in-production-0000"
+# The old built-in default. It is public in the repo's history, so tokens signed with it could be forged.
+_PUBLISHED_JWT_SECRET = "dev-only-secret-change-me-in-production-0000"
 
 
 class Settings(BaseSettings):
@@ -9,8 +11,12 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=("../.env", ".env"), extra="ignore")
 
     database_url: str = "sqlite:///./ridesharing.db"
-    jwt_secret: str = DEFAULT_JWT_SECRET
+    jwt_secret: str = ""
+    jwt_secret_generated: bool = False
     jwt_expire_minutes: int = 60 * 24
+    # Failed logins for one email from one address before it is locked out for a while.
+    login_max_failures: int = 5
+    login_lockout_minutes: int = 15
     cors_origins: list[str] = []
     # Any localhost port by default, so the frontend works whichever port `next dev` picks.
     cors_origin_regex: str | None = r"http://(localhost|127\.0\.0\.1)(:\d+)?"
@@ -65,11 +71,12 @@ class Settings(BaseSettings):
     upload_dir: str = "./uploads"
     max_upload_mb: float = 5.0
 
-    @field_validator("jwt_secret", mode="before")
-    @classmethod
-    def _blank_jwt_secret(cls, v: str | None) -> str:
-        # A blank JWT_SECRET= (as in .env.example) means "not set".
-        return v or DEFAULT_JWT_SECRET
+    def model_post_init(self, _context: object) -> None:
+        # Without a real secret, sign with a random one: everyone is logged out on restart, but
+        # nobody can forge a token. A blank JWT_SECRET= (as in .env.example) means "not set".
+        self.jwt_secret_generated = self.jwt_secret in ("", _PUBLISHED_JWT_SECRET)
+        if self.jwt_secret_generated:
+            self.jwt_secret = secrets.token_urlsafe(48)
 
     @property
     def simulator_enabled(self) -> bool:

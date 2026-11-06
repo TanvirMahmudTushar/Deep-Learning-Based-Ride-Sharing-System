@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 from datetime import timedelta
 from typing import Annotated
 
@@ -25,8 +27,18 @@ def verify_password(password: str, hashed: str) -> bool:
         return False
 
 
+def _password_stamp(profile: Profile) -> str:
+    """Changes whenever the password does, so changing it signs out every older token."""
+    return hmac.new(settings.jwt_secret.encode(), profile.password_hash.encode(), hashlib.sha256).hexdigest()[:16]
+
+
 def create_token(profile: Profile) -> str:
-    payload = {"sub": profile.id, "role": profile.role, "exp": utcnow() + timedelta(minutes=settings.jwt_expire_minutes)}
+    payload = {
+        "sub": profile.id,
+        "role": profile.role,
+        "pwd": _password_stamp(profile),
+        "exp": utcnow() + timedelta(minutes=settings.jwt_expire_minutes),
+    }
     return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
 
 
@@ -37,7 +49,10 @@ def profile_from_token(db: Session, token: str | None) -> Profile | None:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
     except jwt.PyJWTError:
         return None
-    return db.get(Profile, payload.get("sub"))
+    profile = db.get(Profile, payload.get("sub"))
+    if profile is None or not hmac.compare_digest(str(payload.get("pwd")), _password_stamp(profile)):
+        return None
+    return profile
 
 
 def current_user(
@@ -46,13 +61,9 @@ def current_user(
 ) -> Profile:
     if creds is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
-    try:
-        payload = jwt.decode(creds.credentials, settings.jwt_secret, algorithms=["HS256"])
-    except jwt.PyJWTError:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token")
-    profile = db.get(Profile, payload.get("sub"))
+    profile = profile_from_token(db, creds.credentials)
     if profile is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account not found")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token")
     return profile
 
 

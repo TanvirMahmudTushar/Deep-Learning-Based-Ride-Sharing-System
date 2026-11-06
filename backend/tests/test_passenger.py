@@ -95,7 +95,7 @@ def test_profile_and_password(client):
     updated = client.patch("/api/auth/me", headers=h, json={"full_name": "Account Tester", "phone": "+8801722222222"}).json()
     assert updated["full_name"] == "Account Tester"
     assert client.post("/api/auth/password", headers=h, json={"current_password": "wrong", "new_password": "second-pass"}).status_code == 400
-    assert client.post("/api/auth/password", headers=h, json={"current_password": "first-pass", "new_password": "second-pass"}).status_code == 204
+    assert client.post("/api/auth/password", headers=h, json={"current_password": "first-pass", "new_password": "second-pass"}).status_code == 200
     login(client, "acct@example.com", "second-pass")
 
 
