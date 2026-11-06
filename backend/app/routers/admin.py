@@ -1,4 +1,7 @@
-"""Admin dashboard endpoints: platform stats, rider verification, live trips, alerts, forecasts, pricing."""
+"""Admin dashboard endpoints: platform stats, rider verification, live trips, alerts, forecasts, pricing.
+
+Live trips, recent trips and safety alerts also serve approved support agents (`Staff`); everything else is admin-only.
+"""
 
 from collections import defaultdict
 from datetime import timedelta
@@ -10,9 +13,9 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.db import local_day_start, local_time, utcnow
 from app.geo import haversine_km
-from app.models import ACTIVE_TRIP_STATUSES, VEHICLE_TYPES, DemandForecast, PricingRule, Rider, SafetyAlert, Trip
+from app.models import ACTIVE_TRIP_STATUSES, VEHICLE_TYPES, DemandForecast, PricingRule, Profile, Rider, SafetyAlert, Trip
 from app.schemas import AlertStatusIn, PricingRuleIn, iso_utc, rider_rating, trip_out, vehicle_out
-from app.security import DB, Admin
+from app.security import DB, Admin, Staff
 from app.realtime import ADMINS, emit
 from app.services import availability, demand, documents
 from app.services import trips as trip_service
@@ -67,6 +70,7 @@ def stats(db: DB, admin: Admin):
         "busy_riders": sum(1 for r in online if r.id in busy),
         "online_by_type": {vt: online_by_type.get(vt, 0) for vt in VEHICLE_TYPES},
         "pending_riders": db.scalar(select(func.count(Rider.id)).where(Rider.status == "pending")) or 0,
+        "pending_support": db.scalar(select(func.count(Profile.id)).where(Profile.role == "support", Profile.approval_status == "pending")) or 0,
         "open_alerts": db.scalar(select(func.count(SafetyAlert.id)).where(SafetyAlert.status == "open")) or 0,
         "weather": {"temperature_c": weather.temperature_c, "precipitation_mm": weather.precipitation_mm, "raining": is_raining(db)}
         if weather
@@ -141,8 +145,45 @@ def suspend_rider(rider_id: str, db: DB, admin: Admin):
     return {"ok": True, "status": rider.status}
 
 
+def _agent_out(p: Profile) -> dict:
+    return {
+        "id": p.id,
+        "full_name": p.full_name,
+        "email": p.email,
+        "phone": p.phone,
+        "status": p.approval_status,
+        "joined_at": iso_utc(p.created_at),
+    }
+
+
+@router.get("/support-agents")
+def support_agents(db: DB, admin: Admin):
+    agents = db.scalars(select(Profile).where(Profile.role == "support").order_by(Profile.created_at.desc())).all()
+    return [_agent_out(p) for p in sorted(agents, key=lambda p: p.approval_status != "pending")]
+
+
+def _set_agent_status(db: DB, agent_id: str, new_status: str) -> dict:
+    agent = db.get(Profile, agent_id)
+    if agent is None or agent.role != "support":
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Support agent not found")
+    agent.approval_status = new_status
+    emit(db, ADMINS, "support.changed")
+    db.commit()
+    return _agent_out(agent)
+
+
+@router.post("/support-agents/{agent_id}/approve")
+def approve_support_agent(agent_id: str, db: DB, admin: Admin):
+    return _set_agent_status(db, agent_id, "approved")
+
+
+@router.post("/support-agents/{agent_id}/revoke")
+def revoke_support_agent(agent_id: str, db: DB, admin: Admin):
+    return _set_agent_status(db, agent_id, "revoked")
+
+
 @router.get("/trips/live")
-def live_trips(db: DB, admin: Admin):
+def live_trips(db: DB, staff: Staff):
     trips = db.scalars(select(Trip).where(Trip.status.in_(ACTIVE_TRIP_STATUSES)).order_by(Trip.requested_at.desc()))
     busy = availability.busy_rider_ids(db)
     online = db.scalars(select(Rider).where(Rider.is_online.is_(True)).options(selectinload(Rider.vehicles)))
@@ -163,7 +204,7 @@ def live_trips(db: DB, admin: Admin):
 
 
 @router.get("/trips/recent")
-def recent_trips(db: DB, admin: Admin, limit: int = 50):
+def recent_trips(db: DB, staff: Staff, limit: int = 50):
     trips = db.scalars(select(Trip).order_by(Trip.requested_at.desc()).limit(min(limit, 200)))
     return [trip_out(db, t, include_route=False).model_dump(mode="json") for t in trips]
 
@@ -188,7 +229,7 @@ def _alert_out(db: DB, a: SafetyAlert) -> dict:
 
 
 @router.get("/alerts")
-def alerts(db: DB, admin: Admin, status_filter: str | None = None):
+def alerts(db: DB, staff: Staff, status_filter: str | None = None):
     q = select(SafetyAlert).order_by(SafetyAlert.created_at.desc()).limit(100)
     if status_filter:
         q = q.where(SafetyAlert.status == status_filter)
@@ -203,17 +244,17 @@ def _alert_or_404(db: DB, alert_id: str) -> SafetyAlert:
 
 
 @router.post("/alerts/{alert_id}/summarize")
-def summarize(alert_id: str, db: DB, admin: Admin):
+def summarize(alert_id: str, db: DB, staff: Staff):
     alert = _alert_or_404(db, alert_id)
     ensure_summary(db, alert)
     return _alert_out(db, alert)
 
 
 @router.post("/alerts/{alert_id}/status")
-def set_alert_status(alert_id: str, body: AlertStatusIn, db: DB, admin: Admin):
+def set_alert_status(alert_id: str, body: AlertStatusIn, db: DB, staff: Staff):
     alert = _alert_or_404(db, alert_id)
     alert.status = body.status
-    alert.reviewed_by = admin.id
+    alert.reviewed_by = staff.id
     db.commit()
     return _alert_out(db, alert)
 

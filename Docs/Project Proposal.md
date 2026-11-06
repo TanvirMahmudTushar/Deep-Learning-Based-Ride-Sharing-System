@@ -38,24 +38,27 @@ Secondary objectives, if time allows: transparent price explanations shown to pa
 
 ## Proposed system
 
-The system is one Next.js web app (shadcn/ui components, dark theme) with three role-based portals (user, rider and admin), a FastAPI backend with a SQLite database, and a separate prediction layer the backend calls for forecasts, ETAs, match scores and anomaly checks. Each prediction component currently runs its baseline method; the deep learning models will replace them behind the same interface. The backend also calls the Groq API for text features (price explanations, alert summaries and a passenger assistant); these sit outside the four prediction models.
+The system is one Next.js web app (shadcn/ui components, dark theme) with four role-based portals (user, rider, admin and support), a FastAPI backend with a SQLite database, and a separate prediction layer the backend calls for forecasts, ETAs, match scores and anomaly checks. Each prediction component currently runs its baseline method; the deep learning models will replace them behind the same interface. The backend also calls the Groq API for text features (price explanations, alert summaries and a passenger assistant); these sit outside the four prediction models.
 
-Three roles use the platform, and riders are registered by vehicle type (bike, CNG or car), so a trip request is only matched to riders of the requested vehicle type.
+Four roles use the platform, and riders are registered by vehicle type (bike, CNG or car), so a trip request is only matched to riders of the requested vehicle type.
 
 | Role | Who | Main actions |
 | --- | --- | --- |
-| User | Passenger | Book a ride, choose a vehicle type, track the trip, see the reason for the price, rate the ride |
-| Rider | Driver of a bike, CNG or car | Register a vehicle, go online, accept or decline trips, complete trips |
-| Admin | Platform operator | Verify riders, monitor live trips and safety alerts, view demand forecasts |
+| User | Passenger | Book a ride, choose a vehicle type, track the trip, see the reason for the price, raise an SOS, pay the rider in cash, rate the ride, save places, review past trips |
+| Rider | Driver of a bike, CNG or car | Register a vehicle, upload documents, go online, accept or decline trips, complete trips, record cash received, track earnings |
+| Admin | Platform operator | Review documents and verify riders, monitor live trips and safety alerts, view demand forecasts, set pricing rules, manage payments and commission settlements, approve support agents |
+| Support agent | Support staff | See live and recent trips, read safety alerts and passenger reports, mark them reviewed or closed; no access to pricing, payments, revenue or rider documents |
 
-Architecture (portals talk only to the backend, which calls four prediction models and two external APIs):
+Passengers, riders and support agents sign up themselves, but riders and support agents need admin approval before they can start. Admin accounts cannot be created through sign-up. How the three roles connect during a ride is described for the team in [Plan.md](Plan.md).
+
+Architecture (portals talk only to the backend, which calls four prediction models and three external APIs):
 
 ```
  User portal            Rider portal             Admin dashboard
  (passengers)           (bike, CNG, car)         (monitor trips, alerts)
       \                       |                        /
        \_____________ Next.js + shadcn/ui ____________/
-                              |   REST, polled every 2 s
+                              |   REST + WebSocket events
               Backend API (FastAPI, Python)
         booking, matching, pricing, live tracking, trip records
                  /            |                         \
@@ -65,11 +68,11 @@ Architecture (portals talk only to the backend, which calls four prediction mode
  - Trip simulator (drives        assistant                  - Cancellation model
    simulated riders)           - Open-Meteo: hourly           (feeds matching)
                                  weather                    - Anomaly detection
-                                                            Baselines now; PyTorch
-                                                            models replace them later
+                               - Nominatim: address         Baselines now; PyTorch
+                                 search                     models replace them later
 ```
 
-Users, riders and admins never call the models or external APIs directly: the backend asks the prediction layer for forecasts, ETAs, match scores and anomaly checks, calls Groq for generated text and fetches hourly weather from Open-Meteo. The portals poll the backend every two seconds for live trip status and rider positions, which is simpler than a push channel and fast enough for a prototype.
+Users, riders and admins never call the models or external APIs directly: the backend asks the prediction layer for forecasts, ETAs, match scores and anomaly checks, calls Groq for generated text, fetches hourly weather from Open-Meteo and looks up addresses through Nominatim. Live updates arrive over a WebSocket: the backend sends a small event when data changes, and the portal then re-fetches the affected data over REST, so REST stays the source of truth. If the socket drops, the portals fall back to polling every few seconds.
 
 A built-in trip simulator stands in for riders' phones. Simulated riders accept offers after a short delay and drive real OSRM road routes, sending GPS pings at a configurable speed-up (10× by default). A configurable share of trips (15% by default) gets an injected detour or long stop, so the anomaly detector can be tested. Riders using the portal can also hand their trip to the simulator ("auto-drive").
 
@@ -104,6 +107,7 @@ flowchart LR
   User(["User (Passenger)"])
   Rider(["Rider (bike / CNG / car)"])
   Admin(["Admin"])
+  Support(["Support agent"])
   Groq(["Groq API (external LLM)"])
 
   subgraph SYS["Ride-sharing platform (web)"]
@@ -116,12 +120,15 @@ flowchart LR
       u_cancel(["Cancel ride"])
       u_rate(["Rate ride"])
       u_chat(["Chat with AI assistant"])
+      u_sos(["Raise SOS or report a trip"])
+      u_places(["Save places and review past trips"])
     end
     subgraph RID["Rider functions"]
       r_veh(["Register vehicle and documents"])
       r_online(["Go online / offline"])
       r_accept(["Accept or decline trip"])
       r_complete(["Navigate and complete trip"])
+      r_cash(["Record cash and view earnings"])
     end
     subgraph ADM["Admin functions"]
       a_verify(["Verify riders"])
@@ -129,6 +136,7 @@ flowchart LR
       a_alerts(["Review safety alerts"])
       a_forecast(["View demand forecast"])
       a_rules(["Manage pricing rules"])
+      a_pay(["Manage payments and settlements"])
     end
     subgraph ML["Intelligent services (included)"]
       m_match(["Match rider (cancellation-aware)"])
@@ -140,9 +148,10 @@ flowchart LR
     end
   end
 
-  User --- u_auth & u_book & u_fare & u_track & u_cancel & u_rate & u_chat
-  Rider --- r_veh & r_online & r_accept & r_complete & u_auth
-  Admin --- a_verify & a_monitor & a_alerts & a_forecast & a_rules & u_auth
+  User --- u_auth & u_book & u_fare & u_track & u_cancel & u_rate & u_chat & u_sos & u_places
+  Rider --- r_veh & r_online & r_accept & r_complete & r_cash & u_auth
+  Admin --- a_verify & a_monitor & a_alerts & a_forecast & a_rules & a_pay & u_auth
+  Support --- a_monitor & a_alerts & u_auth
 
   u_book -. include .-> m_match
   m_match -. include .-> m_eta
@@ -157,7 +166,7 @@ flowchart LR
   u_chat --- Groq
 ```
 
-Passengers, riders and admins each have their own functions; the Groq API acts as an external actor for price explanations, alert summaries and the assistant.
+Passengers, riders and admins each have their own functions, and support agents share the monitoring and alert functions with admins; the Groq API acts as an external actor for price explanations, alert summaries and the assistant.
 
 ### Data flow diagrams
 
@@ -170,20 +179,22 @@ flowchart LR
   Admin["Admin"]
   Groq["Groq API (LLM)"]
   Weather["Open-Meteo weather API"]
+  Nominatim["Nominatim address search"]
   P0(("0<br/>Ride-sharing<br/>platform"))
 
-  User -->|"login details, ride request, rating"| P0
+  User -->|"login details, ride request, SOS or report, rating, saved places"| P0
   P0 -->|"fare estimate, price reason, matched rider, live trip status"| User
-  Rider -->|"vehicle and license details, live location, accept or decline, trip completion"| P0
-  P0 -->|"trip offers, navigation details"| Rider
-  Admin -->|"rider verification decisions, pricing rules"| P0
-  P0 -->|"safety alerts, demand forecasts, trip reports"| Admin
+  Rider -->|"vehicle details, documents, live location, accept or decline, trip completion, cash received"| P0
+  P0 -->|"trip offers, navigation details, earnings"| Rider
+  Admin -->|"document reviews, rider verification, pricing rules, settlements"| P0
+  P0 -->|"safety alerts, demand forecasts, trip reports, payments"| Admin
   P0 -->|"prompts (no personal data)"| Groq
   Groq -->|"generated text"| P0
   Weather -->|"hourly weather data"| P0
+  P0 <-->|"address search"| Nominatim
 ```
 
-Level 1 splits the platform into six processes (accounts, request and matching, pricing, trip tracking, demand forecasting, admin monitoring) and seven data stores.
+Level 1 splits the platform into six processes (accounts, request and matching, pricing, trip tracking, demand forecasting, admin monitoring) and eight data stores.
 
 ```mermaid
 flowchart TB
@@ -200,16 +211,17 @@ flowchart TB
   P5(("5.0 Forecast demand"))
   P6(("6.0 Admin monitoring and control"))
 
-  D1[("D1 Accounts: profiles, riders, vehicles")]
+  D1[("D1 Accounts: profiles, riders, vehicles, documents, saved places")]
   D2[("D2 Trips and ratings")]
   D3[("D3 Trip locations")]
   D4[("D4 Zones and demand forecasts")]
   D5[("D5 Pricing rules")]
   D6[("D6 Safety alerts")]
   D7[("D7 Weather history")]
+  D8[("D8 Payments and settlements")]
 
   User -->|"login / registration"| P1
-  Rider -->|"vehicle and license details"| P1
+  Rider -->|"vehicle details, documents"| P1
   P1 -->|"session token"| User
   P1 <-->|"account records"| D1
 
@@ -227,22 +239,24 @@ flowchart TB
   P3 -->|"fare estimate and price reason"| User
   P3 <-->|"prompt / explanation"| Groq
 
-  Rider -->|"live location, trip completion"| P4
-  User -->|"rating"| P4
+  Rider -->|"live location, trip completion, cash received"| P4
+  User -->|"rating, SOS, trip report"| P4
   P4 -->|"live trip status"| User
   P4 -->|"location pings"| D3
   D2 -->|"trip route"| P4
   P4 -->|"trip status, rating"| D2
-  P4 -->|"anomaly alerts"| D6
+  P4 -->|"anomaly, SOS and report alerts"| D6
+  P4 -->|"payment record"| D8
 
   D2 -->|"past trips"| P5
   Weather -->|"hourly weather"| D7
   D7 -->|"weather features"| P5
   P5 -->|"forecasts"| D4
 
-  Admin -->|"verification decisions, pricing rules"| P6
-  P6 -->|"alerts, forecasts, trip reports"| Admin
-  P6 -->|"rider status"| D1
+  Admin -->|"document reviews, verification, pricing rules, settlements"| P6
+  P6 -->|"alerts, forecasts, trip reports, payments"| Admin
+  P6 -->|"rider status, document reviews"| D1
+  P6 <-->|"payments, settlements"| D8
   P6 -->|"pricing rules"| D5
   D6 -->|"open alerts"| P6
   D4 -->|"forecasts"| P6
@@ -268,6 +282,13 @@ erDiagram
     RIDERS ||--o{ MATCH_SCORES : "candidate"
     TRIPS ||--o{ SAFETY_ALERTS : "raises"
     PROFILES ||--o{ SAFETY_ALERTS : "reviews (admin)"
+    PROFILES ||--o{ SAVED_PLACES : "saves"
+    TRIPS ||--o| PAYMENTS : "paid by"
+    RIDERS ||--o{ PAYMENTS : "collects"
+    RIDERS ||--o{ SETTLEMENTS : "pays commission"
+    PROFILES ||--o{ SETTLEMENTS : "records (admin)"
+    RIDERS ||--o{ RIDER_DOCUMENTS : "uploads"
+    PROFILES ||--o{ RIDER_DOCUMENTS : "reviews (admin)"
 
     PROFILES {
         text id PK "UUID"
@@ -275,7 +296,8 @@ erDiagram
         text phone
         text email "unique"
         text password_hash "bcrypt"
-        text role "user, rider, admin"
+        text role "user, rider, admin, support"
+        text approval_status "support only: pending, approved, revoked"
         datetime created_at
     }
     RIDERS {
@@ -322,6 +344,7 @@ erDiagram
         real fare_final
         real price_multiplier
         text price_reason
+        text fare_breakdown_json
         real predicted_eta_min
         real pickup_eta_min
         real actual_duration_min
@@ -335,6 +358,7 @@ erDiagram
         real sim_progress_km
         datetime requested_at
         datetime accepted_at
+        datetime arrived_at
         datetime started_at
         datetime completed_at
     }
@@ -344,6 +368,7 @@ erDiagram
         real lat
         real lng
         real speed_kmh
+        real accuracy_m
         datetime recorded_at
     }
     RATINGS {
@@ -376,7 +401,7 @@ erDiagram
         text id PK
         text trip_id FK
         text reviewed_by FK
-        text alert_type "route_deviation, long_stop"
+        text alert_type "route_deviation, long_stop, sos, report"
         real anomaly_score
         text details_json
         text summary "Groq summary"
@@ -391,6 +416,7 @@ erDiagram
         real per_min
         real min_fare
         real max_multiplier
+        real commission_pct
     }
     WEATHER_HOURLY {
         int id PK
@@ -399,13 +425,57 @@ erDiagram
         real precipitation_mm
         text source
     }
+    SAVED_PLACES {
+        text id PK
+        text user_id FK
+        text label
+        real lat
+        real lng
+        text address
+        datetime created_at
+    }
+    PAYMENTS {
+        text id PK
+        text trip_id FK "unique"
+        text rider_id FK
+        text method "cash"
+        real amount
+        real commission_pct
+        real commission
+        real rider_earning
+        text status "pending, collected, disputed"
+        datetime created_at
+        datetime collected_at
+    }
+    SETTLEMENTS {
+        text id PK
+        text rider_id FK
+        real amount
+        text note
+        text recorded_by FK
+        datetime created_at
+    }
+    RIDER_DOCUMENTS {
+        text id PK
+        text rider_id FK
+        text doc_type "license, registration, photo"
+        text stored_name
+        text original_name
+        text content_type
+        int size_bytes
+        text status "pending, approved, rejected"
+        text review_note
+        text reviewed_by FK
+        datetime uploaded_at
+        datetime reviewed_at
+    }
 ```
 
-The database is SQLite, accessed through SQLAlchemy, so moving to PostgreSQL later only means changing the connection URL. IDs are UUID strings, and all timestamps are stored in UTC and shown in Dhaka time (UTC+6). Vehicle type on the `VEHICLES` table drives matching. Model outputs are stored in `MATCH_SCORES` and `DEMAND_FORECASTS`, and `model_version` records which model (baseline or deep learning) produced each forecast. Routes are stored as JSON on the trip, because SQLite has no PostGIS; distance-to-route checks are done in Python. `WEATHER_HOURLY` holds city-wide hourly weather from Open-Meteo for the demand model, so it has no foreign keys.
+The database is SQLite, accessed through SQLAlchemy, so moving to PostgreSQL later only means changing the connection URL. IDs are UUID strings, and all timestamps are stored in UTC and shown in Dhaka time (UTC+6). Vehicle type on the `VEHICLES` table drives matching. Model outputs are stored in `MATCH_SCORES` and `DEMAND_FORECASTS`, and `model_version` records which model (baseline or deep learning) produced each forecast. Routes are stored as JSON on the trip, because SQLite has no PostGIS; distance-to-route checks are done in Python. `WEATHER_HOURLY` holds city-wide hourly weather from Open-Meteo for the demand model, so it has no foreign keys. `PAYMENTS` and `SETTLEMENTS` only record cash handled outside the app, and `RIDER_DOCUMENTS` stores metadata while the files themselves stay in a protected upload folder on the server.
 
 ### Class diagrams
 
-Domain classes (accounts, vehicles, trips, locations, ratings, alerts, zones):
+Domain classes (accounts, vehicles, trips, locations, ratings, alerts, zones, payments, documents):
 
 ```mermaid
 classDiagram
@@ -423,6 +493,8 @@ classDiagram
         +requestRide(pickup, drop, vehicleType) Trip
         +cancelRide(trip)
         +rateRide(trip, stars)
+        +raiseSos(trip, note)
+        +savePlace(place)
     }
     class Rider {
         +RiderStatus status
@@ -430,11 +502,15 @@ classDiagram
         +goOnline()
         +acceptTrip(trip)
         +completeTrip(trip)
+        +uploadDocument(document)
+        +collectCash(trip)
     }
     class Admin {
+        +reviewDocument(document)
         +verifyRider(rider)
         +reviewAlert(alert)
         +setPricingRule(rule)
+        +recordSettlement(rider, amount)
     }
     class Vehicle {
         +UUID id
@@ -474,6 +550,21 @@ classDiagram
         +DateTime forecastFor
         +Float predictedRequests
     }
+    class Payment {
+        +Decimal amount
+        +Decimal commission
+        +PaymentStatus status
+    }
+    class Settlement {
+        +Decimal amount
+    }
+    class RiderDocument {
+        +String docType
+        +DocumentStatus status
+    }
+    class SavedPlace {
+        +String label
+    }
     class VehicleType {
         <<enumeration>>
         BIKE
@@ -499,6 +590,10 @@ classDiagram
     Trip "1" --> "0..*" SafetyAlert : raises
     Admin "1" --> "0..*" SafetyAlert : reviews
     Zone "1" --> "0..*" DemandForecast : has
+    Trip "1" --> "0..1" Payment : paid by
+    Rider "1" --> "0..*" Settlement : pays commission
+    Rider "1" --> "0..*" RiderDocument : uploads
+    Passenger "1" --> "0..*" SavedPlace : saves
     Vehicle ..> VehicleType
     Trip ..> TripStatus
 ```
@@ -533,7 +628,13 @@ classDiagram
     }
     class AlertService {
         +checkTrip(trip)
+        +raiseSos(trip, note)
         +summarize(alert) String
+    }
+    class PaymentService {
+        +createForTrip(trip)
+        +markCollected(payment)
+        +riderBalance(rider)
     }
     class GroqClient {
         -String apiKey
@@ -563,6 +664,7 @@ classDiagram
     TripService ..> MatchingService : uses
     TripService ..> PricingService : uses
     TripService ..> AlertService : uses
+    TripService ..> PaymentService : uses
     TripSimulator ..> TripService : drives
 ```
 
@@ -599,18 +701,18 @@ Free-tier limits are low (the documentation lists about 30 requests per minute a
 
 | Layer | Tools | Status |
 | --- | --- | --- |
-| Frontend (user, rider and admin portals) | Next.js 16 (React 19), shadcn/ui components with a dark theme, Tailwind CSS, SWR for data fetching and polling, Recharts for dashboard charts | Built |
+| Frontend (user, rider, admin and support portals) | Next.js 16 (React 19), shadcn/ui components with a dark theme, Tailwind CSS, SWR for data fetching and polling, Recharts for dashboard charts | Built |
 | Backend API | FastAPI (Python 3.12), Pydantic validation | Built |
 | Database | SQLite through SQLAlchemy 2 (portable to PostgreSQL) | Built |
-| Authentication | Email and password with bcrypt hashing; JWT bearer tokens; role checks (user, rider, admin) on every endpoint | Built |
-| Live updates | Portals poll the API every 2 seconds | Built |
-| Maps and routing | OpenStreetMap tiles, Leaflet (map display), OSRM public server (road routes, with a straight-line fallback when offline) | Built |
+| Authentication | Email and password with bcrypt hashing; JWT bearer tokens; role checks (user, rider, admin, support) on every private endpoint; failed-login lockout; a password change logs out other devices | Built |
+| Live updates | WebSocket events tell the portals when to re-fetch, with polling as the fallback | Built |
+| Maps and routing | OpenStreetMap tiles, Leaflet (map display), OSRM public server (road routes, with a straight-line fallback when offline), Nominatim (address search) | Built |
 | Weather | Open-Meteo hourly forecast API, stored in `WEATHER_HOURLY` | Built |
 | Language model | Groq API (Llama and gpt-oss models), with template fallbacks | Built |
 | Prediction models | Baselines behind a `PredictionModel` interface | Built |
 | Deep learning | PyTorch, PyTorch Geometric | Planned |
 | Model serving | Trained models loaded inside the FastAPI backend (ONNX export if memory is tight) | Planned |
-| Testing | pytest end-to-end API tests (booking, matching, offers, alerts, admin, roles) with an isolated database and no network | Built |
+| Testing | pytest end-to-end API tests (booking, matching, offers, alerts, admin, authentication, and every private route checked against each role) with an isolated database and no network | Built |
 | Hosting | Runs locally today; a free-tier deployment (for example Vercel for the frontend and Render for the backend) is optional for the demo | Planned |
 | Version control | GitHub | In use |
 
@@ -628,7 +730,7 @@ Each model succeeds only if it beats a simpler baseline on held-out data; system
 
 Several of these baselines already run inside the app: the historical-average demand forecast, the distance ÷ speed ETA and the distance-from-route threshold. Matching uses a fixed-weight logistic score for cancellation risk, and the nearest-driver baseline is the same ranking with the cancellation penalty set to zero. The admin dashboard reports live figures, such as the 7-day ETA mean absolute error and the cancellation rate, which the deep learning models will be compared against. The remaining baselines (gradient boosting for demand, the OSRM time estimate, and a fitted logistic regression for cancellations) will be trained offline alongside the deep learning models.
 
-The app itself is covered by automated end-to-end API tests (booking, matching, offer expiry, cancellation, safety alerts, rider verification, pricing and role checks). Response time under simulated load will be measured during the evaluation phase.
+The app itself is covered by automated end-to-end API tests (booking, matching, offer expiry, cancellation, safety alerts, rider verification, pricing, authentication and role checks). Response time under simulated load will be measured during the evaluation phase.
 
 ## Timeline
 
@@ -647,12 +749,15 @@ If the week-10 gate slips, the stretch models are dropped and the remaining time
 
 **Implementation status.** The parts of the project that do not involve deep learning are complete:
 
-- **Passenger portal:** choose pickup and drop-off on the map or by area; compare bike, CNG and car fares with an explained price; book; track the rider live; cancel; rate; view trip history; chat with the Groq assistant, which can fill in a booking.
-- **Rider portal:** register with a vehicle and licence, wait for verification, go online, receive offers with a 30-second timer, accept or decline, start and complete trips, view earnings, rating and cancellation rate.
-- **Admin dashboard:** live platform stats and map, rider verification and suspension, safety alerts with Groq summaries and review status, demand forecasts per zone and per hour (with a table view), and editable pricing rules.
-- **Backend:** cancellation-aware matching that offers a trip to one rider at a time, with fallback to the next candidate on decline or timeout; demand-based pricing with explanations; route-deviation and long-stop alerts; weather ingestion; and the trip simulator.
+- **Passenger portal:** choose pickup and drop-off on the map, by address search or from saved places; compare bike, CNG and car fares with an explained price; book; track the rider live; cancel; raise an SOS or report a trip; pay in cash; rate; view a personal dashboard with spending, trip history and receipts; chat with the Groq assistant, which can fill in a booking.
+- **Rider portal:** register with a vehicle and licence, upload documents, wait for verification, go online, receive offers with a 30-second timer, accept or decline, start and complete trips, record cash received, view earnings, commission owed, rating and cancellation rate.
+- **Admin dashboard:** live platform stats and map, document review, rider verification and suspension, safety alerts (including passenger SOS and reports) with Groq summaries and review status, payments and commission settlements, demand forecasts per zone and per hour (with a table view), editable pricing rules, and support agent approval.
+- **Support portal:** sign up and wait for admin approval, then see live and recent trips and work on safety alerts and passenger reports.
+- **Backend:** role-based authentication for all four roles; cancellation-aware matching that offers a trip to one rider at a time, with fallback to the next candidate on decline or timeout; demand-based pricing with explanations; route-deviation and long-stop alerts; cash payment records and settlements; WebSocket events; weather ingestion; and the trip simulator.
 
-The remaining work is the deep learning: data pipelines for NYC TLC and Chicago, training the four models, swapping them into the prediction registry, and the evaluation against the baselines.
+The remaining work is improving the three portals and the deep learning: data pipelines for NYC TLC and Chicago, training the four models, swapping them into the prediction registry, and the evaluation against the baselines.
+
+**Team.** Tanvir works on the passenger dashboard, Raiyan on the rider portal, Myomi on the admin dashboard, and Atia on the support portal and the deep learning models. [Plan.md](Plan.md) gives the team the work split, the datasets and how the roles connect.
 
 ## Expected outcomes, risks and limitations
 
@@ -677,7 +782,7 @@ The project will deliver a working prototype, trained demand and ETA models (plu
 | SQLite allows only one writer at a time, and the simulator and API write together | Write-ahead logging and a busy timeout are enabled, which is enough for a prototype; move to PostgreSQL by changing the connection URL if load testing shows contention |
 | Public OSRM and OpenStreetMap tile servers have usage limits and no uptime guarantee | Routes are cached and fall back to a straight-line estimate; for heavier use, self-host OSRM on the Bangladesh extract and use a tile provider with a key |
 
-The prototype will not process real payments or carry real passengers; safety and pricing features are demonstrated in simulation only.
+The prototype will not process real payments or carry real passengers: cash is only recorded, never handled by the app, and safety and pricing features are demonstrated in simulation only.
 
 ## Conclusion
 
