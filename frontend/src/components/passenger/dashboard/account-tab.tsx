@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
+import { ChangePasswordForm } from "@/components/change-password-form";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -54,59 +55,6 @@ function ProfileForm({ profile }: { profile: Profile }) {
   );
 }
 
-function PasswordForm() {
-  const [current, setCurrent] = useState("");
-  const [next, setNext] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const [saving, setSaving] = useState(false);
-  const mismatch = confirm.length > 0 && next !== confirm;
-
-  async function save(e: FormEvent) {
-    e.preventDefault();
-    setSaving(true);
-    try {
-      await api("/api/auth/password", { json: { current_password: current, new_password: next } });
-      toast.success("Password changed");
-      setCurrent("");
-      setNext("");
-      setConfirm("");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not change password");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <form onSubmit={save} className="space-y-4">
-      <div className="space-y-2">
-        <Label htmlFor="pw-current">Current password</Label>
-        <Input id="pw-current" type="password" value={current} onChange={(e) => setCurrent(e.target.value)} required autoComplete="current-password" />
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="pw-new">New password</Label>
-        <Input id="pw-new" type="password" value={next} onChange={(e) => setNext(e.target.value)} required minLength={6} maxLength={72} autoComplete="new-password" />
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="pw-confirm">Confirm new password</Label>
-        <Input
-          id="pw-confirm"
-          type="password"
-          value={confirm}
-          onChange={(e) => setConfirm(e.target.value)}
-          required
-          autoComplete="new-password"
-          aria-invalid={mismatch}
-        />
-        {mismatch && <p className="text-xs text-destructive">Passwords do not match.</p>}
-      </div>
-      <Button type="submit" variant="secondary" disabled={saving || mismatch || next.length < 6}>
-        {saving && <Loader2 className="animate-spin" />} Change password
-      </Button>
-    </form>
-  );
-}
-
 export function AccountTab({ profile }: { profile: Profile }) {
   const { data: s } = useSWR<PassengerSummary>("/api/passenger/summary", fetcher);
   const since = s?.member_since ? new Date(s.member_since).toLocaleDateString("en-GB", { month: "long", year: "numeric" }) : null;
@@ -125,10 +73,10 @@ export function AccountTab({ profile }: { profile: Profile }) {
       <Card>
         <CardHeader>
           <CardTitle>Password</CardTitle>
-          <CardDescription>Use at least 6 characters.</CardDescription>
+          <CardDescription>Changing it logs you out on your other devices.</CardDescription>
         </CardHeader>
         <CardContent>
-          <PasswordForm />
+          <ChangePasswordForm />
         </CardContent>
       </Card>
     </div>

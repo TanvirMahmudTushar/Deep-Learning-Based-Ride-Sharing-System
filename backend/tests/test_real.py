@@ -138,7 +138,7 @@ def test_document_upload_review_and_access(client, admin_h, rider_h):
     reg = client.post(
         "/api/auth/register",
         json={
-            "full_name": "Doc Rider", "email": "doc.rider@example.com", "phone": "+8801733333333", "password": "secret1",
+            "full_name": "Doc Rider", "email": "doc.rider@example.com", "phone": "+8801733333333", "password": "secret123",
             "role": "rider", "license_no": "DK-77", "vehicle_type": "bike", "plate_no": "DHAKA METRO-HA 11-2222", "vehicle_model": "Yamaha FZ",
         },
     ).json()
