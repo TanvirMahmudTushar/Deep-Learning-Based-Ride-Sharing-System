@@ -41,7 +41,7 @@ class RegisterIn(BaseModel):
     email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=160)
     phone: str = Field(min_length=6, max_length=32)
     password: NewPassword
-    role: Literal["user", "rider"] = "user"
+    role: Literal["user", "rider", "support"] = "user"
     license_no: str | None = Field(default=None, max_length=40)
     vehicle_type: VehicleType | None = None
     plate_no: str | None = Field(default=None, max_length=32)
@@ -59,6 +59,7 @@ class ProfileOut(BaseModel):
     email: str
     phone: str
     role: str
+    approval_status: str | None = None
 
 
 class AuthOut(BaseModel):

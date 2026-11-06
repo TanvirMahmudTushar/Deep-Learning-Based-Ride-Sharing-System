@@ -1,4 +1,4 @@
-export type Role = "user" | "rider" | "admin";
+export type Role = "user" | "rider" | "admin" | "support";
 export type VehicleType = "bike" | "cng" | "car";
 export type TripStatus = "requested" | "accepted" | "ongoing" | "completed" | "cancelled";
 
@@ -13,6 +13,8 @@ export interface Profile {
   email: string;
   phone: string;
   role: Role;
+  /** Support agents only. */
+  approval_status?: "pending" | "approved" | "revoked" | null;
 }
 
 export interface AuthResponse {
@@ -163,7 +165,17 @@ export interface Offer {
   pickup_distance_km: number;
 }
 
+export interface AdminSupportAgent {
+  id: string;
+  full_name: string;
+  email: string;
+  phone: string;
+  status: "pending" | "approved" | "revoked";
+  joined_at: string;
+}
+
 export interface AdminStats {
+  pending_support: number;
   trips_today: number;
   completed_today: number;
   active_trips: number;
