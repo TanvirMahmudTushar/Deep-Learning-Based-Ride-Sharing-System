@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { FileWarning, Loader2, LocateFixed, LocateOff, MapPin } from "lucide-react";
 import { PortalShell } from "@/components/app-shell";
 import { RideMap, type MapLine, type MapMarker } from "@/components/map/ride-map";
+import { AvailabilityToggle } from "@/components/rider/availability-toggle";
 import { DocumentsPanel } from "@/components/rider/documents-panel";
 import { EarningsPanel } from "@/components/rider/earnings-panel";
 import { ActiveTripCard, CollectCard, OfferCard, run } from "@/components/rider/trip-cards";
@@ -171,6 +172,17 @@ function RiderPortal() {
   return (
     <div className="flex min-h-0 flex-1 flex-col-reverse md:flex-row">
       <aside className="flex min-h-0 w-full flex-col border-t md:w-105 md:border-t-0 md:border-r">
+        {me && (
+          <div className="border-b p-3">
+            <AvailabilityToggle
+              online={me.is_online}
+              busy={toggling}
+              disabled={!verified || !!active}
+              hint={!verified ? "Available once your account is verified" : active ? "Finish your current trip to go offline" : undefined}
+              onChange={setOnline}
+            />
+          </div>
+        )}
         <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col gap-0">
           <div className="border-b px-4 py-3">
             <TabsList className="grid w-full grid-cols-4">
@@ -195,10 +207,6 @@ function RiderPortal() {
                     <div className="min-w-0 flex-1">
                       <div className="font-medium">{me.full_name}</div>
                       <div className="truncate text-xs text-muted-foreground">{me.vehicle ? `${me.vehicle.model} · ${me.vehicle.plate_no}` : "No vehicle"}</div>
-                    </div>
-                    <div className="flex flex-col items-end gap-1.5">
-                      <Switch checked={me.is_online} disabled={toggling || !verified || !!active} onCheckedChange={setOnline} aria-label="Online" />
-                      <span className="text-xs text-muted-foreground">{me.is_online ? "Online" : "Offline"}</span>
                     </div>
                   </div>
 
