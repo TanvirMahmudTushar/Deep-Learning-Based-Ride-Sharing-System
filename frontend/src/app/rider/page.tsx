@@ -3,9 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
-import { FileWarning, Loader2, LocateFixed, LocateOff, MapPin } from "lucide-react";
+import { FileWarning, Loader2, LocateFixed, LocateOff, MapPin, ShieldAlert } from "lucide-react";
 import { PortalShell } from "@/components/app-shell";
 import { RideMap, type MapLine, type MapMarker } from "@/components/map/ride-map";
+import { BottomSheet } from "@/components/rider/bottom-sheet";
 import { AvailabilityToggle } from "@/components/rider/availability-toggle";
 import { DocumentsPanel } from "@/components/rider/documents-panel";
 import { EarningsPanel } from "@/components/rider/earnings-panel";
@@ -15,6 +16,7 @@ import { TripHistory } from "@/components/trip-history";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, fetcher } from "@/lib/api";
@@ -55,7 +57,7 @@ function GpsStatus({ status, fix, manual, onManual }: { status: string; fix: Geo
           </div>
           <div className="truncate text-xs text-muted-foreground">
             {manual
-              ? "Click the map to set where you are"
+              ? "Tap the map to set where you are"
               : ok
                 ? `Accurate to about ${Math.round(fix.accuracy)} m`
                 : status === "denied"
@@ -76,6 +78,8 @@ function RiderPortal() {
   const [tab, setTab] = useState("work");
   const [toggling, setToggling] = useState(false);
   const [manual, setManual] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(true);
+  const [blocked, setBlocked] = useState<{ title: string; message: string; toDocuments: boolean } | null>(null);
   const interval = useLiveInterval(3000, 30000);
   const { data: health } = useServerHealth();
   const { data: me, mutate: refreshMe } = useSWR<RiderMe>("/api/rider/me", fetcher, { refreshInterval: interval });
@@ -117,12 +121,50 @@ function RiderPortal() {
     return () => clearInterval(id);
   }, [sharing, gpsWanted]);
 
+  const offerId = offer?.trip.id;
+  const [seenOfferId, setSeenOfferId] = useState<string | undefined>();
+  if (offerId !== seenOfferId) {
+    setSeenOfferId(offerId);
+    if (offerId) setSheetOpen(true); // a new request should never stay hidden below the fold
+  }
+
   const refreshAll = () => {
     void refreshMe();
     void refreshActive();
     void refreshOffer();
     void refreshCollect();
   };
+
+  const canGoOnline = !!me && me.status === "verified" && (me.is_simulated || me.documents_ready);
+
+  function goToDocuments() {
+    setBlocked(null);
+    setTab("documents");
+    setSheetOpen(true);
+  }
+
+  /** Going online needs a verified account with approved documents; otherwise explain and send them to Documents. */
+  function requestOnline(online: boolean) {
+    if (online && me && !canGoOnline) {
+      if (me.status === "suspended") {
+        setBlocked({ title: "Account suspended", message: "Your account is suspended, so you can't go online. Contact support to restore access.", toDocuments: false });
+      } else if (!me.documents_ready) {
+        setBlocked({
+          title: "Documents not approved yet",
+          message: `You can only go online once all your documents are approved. Still needed: ${me.missing_documents.join(", ") || "approval of your uploads"}. Finish uploading, then wait for verification.`,
+          toDocuments: true,
+        });
+      } else {
+        setBlocked({
+          title: "Waiting for verification",
+          message: "Your documents are approved. An admin still needs to verify your account before you can go online. Check the Documents tab for updates.",
+          toDocuments: true,
+        });
+      }
+      return;
+    }
+    void setOnline(online);
+  }
 
   async function setOnline(online: boolean) {
     setToggling(true);
@@ -135,6 +177,7 @@ function RiderPortal() {
       lastSent.current = { lat: fix.lat, lng: fix.lng, at: Date.now() };
       sendFix(fix).catch(() => undefined);
     }
+    await refreshMe(); // keep the switch busy until the new state is in, so the knob never flickers back
     setToggling(false);
     refreshAll();
   }
@@ -170,19 +213,50 @@ function RiderPortal() {
   const needsDocs = me && !me.is_simulated && !me.documents_ready;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col-reverse md:flex-row">
-      <aside className="flex min-h-0 w-full flex-col border-t md:w-105 md:border-t-0 md:border-r">
-        {me && (
-          <div className="border-b p-3">
-            <AvailabilityToggle
-              online={me.is_online}
-              busy={toggling}
-              disabled={!verified || !!active}
-              hint={!verified ? "Available once your account is verified" : active ? "Finish your current trip to go offline" : undefined}
-              onChange={setOnline}
-            />
-          </div>
-        )}
+    <div className="relative min-h-0 flex-1 overflow-hidden">
+      {/* Layer 0: the map fills everything; every other element floats above it. */}
+      <section className="absolute inset-0 isolate z-0">
+        <RideMap markers={markers} lines={lines} fitTo={fitTo} fitKey={fitKey} onMapClick={onMapClick} />
+      </section>
+
+      {/* Floating online toggle, independent of the panel. */}
+      {me && (
+        <div className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center px-3 md:justify-start md:pl-[calc(26.25rem+0.75rem)]">
+          <AvailabilityToggle
+            className="pointer-events-auto max-w-sm"
+            online={me.is_online}
+            busy={toggling}
+            disabled={!!active}
+            hint={active ? "Finish your current trip to go offline" : !canGoOnline ? "Verification required to go online" : undefined}
+            onChange={requestOnline}
+          />
+        </div>
+      )}
+      {me && (manual || !position) && (
+        <div className="pointer-events-none absolute top-20 left-1/2 z-20 -translate-x-1/2 md:left-[calc(50%+13rem)]">
+          <Badge variant="outline" className="bg-background/90 backdrop-blur">
+            {manual ? "Tap the map to set your position" : "Waiting for GPS…"}
+          </Badge>
+        </div>
+      )}
+
+      <BottomSheet
+        expanded={sheetOpen}
+        onExpandedChange={setSheetOpen}
+        header={
+          me && (
+            <div className="flex h-16 items-center gap-3 rounded-xl border bg-card px-3">
+              <span className="grid size-10 shrink-0 place-items-center rounded-full bg-muted">
+                {me.vehicle && <VehicleIcon type={me.vehicle.vehicle_type} className="size-5" style={{ color: VEHICLE_COLOR[me.vehicle.vehicle_type] }} />}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-medium">{me.full_name}</div>
+                <div className="truncate text-xs text-muted-foreground">{me.vehicle ? `${me.vehicle.model} · ${me.vehicle.plate_no}` : "No vehicle"}</div>
+              </div>
+            </div>
+          )
+        }
+      >
         <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col gap-0">
           <div className="border-b px-4 py-3">
             <TabsList className="grid w-full grid-cols-4">
@@ -200,16 +274,6 @@ function RiderPortal() {
               {!me && <Loader2 className="mx-auto size-5 animate-spin text-muted-foreground" />}
               {me && (
                 <>
-                  <div className="flex items-center gap-3 rounded-xl border p-4">
-                    <span className="grid size-11 place-items-center rounded-full bg-muted">
-                      {me.vehicle && <VehicleIcon type={me.vehicle.vehicle_type} className="size-5" style={{ color: VEHICLE_COLOR[me.vehicle.vehicle_type] }} />}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="font-medium">{me.full_name}</div>
-                      <div className="truncate text-xs text-muted-foreground">{me.vehicle ? `${me.vehicle.model} · ${me.vehicle.plate_no}` : "No vehicle"}</div>
-                    </div>
-                  </div>
-
                   {me.status === "pending" && (
                     <Alert>
                       <FileWarning />
@@ -273,17 +337,24 @@ function RiderPortal() {
             </TabsContent>
           </div>
         </Tabs>
-      </aside>
-      <section className="relative h-[42dvh] shrink-0 md:h-auto md:flex-1">
-        <RideMap markers={markers} lines={lines} fitTo={fitTo} fitKey={fitKey} onMapClick={onMapClick} />
-        {me && (manual || !position) && (
-          <div className="pointer-events-none absolute top-3 left-1/2 z-500 -translate-x-1/2">
-            <Badge variant="outline" className="bg-background/90 backdrop-blur">
-              {manual ? "Click the map to set your position" : "Waiting for GPS…"}
-            </Badge>
-          </div>
-        )}
-      </section>
+      </BottomSheet>
+      <Dialog open={blocked !== null} onOpenChange={(o) => !o && setBlocked(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <span className="grid size-11 place-items-center rounded-full bg-amber-400/15 text-amber-300">
+              <ShieldAlert className="size-6" />
+            </span>
+            <DialogTitle className="text-lg">{blocked?.title}</DialogTitle>
+            <DialogDescription>{blocked?.message}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBlocked(null)}>
+              Close
+            </Button>
+            {blocked?.toDocuments && <Button onClick={goToDocuments}>Go to documents</Button>}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
