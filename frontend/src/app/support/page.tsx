@@ -1,18 +1,19 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import useSWR from "swr";
 import { Clock, ShieldOff } from "lucide-react";
 import { AlertsTab } from "@/components/admin/alerts-tab";
 import { LiveTrips } from "@/components/admin/live-trips";
 import { PortalShell } from "@/components/app-shell";
 import { CountBadge } from "@/components/ride-bits";
-import { TripHistory } from "@/components/trip-history";
+import { TripsTab } from "@/components/support/trips-tab";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { fetcher } from "@/lib/api";
 import { useLiveInterval } from "@/lib/realtime";
-import type { Profile, SafetyAlert, Trip } from "@/lib/types";
+import { updateSessionProfile, useSession } from "@/lib/session";
+import type { Profile, SafetyAlert } from "@/lib/types";
 
 function NoAccess({ icon, title, body }: { icon: ReactNode; title: string; body: string }) {
   return (
@@ -24,11 +25,6 @@ function NoAccess({ icon, title, body }: { icon: ReactNode; title: string; body:
       </div>
     </main>
   );
-}
-
-function RecentTrips() {
-  const { data: trips } = useSWR<Trip[]>("/api/admin/trips/recent", fetcher, { refreshInterval: useLiveInterval(10000, 30000) });
-  return <TripHistory trips={trips} empty="No trips yet." />;
 }
 
 function SupportDesk() {
@@ -45,7 +41,7 @@ function SupportDesk() {
               Safety and reports <CountBadge n={open?.length} />
             </TabsTrigger>
             <TabsTrigger value="live">Live trips</TabsTrigger>
-            <TabsTrigger value="recent">Recent trips</TabsTrigger>
+            <TabsTrigger value="trips">Trips</TabsTrigger>
           </TabsList>
         </div>
         <TabsContent value="alerts">
@@ -54,8 +50,8 @@ function SupportDesk() {
         <TabsContent value="live">
           <LiveTrips />
         </TabsContent>
-        <TabsContent value="recent">
-          <RecentTrips />
+        <TabsContent value="trips">
+          <TripsTab />
         </TabsContent>
       </Tabs>
     </main>
@@ -65,6 +61,13 @@ function SupportDesk() {
 function SupportPortal() {
   // Checked from the server, so the page opens as soon as an admin approves and closes when access is removed.
   const { data: me } = useSWR<Profile>("/api/auth/me", fetcher, { refreshInterval: 5000 });
+  const session = useSession();
+  const stored = session.status === "authenticated" ? session.profile.approval_status : undefined;
+
+  // Keep the saved session in step, so live events start on approval and stop when access is removed.
+  useEffect(() => {
+    if (me && me.approval_status !== stored) updateSessionProfile(me);
+  }, [me, stored]);
 
   if (!me) {
     return (

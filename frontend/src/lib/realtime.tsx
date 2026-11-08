@@ -31,6 +31,8 @@ const EVENT_KEYS: Record<string, string[]> = {
   "earnings.updated": ["/api/rider/earnings", "/api/rider/me"],
   "payments.changed": ["/api/admin/payments", "/api/admin/stats"],
   "support.changed": ["/api/admin/support-agents", "/api/admin/stats"],
+  "alert.updated": ["/api/admin/alerts", "/api/admin/trips/"],
+  "report.updated": ["/api/trips/"],
 };
 
 /** Events worth a sound even when the tab is visible. */
@@ -55,8 +57,11 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
   const session = useSession();
   const { mutate } = useSWRConfig();
   const [connected, setConnected] = useState(false);
-  // Support agents get no events (they go to admins only), so their pages keep polling at the fast rate.
-  const profileId = session.status === "authenticated" && session.profile.role !== "support" ? session.profile.id : null;
+  // A support agent connects only once approved; until then their pages poll instead.
+  const profileId =
+    session.status === "authenticated" && (session.profile.role !== "support" || session.profile.approval_status === "approved")
+      ? session.profile.id
+      : null;
 
   useEffect(() => {
     if (!profileId) return;
@@ -66,7 +71,8 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
 
     const revalidate = (prefixes: string[]) =>
-      mutate((key) => typeof key === "string" && prefixes.some((p) => key.startsWith(p)), undefined, { revalidate: true });
+      // Only a matcher: passing data (even `undefined`) would wipe the cached data and make the page flicker empty.
+      mutate((key) => typeof key === "string" && prefixes.some((p) => key.startsWith(p)));
 
     const handle = (event: ServerEvent) => {
       const prefixes = EVENT_KEYS[event.type];
@@ -98,7 +104,8 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
       };
       ws.onclose = (e) => {
         setConnected(false);
-        if (stopped || e.code === 4401) return;
+        // 4401: not allowed to connect. 4403: access was removed (a support agent).
+        if (stopped || e.code === 4401 || e.code === 4403) return;
         retryTimer = setTimeout(connect, Math.min(15000, 1000 * 2 ** attempt++));
       };
     };
