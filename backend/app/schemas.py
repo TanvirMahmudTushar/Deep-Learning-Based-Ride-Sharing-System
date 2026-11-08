@@ -349,6 +349,12 @@ class AlertStatusIn(BaseModel):
     status: Literal["open", "reviewed", "closed"]
 
 
+class AlertNoteIn(BaseModel):
+    body: str = Field(min_length=1, max_length=2000)
+    # True sends it to the passenger as a reply (reports only); false keeps it internal.
+    for_passenger: bool = False
+
+
 class PricingRuleIn(BaseModel):
     base_fare: float = Field(ge=0)
     per_km: float = Field(ge=0)

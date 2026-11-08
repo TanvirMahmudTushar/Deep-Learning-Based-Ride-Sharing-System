@@ -217,7 +217,7 @@ export function PortalShell({
         {nav && <PortalNav items={nav} />}
         <div className="ml-auto flex items-center gap-2">
           {actions}
-          {role !== "support" && (
+          {(role !== "support" || profile.approval_status === "approved") && (
             <>
               <LiveIndicator />
               <NotificationButton />

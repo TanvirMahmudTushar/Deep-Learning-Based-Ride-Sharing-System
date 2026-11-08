@@ -225,8 +225,11 @@ class SafetyAlert(Base):
     summary: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(10), default="open")  # open, reviewed, closed
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    # The admin or support agent handling this alert, so two people don't work on the same one.
+    assigned_to: Mapped[str | None] = mapped_column(ForeignKey("profiles.id"))
 
     trip: Mapped[Trip] = relationship()
+    notes: Mapped[list["AlertNote"]] = relationship(back_populates="alert", order_by="AlertNote.created_at")
 
     @property
     def details(self) -> dict:
@@ -255,6 +258,23 @@ class WeatherHourly(Base):
     temperature_c: Mapped[float] = mapped_column(Float)
     precipitation_mm: Mapped[float] = mapped_column(Float)
     source: Mapped[str] = mapped_column(String(20), default="open-meteo")
+
+
+class AlertNote(Base):
+    """A note on a safety alert. Notes are internal unless `for_passenger` is set, which makes them a
+    reply the passenger can read on their own report. Never shown to the rider."""
+
+    __tablename__ = "alert_notes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    alert_id: Mapped[str] = mapped_column(ForeignKey("safety_alerts.id"), index=True)
+    author_id: Mapped[str] = mapped_column(ForeignKey("profiles.id"))
+    body: Mapped[str] = mapped_column(Text)
+    for_passenger: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    alert: Mapped[SafetyAlert] = relationship(back_populates="notes")
+    author: Mapped[Profile] = relationship()
 
 
 class Payment(Base):
