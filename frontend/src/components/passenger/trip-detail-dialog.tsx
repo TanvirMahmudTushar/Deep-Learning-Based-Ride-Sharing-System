@@ -2,8 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import useSWR from "swr";
-import { Flag, RotateCcw, ShieldAlert } from "lucide-react";
+import useSWR, { useSWRConfig } from "swr";
+import { Flag, MessageSquareReply, RotateCcw, ShieldAlert } from "lucide-react";
 import { RideMap } from "@/components/map/ride-map";
 import { FareBreakdownView, PaymentStatus, RateForm, ReportForm } from "@/components/passenger/trip-parts";
 import { RatingText, TripStatusBadge, VehicleTag } from "@/components/ride-bits";
@@ -14,7 +14,8 @@ import { fetcher } from "@/lib/api";
 import { formatDateTime, formatKm, formatMinutes, formatTaka } from "@/lib/format";
 import { toTuple } from "@/lib/geo";
 import { setPrefill } from "@/lib/prefill";
-import type { Trip } from "@/lib/types";
+import { Badge } from "@/components/ui/badge";
+import type { PassengerReport, Trip } from "@/lib/types";
 
 function Timeline({ trip }: { trip: Trip }) {
   const steps: [string, string | null][] = [
@@ -38,9 +39,40 @@ function Timeline({ trip }: { trip: Trip }) {
   );
 }
 
+const REPORT_STATUS: Record<PassengerReport["status"], string> = { received: "Received", in_review: "Being reviewed", closed: "Closed" };
+
+/** The passenger's reports on this trip, with their status and any reply from support. */
+function ReportUpdates({ tripId }: { tripId: string }) {
+  const { data: reports } = useSWR<PassengerReport[]>(`/api/trips/${tripId}/reports`, fetcher);
+  if (!reports?.length) return null;
+  return (
+    <div className="space-y-2">
+      <h3 className="text-xs font-medium text-muted-foreground">Your reports</h3>
+      {reports.map((r) => (
+        <div key={r.id} className="space-y-2 rounded-lg border p-3 text-sm">
+          <div className="flex items-center justify-between gap-2">
+            <span className="capitalize">{(r.category ?? "other").replace(/_/g, " ")}</span>
+            <Badge variant="outline">{REPORT_STATUS[r.status]}</Badge>
+          </div>
+          <p className="text-muted-foreground">“{r.note}”</p>
+          {r.replies.map((reply) => (
+            <div key={reply.id} className="space-y-1 rounded-md bg-muted/50 p-2">
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <MessageSquareReply className="size-3.5" /> Cholo support · {formatDateTime(reply.created_at)}
+              </div>
+              <p className="whitespace-pre-wrap">{reply.body}</p>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Body({ trip, onChanged }: { trip: Trip; onChanged: () => void }) {
   const router = useRouter();
   const [reporting, setReporting] = useState(false);
+  const { mutate } = useSWRConfig();
   const ended = trip.status === "completed" || trip.status === "cancelled";
 
   function rideAgain() {
@@ -132,7 +164,17 @@ function Body({ trip, onChanged }: { trip: Trip; onChanged: () => void }) {
         </p>
       )}
 
-      {reporting && <ReportForm tripId={trip.id} onDone={() => setReporting(false)} />}
+      {ended && <ReportUpdates tripId={trip.id} />}
+
+      {reporting && (
+        <ReportForm
+          tripId={trip.id}
+          onDone={() => {
+            setReporting(false);
+            void mutate(`/api/trips/${trip.id}/reports`);
+          }}
+        />
+      )}
 
       {ended && (
         <div className="flex flex-wrap gap-2">
