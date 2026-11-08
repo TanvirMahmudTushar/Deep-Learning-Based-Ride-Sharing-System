@@ -25,6 +25,11 @@ SUPPORT_ROUTES = {
     ("GET", "/api/admin/alerts"),
     ("POST", "/api/admin/alerts/x/summarize"),
     ("POST", "/api/admin/alerts/x/status"),
+    ("GET", "/api/admin/alerts/summary"),
+    ("POST", "/api/admin/alerts/x/claim"),
+    ("POST", "/api/admin/alerts/x/release"),
+    ("POST", "/api/admin/alerts/x/notes"),
+    ("GET", "/api/admin/trips/x"),
 }
 
 

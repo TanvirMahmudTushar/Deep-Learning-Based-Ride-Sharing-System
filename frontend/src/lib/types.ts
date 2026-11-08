@@ -241,6 +241,49 @@ export interface SafetyAlert {
   drop_address: string;
   route: [number, number][];
   rider_name: string | null;
+  rider_phone: string | null;
+  passenger_name: string;
+  assigned_to: { id: string; name: string } | null;
+  last_changed_by: string | null;
+  notes: AlertNote[];
+}
+
+export interface AlertNote {
+  id: string;
+  body: string;
+  /** A reply the passenger can read; otherwise an internal note. */
+  for_passenger: boolean;
+  author_name: string;
+  author_role: Role;
+  created_at: string;
+}
+
+export interface AlertSummary {
+  open_total: number;
+  by_type: Record<SafetyAlert["alert_type"], number>;
+  unassigned: number;
+  oldest_open_at: string | null;
+  oldest_open_minutes: number | null;
+}
+
+export interface StaffTripDetail {
+  trip: Trip;
+  alerts: SafetyAlert[];
+}
+
+export interface TripPage {
+  trips: Trip[];
+  has_more: boolean;
+}
+
+/** A passenger's own report on a trip, as they see it. */
+export interface PassengerReport {
+  id: string;
+  category: string | null;
+  note: string;
+  status: "received" | "in_review" | "closed";
+  created_at: string;
+  replies: { id: string; body: string; created_at: string }[];
 }
 
 export interface ZoneForecast {
