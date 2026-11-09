@@ -243,3 +243,12 @@
   from { transform: scale(0.6); opacity: 0.9; }
   to { transform: scale(1.5); opacity: 0; }
 }
+
+/* Receipts print on white paper, whatever the screen theme. */
+@media print {
+  html,
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+}

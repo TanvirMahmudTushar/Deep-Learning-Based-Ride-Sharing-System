@@ -16,7 +16,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { api, fetcher } from "@/lib/api";
 import { formatDateTime, formatTaka } from "@/lib/format";
 import { useLiveInterval } from "@/lib/realtime";
-import type { PaymentsOverview } from "@/lib/types";
+import type { AdminCancelFee, PaymentsOverview } from "@/lib/types";
 
 type Balance = PaymentsOverview["balances"][number];
 
@@ -212,7 +212,68 @@ export function PaymentsTab() {
         </Card>
       )}
 
+      <CancelFeesCard />
+
       <SettlementDialog balance={settling} onOpenChange={(open) => !open && setSettling(null)} onSaved={() => void mutate()} />
     </div>
+  );
+}
+
+const FEE_STATUS: Record<AdminCancelFee["status"], string> = {
+  owed: "Owed",
+  paid: "Paid",
+  waived: "Waived",
+  credited: "Refunded as credit",
+  credit_used: "Credit used",
+};
+
+/** Late-cancellation fees, with a waive button: dropping a fee still owed, or refunding a paid one as credit. */
+function CancelFeesCard() {
+  const { data: fees, mutate } = useSWR<AdminCancelFee[]>("/api/admin/cancel-fees", fetcher);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  async function waive(fee: AdminCancelFee) {
+    setBusy(fee.trip_id);
+    try {
+      const res = await api<{ status: AdminCancelFee["status"] }>(`/api/admin/trips/${fee.trip_id}/cancel-fee/waive`, { method: "POST" });
+      toast.success(res.status === "credited" ? `${fee.passenger_name} gets a ${formatTaka(fee.fee)} credit on their next ride` : "Fee waived");
+      await mutate();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not waive the fee");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Late-cancellation fees</CardTitle>
+        <CardDescription>Added to the passenger&apos;s next ride. Waiving a paid fee refunds it as credit on their next ride.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-1.5 text-sm">
+        {fees?.length === 0 && <p className="text-muted-foreground">No late cancellations yet.</p>}
+        {fees?.map((f) => (
+          <div key={f.trip_id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted/50 px-3 py-2">
+            <span className="min-w-0">
+              {f.passenger_name}
+              <span className="text-muted-foreground">
+                {" "}
+                · {formatDateTime(f.cancelled_at)} · {f.cancel_reason?.replace("Cancelled by passenger: ", "") ?? "No reason"}
+              </span>
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="tabular-nums">{formatTaka(f.fee)}</span>
+              <Badge variant="outline">{FEE_STATUS[f.status]}</Badge>
+              {(f.status === "owed" || f.status === "paid") && (
+                <Button size="xs" variant="secondary" disabled={busy === f.trip_id} onClick={() => void waive(f)}>
+                  {f.status === "owed" ? "Waive" : "Refund as credit"}
+                </Button>
+              )}
+            </span>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
   );
 }
