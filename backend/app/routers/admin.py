@@ -29,7 +29,7 @@ from app.models import (
 from app.schemas import AlertNoteIn, AlertStatusIn, PricingRuleIn, iso_utc, rider_rating, trip_out, vehicle_out
 from app.security import DB, Admin, Staff
 from app.realtime import ADMINS, emit, hub
-from app.services import availability, demand, documents
+from app.services import availability, cancel_fees, demand, documents
 from app.services import trips as trip_service
 from app.services.alerts import ensure_summary
 from app.services.predictors import demand_forecaster
@@ -437,6 +437,39 @@ def trip_detail(trip_id: str, db: DB, staff: Staff):
     return {"trip": trip_out(db, trip).model_dump(mode="json"), "alerts": [_alert_out(db, a) for a in alerts_on_trip]}
 
 
+@router.get("/cancel-fees")
+def cancellation_fees(db: DB, admin: Admin):
+    """Recent late-cancellation fees, so an admin can waive one (the passenger's refund)."""
+    trips = db.scalars(select(Trip).where(Trip.cancel_fee.is_not(None)).order_by(Trip.completed_at.desc()).limit(100))
+    return [
+        {
+            "trip_id": t.id,
+            "passenger_name": t.user.full_name,
+            "rider_name": t.rider.profile.full_name if t.rider else None,
+            "vehicle_type": t.vehicle_type_requested,
+            "pickup_address": t.pickup_address,
+            "cancelled_at": iso_utc(t.completed_at),
+            "cancel_reason": t.cancel_reason,
+            "fee": t.cancel_fee,
+            "status": t.cancel_fee_status,
+        }
+        for t in trips
+    ]
+
+
+@router.post("/trips/{trip_id}/cancel-fee/waive")
+def waive_cancel_fee(trip_id: str, db: DB, admin: Admin):
+    trip = db.get(Trip, trip_id)
+    if trip is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Trip not found")
+    try:
+        new_status = cancel_fees.waive(db, trip)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e))
+    db.commit()
+    return {"trip_id": trip.id, "status": new_status}
+
+
 @router.get("/forecasts")
 def forecasts(db: DB, admin: Admin):
     demand.ensure_fresh(db)
@@ -507,6 +540,7 @@ def _rule_out(r: PricingRule) -> dict:
         "min_fare": float(r.min_fare),
         "max_multiplier": r.max_multiplier,
         "commission_pct": r.commission_pct if r.commission_pct is not None else settings.default_commission_pct,
+        "cancel_fee": r.cancel_fee if r.cancel_fee is not None else cancel_fees.DEFAULT_CANCEL_FEE.get(r.vehicle_type, 0.0),
     }
 
 
@@ -520,7 +554,7 @@ def update_pricing(vehicle_type: str, body: PricingRuleIn, db: DB, admin: Admin)
     rule = db.scalar(select(PricingRule).where(PricingRule.vehicle_type == vehicle_type))
     if rule is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown vehicle type")
-    for k, v in body.model_dump().items():
+    for k, v in body.model_dump(exclude_unset=True).items():
         setattr(rule, k, v)
     db.commit()
     return _rule_out(rule)

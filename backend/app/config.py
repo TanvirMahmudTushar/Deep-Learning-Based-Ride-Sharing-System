@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     simulator_accept_delay_seconds: float = 3.0
 
     offer_timeout_seconds: int = 30
+    # Passengers may cancel free of charge for this long after a rider accepts.
+    late_cancel_grace_seconds: int = 120
     match_radius_km: float = 8.0
     # Riders whose app has not sent a location for this long are not offered trips.
     rider_stale_seconds: int = 120

@@ -20,17 +20,20 @@ def commission_pct_for(db: Session, vehicle_type: str) -> float:
 
 
 def create_for_trip(db: Session, trip: Trip) -> Payment:
-    amount = float(trip.fare_final if trip.fare_final is not None else trip.fare_estimate)
+    fare = float(trip.fare_final if trip.fare_final is not None else trip.fare_estimate)
     pct = commission_pct_for(db, trip.vehicle_type_requested)
-    commission = round(amount * pct / 100)
+    fare_commission = round(fare * pct / 100)
+    # Earlier late-cancellation fees (or credits) ride along in the cash. The platform keeps the fees
+    # and absorbs the credits, so they change the commission, never the rider's earning.
+    adjustment = float(trip.fee_adjustment or 0)
     payment = Payment(
         trip_id=trip.id,
         rider_id=trip.rider_id,
         method="cash",
-        amount=amount,
+        amount=fare + adjustment,
         commission_pct=pct,
-        commission=commission,
-        rider_earning=amount - commission,
+        commission=fare_commission + adjustment,
+        rider_earning=fare - fare_commission,
     )
     db.add(payment)
     db.flush()
