@@ -2,13 +2,14 @@
 
 import { useState } from "react";
 import useSWRInfinite from "swr/infinite";
-import { Loader2, ShieldAlert } from "lucide-react";
+import { toast } from "sonner";
+import { Download, Loader2, ShieldAlert } from "lucide-react";
 import { RatingText, TripStatusBadge, VehicleTag } from "@/components/ride-bits";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { fetcher } from "@/lib/api";
+import { api, fetcher } from "@/lib/api";
 import { formatDateTime, formatKm, formatTaka } from "@/lib/format";
 import type { Trip } from "@/lib/types";
 
@@ -22,17 +23,38 @@ export function TripsTab({ onOpenTrip }: { onOpenTrip: (id: string) => void }) {
     fetcher,
   );
   const trips = data?.flat() ?? [];
+  const [exporting, setExporting] = useState(false);
+
+  async function exportCsv() {
+    setExporting(true);
+    try {
+      const blob = await api<Blob>("/api/passenger/trips/export", { raw: true });
+      const url = URL.createObjectURL(blob);
+      const a = Object.assign(document.createElement("a"), { href: url, download: "cholo-trips.csv" });
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not download your trips");
+    } finally {
+      setExporting(false);
+    }
+  }
   const done = !!data && data[data.length - 1].length < PAGE;
 
   return (
     <div className="space-y-4">
-      <Tabs value={filter} onValueChange={setFilter}>
-        <TabsList>
-          <TabsTrigger value="all">All</TabsTrigger>
-          <TabsTrigger value="completed">Completed</TabsTrigger>
-          <TabsTrigger value="cancelled">Cancelled</TabsTrigger>
-        </TabsList>
-      </Tabs>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Tabs value={filter} onValueChange={setFilter}>
+          <TabsList>
+            <TabsTrigger value="all">All</TabsTrigger>
+            <TabsTrigger value="completed">Completed</TabsTrigger>
+            <TabsTrigger value="cancelled">Cancelled</TabsTrigger>
+          </TabsList>
+        </Tabs>
+        <Button variant="outline" size="sm" onClick={() => void exportCsv()} disabled={exporting}>
+          {exporting ? <Loader2 className="animate-spin" /> : <Download />} Download CSV
+        </Button>
+      </div>
 
       <Card className="py-0">
         <Table>

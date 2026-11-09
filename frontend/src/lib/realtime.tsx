@@ -33,6 +33,7 @@ const EVENT_KEYS: Record<string, string[]> = {
   "support.changed": ["/api/admin/support-agents", "/api/admin/stats"],
   "alert.updated": ["/api/admin/alerts", "/api/admin/trips/"],
   "report.updated": ["/api/trips/"],
+  "trip.message": ["/api/trips/", "/api/rider/trips/"],
 };
 
 /** Events worth a sound even when the tab is visible. */
