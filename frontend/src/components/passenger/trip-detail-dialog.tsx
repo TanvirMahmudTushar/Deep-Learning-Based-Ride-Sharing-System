@@ -1,9 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import useSWR, { useSWRConfig } from "swr";
-import { Flag, MessageSquareReply, RotateCcw, ShieldAlert } from "lucide-react";
+import { Flag, MessageSquareReply, Receipt, RotateCcw, ShieldAlert } from "lucide-react";
 import { RideMap } from "@/components/map/ride-map";
 import { FareBreakdownView, PaymentStatus, RateForm, ReportForm } from "@/components/passenger/trip-parts";
 import { RatingText, TripStatusBadge, VehicleTag } from "@/components/ride-bits";
@@ -117,6 +118,14 @@ function Body({ trip, onChanged }: { trip: Trip; onChanged: () => void }) {
       </div>
 
       {trip.cancel_reason && <p className="text-sm text-muted-foreground">{trip.cancel_reason}</p>}
+      {trip.cancel_fee != null && (
+        <p className="text-sm text-muted-foreground">
+          Late-cancellation fee {formatTaka(trip.cancel_fee)}:{" "}
+          {{ owed: "added to your next ride", paid: "paid with a later ride", waived: "waived", credited: "refunded as credit on your next ride", credit_used: "refunded as credit" }[
+            trip.cancel_fee_status ?? "owed"
+          ] ?? ""}
+        </p>
+      )}
 
       <div className="grid gap-5 sm:grid-cols-2">
         <div className="space-y-2">
@@ -129,6 +138,15 @@ function Body({ trip, onChanged }: { trip: Trip; onChanged: () => void }) {
             <FareBreakdownView breakdown={trip.fare_breakdown} />
           ) : (
             <p className="text-sm">{formatTaka(trip.fare_final ?? trip.fare_estimate)}</p>
+          )}
+          {!!trip.fee_adjustment && (
+            <p className="flex justify-between gap-3 text-sm">
+              <span className="text-muted-foreground">{trip.fee_adjustment > 0 ? "Earlier late-cancellation fee" : "Credit"}</span>
+              <span className="tabular-nums">
+                {trip.fee_adjustment > 0 ? "+" : "−"}
+                {formatTaka(Math.abs(trip.fee_adjustment))}
+              </span>
+            </p>
           )}
         </div>
       </div>
@@ -181,6 +199,13 @@ function Body({ trip, onChanged }: { trip: Trip; onChanged: () => void }) {
           <Button onClick={rideAgain}>
             <RotateCcw /> Ride again
           </Button>
+          {trip.status === "completed" && (
+            <Button variant="outline" asChild>
+              <Link href={`/user/receipt?trip=${trip.id}`} target="_blank" rel="noopener">
+                <Receipt /> Receipt
+              </Link>
+            </Button>
+          )}
           {!reporting && (
             <Button variant="outline" onClick={() => setReporting(true)}>
               <Flag /> Report a problem

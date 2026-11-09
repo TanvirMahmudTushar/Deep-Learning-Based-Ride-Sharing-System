@@ -209,7 +209,7 @@ export function PortalShell({
   const { profile } = session;
   return (
     <div className="flex h-dvh flex-col">
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b bg-background/80 px-4 backdrop-blur">
+      <header className="flex h-14 shrink-0 items-center gap-3 border-b bg-background/80 px-4 backdrop-blur print:hidden">
         <Brand />
         <Badge variant="secondary" className="hidden sm:inline-flex">
           {PORTAL_NAME[role]} portal
