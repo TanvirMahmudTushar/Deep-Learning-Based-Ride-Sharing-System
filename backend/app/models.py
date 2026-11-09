@@ -104,6 +104,12 @@ class Trip(Base):
     actual_duration_min: Mapped[float | None] = mapped_column(Float)
     cancelled_by: Mapped[str | None] = mapped_column(String(10))  # user, rider, system
     cancel_reason: Mapped[str | None] = mapped_column(String(160))
+    # Late-cancellation fee charged for this trip, and what happened to it (see services/cancel_fees.py).
+    cancel_fee: Mapped[float | None] = mapped_column(Float)
+    cancel_fee_status: Mapped[str | None] = mapped_column(String(12))  # owed, paid, waived, credited, credit_used
+    fee_settled_by: Mapped[str | None] = mapped_column(String(36))  # the later ride carrying this fee
+    # On a later ride: earlier fees (positive) or credits (negative) added to what the passenger pays.
+    fee_adjustment: Mapped[float | None] = mapped_column(Float)
 
     # Matching state: the rider currently being offered this trip.
     offered_rider_id: Mapped[str | None] = mapped_column(ForeignKey("riders.id"))
@@ -246,6 +252,8 @@ class PricingRule(Base):
     per_min: Mapped[float] = mapped_column(Float)
     min_fare: Mapped[float] = mapped_column(Float)
     max_multiplier: Mapped[float] = mapped_column(Float)
+    # Late-cancellation fee; None falls back to the default in services/cancel_fees.py.
+    cancel_fee: Mapped[float | None] = mapped_column(Float)
     # Platform share of each fare, in percent; None falls back to settings.default_commission_pct.
     commission_pct: Mapped[float | None] = mapped_column(Float)
 
@@ -258,6 +266,19 @@ class WeatherHourly(Base):
     temperature_c: Mapped[float] = mapped_column(Float)
     precipitation_mm: Mapped[float] = mapped_column(Float)
     source: Mapped[str] = mapped_column(String(20), default="open-meteo")
+
+
+class TripMessage(Base):
+    """Chat between a passenger and their rider during a trip."""
+
+    __tablename__ = "trip_messages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    trip_id: Mapped[str] = mapped_column(ForeignKey("trips.id"), index=True)
+    sender_id: Mapped[str] = mapped_column(ForeignKey("profiles.id"))
+    sender_role: Mapped[str] = mapped_column(String(10))  # user (passenger) or rider
+    body: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class AlertNote(Base):

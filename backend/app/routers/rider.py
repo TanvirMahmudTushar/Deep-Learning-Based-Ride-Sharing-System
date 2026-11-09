@@ -9,10 +9,10 @@ from app.config import settings
 from app.db import local_day_start, utcnow
 from app.geo import haversine_km
 from app.models import Payment, Rider, Trip
-from app.schemas import AutoDriveIn, LocationIn, OfferOut, OnlineIn, RiderMe, TripOut, rider_rating, trip_out, vehicle_out
+from app.schemas import AutoDriveIn, LocationIn, MessageIn, OfferOut, OnlineIn, RiderMe, TripOut, rider_rating, trip_out, vehicle_out
 from app.security import DB, CurrentRider
 from app.realtime import ADMINS, emit
-from app.services import documents, payments
+from app.services import documents, messages, payments
 from app.services import trips as trip_service
 from app.services.matching import rider_cancel_rates
 
@@ -147,6 +147,19 @@ def complete(trip_id: str, db: DB, rider: CurrentRider):
     trip = trip_service.complete(db, _assigned_trip(db, rider, trip_id))
     db.commit()
     return trip_out(db, trip, for_rider=True)
+
+
+@router.get("/trips/{trip_id}/messages")
+def trip_messages(trip_id: str, db: DB, rider: CurrentRider):
+    trip = _assigned_trip(db, rider, trip_id)
+    return [messages.message_out(m, "rider") for m in messages.list_for(db, trip)]
+
+
+@router.post("/trips/{trip_id}/messages", status_code=status.HTTP_201_CREATED)
+def send_message(trip_id: str, body: MessageIn, db: DB, rider: CurrentRider):
+    message = messages.post(db, _assigned_trip(db, rider, trip_id), "rider", rider.profile_id, body.body)
+    db.commit()
+    return messages.message_out(message, "rider")
 
 
 @router.post("/trips/{trip_id}/cancel", response_model=TripOut)
