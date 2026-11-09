@@ -16,7 +16,7 @@ from app.db import utcnow
 from app.geo import Point, haversine_km
 from app.models import ACTIVE_TRIP_STATUSES, Profile, Rider, Trip, TripLocation
 from app.realtime import ADMINS, emit
-from app.services import alerts, matching, payments, pricing
+from app.services import alerts, cancel_fees, matching, payments, pricing
 from app.services.predictors import eta_predictor
 from app.services.routing import get_route
 from app.services.zones import describe_point, nearest_zone
@@ -100,6 +100,7 @@ def create_trip(
     if not matching.offer_next(db, trip):
         db.rollback()
         raise TripError(409, f"No {vehicle_type} riders are available nearby right now. Try another vehicle type.")
+    cancel_fees.reserve_for(db, trip)
     emit(db, ADMINS, "live.changed", coalesce="admin-live")
     return trip
 
@@ -175,6 +176,7 @@ def complete(db: Session, trip: Trip) -> Trip:
         trip.rider.current_lat, trip.rider.current_lng = trip.drop_lat, trip.drop_lng
     db.flush()
     payment = payments.create_for_trip(db, trip)
+    cancel_fees.settle(db, trip)
     if trip.rider and trip.rider.is_simulated:
         payments.mark_collected(payment)  # simulated riders "collect" instantly
     _trip_event(db, trip, notify_passenger=("You have arrived", f"Please pay ৳{payment.amount:.0f} in cash to your rider."))
@@ -185,6 +187,10 @@ def cancel(db: Session, trip: Trip, by: str, reason: str | None = None) -> Trip:
     if trip.status not in ("requested", "accepted"):
         raise TripError(409, "This trip can no longer be cancelled")
     offered = trip.offered_rider_id if trip.status == "requested" else None
+    # Work out a late fee before the status changes; earlier fees this ride carried wait for the next one.
+    if by == "user":
+        cancel_fees.charge(db, trip)
+    cancel_fees.release(db, trip)
     if offered:
         matching.set_offer_status(db, trip, offered, "expired")
     trip.status = "cancelled"

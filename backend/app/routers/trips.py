@@ -4,9 +4,9 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
 from app.models import VEHICLE_TYPES, Rating, SafetyAlert, Trip
-from app.schemas import EstimateIn, EstimateOut, QuoteOut, RateIn, ReportIn, SosIn, TripCreate, TripOut, iso_utc, trip_out
+from app.schemas import CancelIn, EstimateIn, EstimateOut, MessageIn, QuoteOut, RateIn, ReportIn, SosIn, TripCreate, TripOut, iso_utc, trip_out
 from app.security import DB, Passenger
-from app.services import alerts, pricing
+from app.services import alerts, cancel_fees, messages, pricing
 from app.services import trips as trip_service
 from app.services.routing import get_route
 from app.services.zones import describe_point
@@ -33,6 +33,7 @@ def estimate(body: EstimateIn, db: DB, user: Passenger):
         route=[list(p) for p in route.points],
         route_source=route.source,
         quotes=quotes,
+        outstanding_fee=cancel_fees.outstanding(db, user.id),
     )
 
 
@@ -73,9 +74,24 @@ def get_trip(trip_id: str, db: DB, user: Passenger):
     return trip_out(db, _own_trip(db, user, trip_id))
 
 
+CANCEL_REASON_LABEL = {
+    "changed_plans": "Plans changed",
+    "wait_too_long": "Waiting too long",
+    "rider_not_moving": "Rider isn't moving",
+    "wrong_pickup": "Wrong pickup location",
+    "found_other_ride": "Found another ride",
+    "price_too_high": "Price too high",
+    "other": "Other reason",
+}
+
+
 @router.post("/{trip_id}/cancel", response_model=TripOut)
-def cancel(trip_id: str, db: DB, user: Passenger):
-    trip = trip_service.cancel(db, _own_trip(db, user, trip_id), "user", "Cancelled by passenger")
+def cancel(trip_id: str, db: DB, user: Passenger, body: CancelIn | None = None):
+    body = body or CancelIn()
+    reason = f"Cancelled by passenger: {CANCEL_REASON_LABEL[body.reason]}"
+    if body.note.strip():
+        reason = f"{reason} ({body.note.strip()})"
+    trip = trip_service.cancel(db, _own_trip(db, user, trip_id), "user", reason[:160])
     db.commit()
     return trip_out(db, trip)
 
@@ -125,6 +141,19 @@ def my_reports(trip_id: str, db: DB, user: Passenger):
         }
         for a in reports
     ]
+
+
+@router.get("/{trip_id}/messages")
+def trip_messages(trip_id: str, db: DB, user: Passenger):
+    trip = _own_trip(db, user, trip_id)
+    return [messages.message_out(m, "user") for m in messages.list_for(db, trip)]
+
+
+@router.post("/{trip_id}/messages", status_code=status.HTTP_201_CREATED)
+def send_message(trip_id: str, body: MessageIn, db: DB, user: Passenger):
+    message = messages.post(db, _own_trip(db, user, trip_id), "user", user.id, body.body)
+    db.commit()
+    return messages.message_out(message, "user")
 
 
 @router.post("/{trip_id}/rate", response_model=TripOut)
