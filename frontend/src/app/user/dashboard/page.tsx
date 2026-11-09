@@ -8,6 +8,7 @@ import { PortalShell } from "@/components/app-shell";
 import { AccountTab } from "@/components/passenger/dashboard/account-tab";
 import { OverviewTab } from "@/components/passenger/dashboard/overview";
 import { PlacesTab } from "@/components/passenger/dashboard/places-tab";
+import { ReviewsTab } from "@/components/passenger/dashboard/reviews-tab";
 import { TripsTab } from "@/components/passenger/dashboard/trips-tab";
 import { PASSENGER_NAV } from "@/components/passenger/nav";
 import { TripDetailDialog } from "@/components/passenger/trip-detail-dialog";
@@ -35,6 +36,7 @@ function PassengerDashboard({ profile }: { profile: Profile }) {
             <TabsList>
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="trips">Trips</TabsTrigger>
+              <TabsTrigger value="reviews">Reviews</TabsTrigger>
               <TabsTrigger value="places">Saved places</TabsTrigger>
               <TabsTrigger value="account">Account</TabsTrigger>
             </TabsList>
@@ -50,6 +52,9 @@ function PassengerDashboard({ profile }: { profile: Profile }) {
         </TabsContent>
         <TabsContent value="trips">
           <TripsTab onOpenTrip={setOpenTrip} />
+        </TabsContent>
+        <TabsContent value="reviews">
+          <ReviewsTab onOpenTrip={setOpenTrip} />
         </TabsContent>
         <TabsContent value="places">
           <PlacesTab />
