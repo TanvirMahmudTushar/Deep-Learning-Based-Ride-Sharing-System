@@ -341,6 +341,15 @@ class ProfileUpdateIn(BaseModel):
     phone: str = Field(min_length=6, max_length=32)
 
 
+class RiderContactIn(BaseModel):
+    """What a rider may change themselves. Name and licence are tied to verified documents, so they can't."""
+
+    email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=160)
+    phone: str = Field(min_length=6, max_length=32)
+    # Required only when the email (the login) changes.
+    current_password: str | None = None
+
+
 class PasswordChangeIn(BaseModel):
     current_password: str
     new_password: NewPassword
@@ -385,6 +394,7 @@ class RiderMe(BaseModel):
     rating: float | None
     rating_count: int
     trips_completed: int
+    trips_today: int
     earnings_today: float
     cancel_rate: float
     is_simulated: bool

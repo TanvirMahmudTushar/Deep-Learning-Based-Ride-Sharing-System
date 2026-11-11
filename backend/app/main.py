@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.db import SessionLocal, create_schema
 from app.realtime import hub
-from app.routers import admin, assistant, auth, documents, geo, meta, passenger, payments, rider, trips, ws
+from app.routers import admin, assistant, auth, documents, geo, meta, passenger, payments, rider, trips, vehicle_changes, ws
 from app.seed import ensure_admin, seed_demo, seed_reference
 from app.services import demand, simulator, weather
 from app.services.documents import DocumentError
@@ -65,5 +65,5 @@ def document_error_handler(_: Request, exc: DocumentError):
     return JSONResponse(status_code=422, content={"detail": str(exc)})
 
 
-for r in (meta, auth, geo, trips, passenger, rider, documents, payments, admin, assistant, ws):
+for r in (meta, auth, geo, trips, passenger, rider, documents, vehicle_changes, payments, admin, assistant, ws):
     app.include_router(r.router)
