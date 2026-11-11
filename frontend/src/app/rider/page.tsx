@@ -8,19 +8,16 @@ import { PortalShell } from "@/components/app-shell";
 import { RideMap, type MapLine, type MapMarker } from "@/components/map/ride-map";
 import { BottomSheet } from "@/components/rider/bottom-sheet";
 import { AvailabilityToggle } from "@/components/rider/availability-toggle";
-import { DocumentsPanel } from "@/components/rider/documents-panel";
-import { EarningsPanel } from "@/components/rider/earnings-panel";
+import { OPEN_PROFILE_EVENT } from "@/components/rider/rider-profile";
 import { ActiveTripCard, CollectCard, OfferCard, run } from "@/components/rider/trip-cards";
-import { RatingText, Stat, VehicleIcon, VehicleTag } from "@/components/ride-bits";
-import { TripHistory } from "@/components/trip-history";
+import { Stat, VehicleIcon, VehicleTag } from "@/components/ride-bits";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, fetcher } from "@/lib/api";
-import { formatPercent, formatTaka, VEHICLE_COLOR } from "@/lib/format";
+import { formatTaka, VEHICLE_COLOR } from "@/lib/format";
 import { haversineKm, toTuple } from "@/lib/geo";
 import { useLiveInterval } from "@/lib/realtime";
 import { useServerHealth } from "@/lib/server";
@@ -74,8 +71,11 @@ function GpsStatus({ status, fix, manual, onManual }: { status: string; fix: Geo
   );
 }
 
+function openProfile(section?: string) {
+  window.dispatchEvent(new CustomEvent(OPEN_PROFILE_EVENT, { detail: section }));
+}
+
 function RiderPortal() {
-  const [tab, setTab] = useState("work");
   const [toggling, setToggling] = useState(false);
   const [manual, setManual] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(true);
@@ -88,7 +88,6 @@ function RiderPortal() {
     refreshInterval: interval,
   });
   const { data: toCollect, mutate: refreshCollect } = useSWR<Trip | null>("/api/rider/pending-payment", fetcher);
-  const { data: history } = useSWR<Trip[]>(tab === "history" ? "/api/rider/trips" : null, fetcher);
 
   // ---- device GPS -------------------------------------------------------------------------
   const verified = me?.status === "verified";
@@ -139,8 +138,7 @@ function RiderPortal() {
 
   function goToDocuments() {
     setBlocked(null);
-    setTab("documents");
-    setSheetOpen(true);
+    openProfile("documents");
   }
 
   /** Going online needs a verified account with approved documents; otherwise explain and send them to Documents. */
@@ -157,7 +155,7 @@ function RiderPortal() {
       } else {
         setBlocked({
           title: "Waiting for verification",
-          message: "Your documents are approved. An admin still needs to verify your account before you can go online. Check the Documents tab for updates.",
+          message: "Your documents are approved. An admin still needs to verify your account before you can go online. Check Documents in your profile for updates.",
           toDocuments: true,
         });
       }
@@ -210,7 +208,6 @@ function RiderPortal() {
       ? [toTuple(position)]
       : [];
   const fitKey = shownTrip ? `${shownTrip.id}-${shownTrip.status}` : position ? "me" : "none";
-  const needsDocs = me && !me.is_simulated && !me.documents_ready;
 
   return (
     <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -257,86 +254,66 @@ function RiderPortal() {
           )
         }
       >
-        <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col gap-0">
-          <div className="border-b px-4 py-3">
-            <TabsList className="grid w-full grid-cols-4">
-              <TabsTrigger value="work">Work</TabsTrigger>
-              <TabsTrigger value="earnings">Earnings</TabsTrigger>
-              <TabsTrigger value="documents">
-                Documents
-                {needsDocs && <span className="ml-1 size-1.5 rounded-full bg-amber-400" />}
-              </TabsTrigger>
-              <TabsTrigger value="history">History</TabsTrigger>
-            </TabsList>
-          </div>
-          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-            <TabsContent value="work" className="mt-0 space-y-4">
-              {!me && <Loader2 className="mx-auto size-5 animate-spin text-muted-foreground" />}
-              {me && (
-                <>
-                  {me.status === "pending" && (
-                    <Alert>
-                      <FileWarning />
-                      <AlertTitle>Waiting for verification</AlertTitle>
-                      <AlertDescription>
-                        {me.documents_ready
-                          ? "Your documents are approved. An admin will verify your account shortly."
-                          : `Upload and get these approved: ${me.missing_documents.join(", ")}.`}
-                        {!me.documents_ready && (
-                          <Button size="sm" variant="link" className="h-auto p-0" onClick={() => setTab("documents")}>
-                            Go to documents
-                          </Button>
-                        )}
-                      </AlertDescription>
-                    </Alert>
-                  )}
-                  {me.status === "suspended" && (
-                    <Alert variant="destructive">
-                      <AlertTitle>Account suspended</AlertTitle>
-                      <AlertDescription>Contact support to restore access.</AlertDescription>
-                    </Alert>
-                  )}
-                  {verified && <GpsStatus status={geo.status} fix={geo.fix} manual={manual} onManual={setManual} />}
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden p-4">
+          <div className="space-y-4">
+            {!me && <Loader2 className="mx-auto size-5 animate-spin text-muted-foreground" />}
+            {me && (
+              <>
+                {me.status === "pending" && (
+                  <Alert>
+                    <FileWarning />
+                    <AlertTitle>Waiting for verification</AlertTitle>
+                    <AlertDescription>
+                      {me.documents_ready
+                        ? "Your documents are approved. An admin will verify your account shortly."
+                        : `Upload and get these approved: ${me.missing_documents.join(", ")}.`}
+                      {!me.documents_ready && (
+                        <Button size="sm" variant="link" className="h-auto p-0" onClick={() => openProfile("documents")}>
+                          Go to documents
+                        </Button>
+                      )}
+                    </AlertDescription>
+                  </Alert>
+                )}
+                {me.status === "suspended" && (
+                  <Alert variant="destructive">
+                    <AlertTitle>Account suspended</AlertTitle>
+                    <AlertDescription>Contact support to restore access.</AlertDescription>
+                  </Alert>
+                )}
+                {verified && <GpsStatus status={geo.status} fix={geo.fix} manual={manual} onManual={setManual} />}
 
-                  {toCollect && <CollectCard trip={toCollect} onDone={refreshAll} />}
-                  {active && <ActiveTripCard trip={active} position={position} canAutoDrive={!!health?.simulator} onChanged={refreshAll} />}
-                  {!active && offer && <OfferCard key={offer.trip.id} offer={offer} me={me} onDone={refreshAll} />}
-                  {!active && !offer && me.is_online && (
-                    <div className="flex items-center gap-3 rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
-                      <Loader2 className="size-4 animate-spin" /> Waiting for trip requests near you…
-                    </div>
-                  )}
-                  {!me.is_online && verified && !active && (
-                    <p className="text-sm text-muted-foreground">
-                      Go online to receive requests for <VehicleTag type={me.vehicle?.vehicle_type ?? "bike"} className="inline-flex" /> rides.
-                    </p>
-                  )}
+                {/* Instantaneous data modules for rider home screen */}
+                <div className="grid grid-cols-2 gap-2">
+                  <Stat
+                    label="Today's Earnings"
+                    value={formatTaka(me.earnings_today)}
+                    hint="After platform cut"
+                  />
+                  <Stat
+                    label="Completed Today"
+                    value={`${me.trips_today ?? 0} rides`}
+                    hint={`${me.trips_completed} lifetime`}
+                  />
+                </div>
 
-                  <div className="grid grid-cols-2 gap-2">
-                    <Stat label="Earnings today" value={formatTaka(me.earnings_today)} hint="After commission" />
-                    <Stat label="Trips completed" value={me.trips_completed} />
-                    <Stat label="Rating" value={<RatingText rating={me.rating} count={me.rating_count} />} />
-                    <Stat label="Cancel rate" value={formatPercent(me.cancel_rate)} hint="Lower rates rank you higher" />
+                {toCollect && <CollectCard trip={toCollect} onDone={refreshAll} />}
+                {active && <ActiveTripCard trip={active} position={position} canAutoDrive={!!health?.simulator} onChanged={refreshAll} />}
+                {!active && offer && <OfferCard key={offer.trip.id} offer={offer} me={me} onDone={refreshAll} />}
+                {!active && !offer && me.is_online && (
+                  <div className="flex items-center gap-3 rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
+                    <Loader2 className="size-4 animate-spin" /> Waiting for trip requests near you…
                   </div>
-                  {me.commission_due > 0 && (
-                    <button type="button" onClick={() => setTab("earnings")} className="w-full text-left text-xs text-muted-foreground hover:text-foreground">
-                      Commission owed to the platform: <span className="font-medium text-foreground">{formatTaka(me.commission_due)}</span>
-                    </button>
-                  )}
-                </>
-              )}
-            </TabsContent>
-            <TabsContent value="earnings" className="mt-0">
-              <EarningsPanel />
-            </TabsContent>
-            <TabsContent value="documents" className="mt-0">
-              <DocumentsPanel />
-            </TabsContent>
-            <TabsContent value="history" className="mt-0">
-              <TripHistory trips={history} empty="No trips yet." />
-            </TabsContent>
+                )}
+                {!me.is_online && verified && !active && (
+                  <p className="text-sm text-muted-foreground">
+                    Go online to receive requests for <VehicleTag type={me.vehicle?.vehicle_type ?? "bike"} className="inline-flex" /> rides.
+                  </p>
+                )}
+              </>
+            )}
           </div>
-        </Tabs>
+        </div>
       </BottomSheet>
       <Dialog open={blocked !== null} onOpenChange={(o) => !o && setBlocked(null)}>
         <DialogContent>
