@@ -51,7 +51,8 @@ class Rider(Base):
 
     @property
     def vehicle(self) -> "Vehicle | None":
-        return self.vehicles[0] if self.vehicles else None
+        """The vehicle the rider drives now; replaced vehicles keep their row (old trips point to them) but are retired."""
+        return next((v for v in self.vehicles if v.retired_at is None), None)
 
 
 class Vehicle(Base):
@@ -63,6 +64,8 @@ class Vehicle(Base):
     plate_no: Mapped[str] = mapped_column(String(32))
     model: Mapped[str] = mapped_column(String(60))
     verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Set when an approved vehicle change replaces this vehicle.
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     rider: Mapped[Rider] = relationship(back_populates="vehicles")
 
@@ -348,4 +351,27 @@ class RiderDocument(Base):
     review_note: Mapped[str | None] = mapped_column(String(300))
     reviewed_by: Mapped[str | None] = mapped_column(ForeignKey("profiles.id"))
     uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # Set for documents that belong to a vehicle change request rather than the rider's own verification.
+    vehicle_change_id: Mapped[str | None] = mapped_column(ForeignKey("vehicle_changes.id"), index=True)
+
+
+VEHICLE_CHANGE_DOC_TYPES = ("registration", "vehicle_photo")
+
+
+class VehicleChange(Base):
+    """A rider's request to switch to a different vehicle. The current vehicle keeps operating until an
+    admin approves the new one, which needs its own registration and photo."""
+
+    __tablename__ = "vehicle_changes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    rider_id: Mapped[str] = mapped_column(ForeignKey("riders.id"), index=True)
+    vehicle_type: Mapped[str] = mapped_column(String(8))
+    plate_no: Mapped[str] = mapped_column(String(32))
+    model: Mapped[str] = mapped_column(String(60))
+    status: Mapped[str] = mapped_column(String(10), default="pending")  # pending, approved, rejected, cancelled
+    review_note: Mapped[str | None] = mapped_column(String(300))
+    reviewed_by: Mapped[str | None] = mapped_column(ForeignKey("profiles.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime)

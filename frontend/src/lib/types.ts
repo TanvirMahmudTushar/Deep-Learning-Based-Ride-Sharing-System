@@ -163,6 +163,7 @@ export interface RiderMe {
   rating: number | null;
   rating_count: number;
   trips_completed: number;
+  trips_today: number;
   earnings_today: number;
   cancel_rate: number;
   is_simulated: boolean;
@@ -221,6 +222,7 @@ export interface AdminRider {
   vehicle: Vehicle | null;
   joined_at: string | null;
   documents_ready: boolean;
+  vehicle_change_pending: boolean;
 }
 
 export interface LiveData {
@@ -401,7 +403,7 @@ export interface GeoResult {
   lng: number;
 }
 
-export type DocumentType = "license" | "registration" | "photo";
+export type DocumentType = "license" | "registration" | "photo" | "vehicle_photo";
 
 export interface RiderDocument {
   id: string;
@@ -506,4 +508,17 @@ export interface AdminCancelFee {
   cancel_reason: string | null;
   fee: number;
   status: NonNullable<Trip["cancel_fee_status"]>;
+}
+
+export interface VehicleChange {
+  id: string;
+  vehicle_type: VehicleType;
+  plate_no: string;
+  model: string;
+  status: "pending" | "approved" | "rejected";
+  review_note: string | null;
+  created_at: string | null;
+  reviewed_at: string | null;
+  documents: { doc_type: DocumentType; label: string; document: RiderDocument | null }[];
+  documents_complete: boolean;
 }

@@ -251,3 +251,66 @@
     color: #000 !important;
   }
 }
+
+/* Rider profile: right-to-left wipe */
+@keyframes profile-wipe-in {
+  from {
+    transform: translateX(100%);
+    clip-path: inset(0 0 0 100%);
+  }
+  to {
+    transform: translateX(0);
+    clip-path: inset(0 0 0 0);
+  }
+}
+@keyframes profile-wipe-out {
+  from {
+    transform: translateX(0);
+    clip-path: inset(0 0 0 0);
+  }
+  to {
+    transform: translateX(100%);
+    clip-path: inset(0 0 0 100%);
+  }
+}
+.profile-wipe-in {
+  animation: profile-wipe-in 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.profile-wipe-out {
+  animation: profile-wipe-out 260ms cubic-bezier(0.64, 0, 0.78, 0) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .profile-wipe-in,
+  .profile-wipe-out {
+    animation-duration: 1ms;
+  }
+}
+
+@keyframes subpage-wipe-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes subpage-wipe-out {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+.subpage-wipe-in {
+  animation: subpage-wipe-in 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.subpage-wipe-out {
+  animation: subpage-wipe-out 220ms cubic-bezier(0.64, 0, 0.78, 0) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .subpage-wipe-in,
+  .subpage-wipe-out {
+    animation-duration: 1ms;
+  }
+}
