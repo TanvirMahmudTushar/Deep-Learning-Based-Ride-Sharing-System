@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { LottieSvg } from "lottie-react";
 import { Bell, BellOff, BellRing, KeyRound, LogOut } from "lucide-react";
+import { OPEN_PROFILE_EVENT, RiderProfile } from "@/components/rider/rider-profile";
 import { ChangePasswordForm } from "@/components/change-password-form";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -109,6 +110,39 @@ function UserMenu({ profile }: { profile: Profile }) {
           <ChangePasswordForm onDone={() => setChangingPassword(false)} />
         </DialogContent>
       </Dialog>
+    </>
+  );
+}
+
+/** Rider: the avatar opens the full profile page instead of a menu. */
+function RiderProfileButton({ profile }: { profile: Profile }) {
+  const [open, setOpen] = useState(false);
+  const [section, setSection] = useState<string | undefined>();
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      setSection((e as CustomEvent<string | undefined>).detail);
+      setOpen(true);
+    };
+    window.addEventListener(OPEN_PROFILE_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_PROFILE_EVENT, onOpen);
+  }, []);
+  return (
+    <>
+      <Button
+        variant="ghost"
+        className="h-9 gap-2 px-2"
+        aria-label="Open profile"
+        onClick={() => {
+          setSection(undefined);
+          setOpen(true);
+        }}
+      >
+        <Avatar className="size-8">
+          <AvatarFallback className="text-xs">{initials(profile.full_name)}</AvatarFallback>
+        </Avatar>
+        <span className="hidden text-sm sm:inline">{profile.full_name}</span>
+      </Button>
+      {open && <RiderProfile initialSection={section} onClose={() => setOpen(false)} />}
     </>
   );
 }
@@ -223,7 +257,7 @@ export function PortalShell({
               <NotificationButton />
             </>
           )}
-          <UserMenu profile={profile} />
+          {role === "rider" ? <RiderProfileButton profile={profile} /> : <UserMenu profile={profile} />}
         </div>
       </header>
       {profile.role === role ? (

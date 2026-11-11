@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models import DOCUMENT_TYPES, Rider, RiderDocument
 
-DOC_LABEL = {"license": "Driving licence", "registration": "Vehicle registration", "photo": "Profile photo"}
+DOC_LABEL = {"license": "Driving licence", "registration": "Vehicle registration", "photo": "Profile photo", "vehicle_photo": "Vehicle photo"}
 
 # content type -> (extension, magic-byte check)
 ALLOWED = {
@@ -65,7 +65,7 @@ def delete_file(doc: RiderDocument) -> None:
 
 
 def latest_by_type(db: Session, rider_id: str) -> dict[str, RiderDocument]:
-    docs = db.scalars(select(RiderDocument).where(RiderDocument.rider_id == rider_id).order_by(RiderDocument.uploaded_at)).all()
+    docs = db.scalars(select(RiderDocument).where(RiderDocument.rider_id == rider_id, RiderDocument.vehicle_change_id.is_(None)).order_by(RiderDocument.uploaded_at)).all()
     return {d.doc_type: d for d in docs}  # later uploads replace earlier ones
 
 

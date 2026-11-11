@@ -35,6 +35,8 @@ from app.services.alerts import ensure_summary
 from app.services.predictors import demand_forecaster
 from app.services.weather import current_weather, is_raining
 from app.services.zones import all_zones
+from app.routers.vehicle_changes import pending_change_rider_ids
+
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -96,6 +98,7 @@ def riders(db: DB, admin: Admin, status_filter: str | None = None):
     if status_filter:
         q = q.where(Rider.status == status_filter)
     busy = availability.busy_rider_ids(db)
+    changing = pending_change_rider_ids(db)
     out = []
     for r in db.scalars(q):
         rating, n = rider_rating(db, r.id)
@@ -116,6 +119,7 @@ def riders(db: DB, admin: Admin, status_filter: str | None = None):
                 "rating_count": n,
                 "vehicle": vehicle_out(r.vehicle).model_dump() if r.vehicle else None,
                 "documents_ready": documents.verification_ready(db, r)[0],
+                "vehicle_change_pending": r.id in changing,
                 "joined_at": iso_utc(r.profile.created_at),
             }
         )
@@ -136,8 +140,8 @@ def verify_rider(rider_id: str, db: DB, admin: Admin):
     if not ready:
         raise HTTPException(status.HTTP_409_CONFLICT, "Approve these documents first: " + ", ".join(missing))
     rider.status = "verified"
-    for v in rider.vehicles:
-        v.verified = True
+    if rider.vehicle:
+        rider.vehicle.verified = True
     emit(db, rider.profile_id, "profile.updated", notify=("You're verified", "You can go online and start accepting trips."))
     emit(db, ADMINS, "riders.changed")
     db.commit()

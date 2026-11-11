@@ -8,9 +8,9 @@ from sqlalchemy import func, select
 from app.config import settings
 from app.db import local_day_start, utcnow
 from app.geo import haversine_km
-from app.models import Payment, Rider, Trip
-from app.schemas import AutoDriveIn, LocationIn, MessageIn, OfferOut, OnlineIn, RiderMe, TripOut, rider_rating, trip_out, vehicle_out
-from app.security import DB, CurrentRider
+from app.models import Payment, Profile, Rider, Trip
+from app.schemas import RiderContactIn, AutoDriveIn, LocationIn, MessageIn, OfferOut, OnlineIn, RiderMe, TripOut, rider_rating, trip_out, vehicle_out
+from app.security import DB, CurrentRider, verify_password
 from app.realtime import ADMINS, emit
 from app.services import documents, messages, payments
 from app.services import trips as trip_service
@@ -42,6 +42,9 @@ def me(db: DB, rider: CurrentRider):
             Payment.rider_id == rider.id, Payment.status != "disputed", Payment.created_at >= local_day_start()
         )
     )
+    trips_today = (
+        db.scalar(select(func.count()).where(Trip.rider_id == rider.id, Trip.status == "completed", Trip.completed_at >= local_day_start())) or 0
+    )
     ready, missing = documents.verification_ready(db, rider)
     return RiderMe(
         id=rider.id,
@@ -57,6 +60,7 @@ def me(db: DB, rider: CurrentRider):
         rating=rating,
         rating_count=count,
         trips_completed=completed,
+        trips_today=trips_today,
         earnings_today=float(earnings or 0),
         cancel_rate=round(rider_cancel_rates(db, [rider.id]).get(rider.id, 0.05), 3),
         is_simulated=rider.is_simulated,
@@ -64,6 +68,21 @@ def me(db: DB, rider: CurrentRider):
         missing_documents=missing,
         commission_due=payments.rider_balance(db, rider.id)["commission_due"],
     )
+
+
+@router.patch("/contact", response_model=RiderMe)
+def update_contact(body: RiderContactIn, db: DB, rider: CurrentRider):
+    profile = rider.profile
+    email = body.email.strip().lower()
+    if email != profile.email:
+        if not body.current_password or not verify_password(body.current_password, profile.password_hash):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Enter your current password to change your email")
+        if db.scalar(select(Profile.id).where(Profile.email == email, Profile.id != profile.id)):
+            raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email already exists")
+        profile.email = email
+    profile.phone = body.phone.strip()
+    db.commit()
+    return me(db, rider)
 
 
 @router.post("/online", response_model=RiderMe)

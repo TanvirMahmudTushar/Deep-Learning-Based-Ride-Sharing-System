@@ -65,7 +65,7 @@ def upload_document(
     stored = docs.store_bytes(data, file.content_type or "")
 
     # A new upload replaces earlier unapproved versions of the same document.
-    for old in db.scalars(select(RiderDocument).where(RiderDocument.rider_id == rider.id, RiderDocument.doc_type == doc_type, RiderDocument.status != "approved")):
+    for old in db.scalars(select(RiderDocument).where(RiderDocument.rider_id == rider.id, RiderDocument.doc_type == doc_type, RiderDocument.status != "approved", RiderDocument.vehicle_change_id.is_(None))):
         docs.delete_file(old)
         db.delete(old)
     doc = RiderDocument(
