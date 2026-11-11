@@ -242,3 +242,17 @@ def test_pending_payment_survives_reload(client, user_h, rider_h):
     client.post(f"/api/rider/trips/{trip['id']}/collect", headers=rider_h)
     following = client.get("/api/rider/pending-payment", headers=rider_h).json()
     assert following is None or following["id"] != trip["id"]  # older uncollected trips may remain
+
+
+def test_rider_earnings_daily_and_demand_hints(client, rider_h):
+    earnings = client.get("/api/rider/earnings", headers=rider_h).json()
+    assert len(earnings["daily"]) == 7
+    assert earnings["daily"][0]["label"] == "Today"
+    assert sum(d["trips"] for d in earnings["daily"]) >= earnings["today"]["trips"]
+
+    hints = client.get("/api/rider/demand-hints", headers=rider_h, params=GULSHAN).json()
+    assert hints["vehicle_type"] == "bike"
+    assert len(hints["zones"]) == 12
+    assert hints["zones"][0]["expected_requests"] >= hints["zones"][-1]["expected_requests"]
+    assert all(z["distance_km"] is not None for z in hints["zones"])
+    assert all(z["demand_level"] in ("low", "normal", "high", "very high") for z in hints["zones"])

@@ -1,20 +1,22 @@
 """Rider portal endpoints: availability, offers and the trip lifecycle from the driver's side."""
 
+from collections import defaultdict
 from datetime import timedelta
 
 from fastapi import APIRouter, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from app.config import settings
 from app.db import local_day_start, utcnow
 from app.geo import haversine_km
-from app.models import Payment, Profile, Rider, Trip
-from app.schemas import RiderContactIn, AutoDriveIn, LocationIn, MessageIn, OfferOut, OnlineIn, RiderMe, TripOut, rider_rating, trip_out, vehicle_out
+from app.models import DemandForecast, Payment, Profile, Rider, Trip, Vehicle
+from app.schemas import RiderContactIn, AutoDriveIn, LocationIn, MessageIn, OfferOut, OnlineIn, RiderMe, TripOut, iso_utc, rider_rating, trip_out, vehicle_out
 from app.security import DB, CurrentRider, verify_password
 from app.realtime import ADMINS, emit
-from app.services import documents, messages, payments
+from app.services import availability, demand, documents, messages, payments, pricing, weather
 from app.services import trips as trip_service
 from app.services.matching import rider_cancel_rates
+from app.services.zones import all_zones
 
 router = APIRouter(prefix="/api/rider", tags=["rider"])
 
@@ -204,3 +206,72 @@ def auto_drive(trip_id: str, body: AutoDriveIn, db: DB, rider: CurrentRider):
 def history(db: DB, rider: CurrentRider, limit: int = 20):
     trips = db.scalars(select(Trip).where(Trip.rider_id == rider.id).order_by(Trip.requested_at.desc()).limit(min(limit, 100)))
     return [trip_out(db, t, include_route=False, for_rider=True) for t in trips]
+
+
+@router.get("/demand-hints")
+def demand_hints(db: DB, rider: CurrentRider, lat: float | None = None, lng: float | None = None):
+    """Next-hour expected request density and supply per zone for this rider's vehicle type."""
+    demand.ensure_fresh(db)
+    vt = rider.vehicle.vehicle_type if rider.vehicle else "bike"
+    zones = all_zones(db)
+    rows = db.scalars(select(DemandForecast).where(DemandForecast.vehicle_type == vt)).all()
+
+    expected_by_zone: dict[int, float] = defaultdict(float)
+    for f in rows:
+        expected_by_zone[f.zone_id] += f.predicted_requests
+
+    busy = availability.busy_rider_ids(db)
+    supply: dict[int, int] = defaultdict(int)
+    zone_points = [(z.id, (z.center_lat, z.center_lng)) for z in zones]
+    if zone_points:
+        free_riders = db.scalars(
+            select(Rider)
+            .join(Vehicle, Vehicle.rider_id == Rider.id)
+            .where(
+                Rider.is_online.is_(True),
+                Rider.status == "verified",
+                Rider.current_lat.is_not(None),
+                or_(Rider.is_simulated.is_(True), Rider.last_seen >= utcnow() - timedelta(seconds=settings.rider_stale_seconds)),
+                Vehicle.vehicle_type == vt,
+                Vehicle.verified.is_(True),
+                Vehicle.retired_at.is_(None),
+            )
+        ).unique()
+        for r in free_riders:
+            if r.id in busy:
+                continue
+            zid = min(zone_points, key=lambda zp: haversine_km(zp[1], (r.current_lat, r.current_lng)))[0]
+            supply[zid] += 1
+
+    rule = pricing.rule_for(db, vt)
+    origin = (lat, lng) if lat is not None and lng is not None else (
+        (rider.current_lat, rider.current_lng) if rider.current_lat is not None and rider.current_lng is not None else None
+    )
+
+    out = []
+    for z in zones:
+        expected = round(expected_by_zone[z.id], 1)
+        free = supply.get(z.id, 0)
+        ratio = expected / max(1, free)
+        dist = round(haversine_km(origin, (z.center_lat, z.center_lng)), 1) if origin else None
+        out.append(
+            {
+                "zone_id": z.id,
+                "zone": z.name,
+                "lat": z.center_lat,
+                "lng": z.center_lng,
+                "expected_requests": expected,
+                "free_riders": free,
+                "demand_level": pricing.demand_level(ratio),
+                "estimated_multiplier": pricing.smooth_multiplier(ratio, rule.max_multiplier),
+                "distance_km": dist,
+            }
+        )
+
+    out.sort(key=lambda z: (-z["expected_requests"], z["distance_km"] if z["distance_km"] is not None else 9999.0))
+    return {
+        "vehicle_type": vt,
+        "generated_at": iso_utc(demand.last_refresh()),
+        "raining": weather.is_raining(db),
+        "zones": out,
+    }

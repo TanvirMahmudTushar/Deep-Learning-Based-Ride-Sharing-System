@@ -15,12 +15,15 @@ const PEEK = HANDLE + HEADER;
 export function BottomSheet({
   expanded,
   onExpandedChange,
+  mobileHeight,
   header,
   children,
   className,
 }: {
   expanded: boolean;
   onExpandedChange: (v: boolean) => void;
+  /** Optional mobile sheet height (px); falls back to 68% when omitted. */
+  mobileHeight?: number | null;
   /** Always visible, even when the sheet is slid down. */
   header?: ReactNode;
   children: ReactNode;
@@ -65,15 +68,23 @@ export function BottomSheet({
     setOffset(null);
   }
 
+  const style =
+    offset !== null || mobileHeight
+      ? {
+          ...(mobileHeight ? { height: `${mobileHeight}px` } : {}),
+          ...(offset !== null ? { transform: `translateY(${offset}px)` } : {}),
+        }
+      : undefined;
+
   return (
     <aside
       ref={sheet}
-      style={offset !== null ? { transform: `translateY(${offset}px)` } : undefined}
+      style={style}
       className={cn(
-        "absolute inset-x-0 bottom-0 z-10 flex h-[68%] flex-col rounded-t-3xl border-t bg-background shadow-[0_-8px_30px_rgb(0_0_0/0.35)]",
+        "absolute inset-x-0 bottom-0 z-10 flex h-[68%] max-h-[75%] flex-col rounded-t-3xl border-t bg-background shadow-[0_-8px_30px_rgb(0_0_0/0.35)]",
         offset === null && "transition-transform duration-300 ease-out",
         offset === null && (expanded ? "translate-y-0" : "translate-y-[calc(100%-104px)]"),
-        "md:inset-y-0 md:right-auto md:h-auto md:w-105 md:translate-y-0! md:transform-none! md:rounded-none md:border-t-0 md:border-r md:shadow-xl",
+        "md:inset-y-0 md:right-auto md:h-auto! md:max-h-none md:w-105 md:translate-y-0! md:transform-none! md:rounded-none md:border-t-0 md:border-r md:shadow-xl",
         className,
       )}
     >
