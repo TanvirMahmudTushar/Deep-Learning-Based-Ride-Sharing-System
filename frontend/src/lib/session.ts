@@ -1,6 +1,7 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
+import { mutate } from "swr";
 import type { AuthResponse, Profile } from "@/lib/types";
 
 /**
@@ -22,9 +23,18 @@ function emit() {
   listeners.forEach((l) => l());
 }
 
+/** Cached responses are keyed by path alone, so the next account in this tab must not inherit them. */
+function forgetCachedData() {
+  void mutate(() => true, undefined, { revalidate: false });
+}
+
 function subscribe(listener: () => void) {
   listeners.add(listener);
-  const onStorage = (e: StorageEvent) => e.key === KEY && listener();
+  const onStorage = (e: StorageEvent) => {
+    if (e.key !== KEY) return;
+    if (e.newValue === null) forgetCachedData();
+    listener();
+  };
   window.addEventListener("storage", onStorage);
   return () => {
     listeners.delete(listener);
@@ -72,6 +82,7 @@ export function clearSession() {
   try {
     localStorage.removeItem(KEY);
   } catch {}
+  forgetCachedData();
   emit();
 }
 
@@ -97,5 +108,11 @@ export function useSession(): SessionState {
 }
 
 export function homeFor(role: Profile["role"]) {
-  return role === "admin" ? "/admin" : role === "rider" ? "/rider" : "/user";
+  return role === "admin" ? "/admin" : role === "rider" ? "/rider" : role === "support" ? "/support" : "/user";
+}
+
+/** Where to go after logging in: back to the page that asked for it, if it's in this role's portal. */
+export function landingFor(role: Profile["role"], next: string | null) {
+  const home = homeFor(role);
+  return next === home || next?.startsWith(`${home}/`) ? next : home;
 }

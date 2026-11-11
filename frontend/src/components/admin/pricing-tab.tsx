@@ -20,6 +20,7 @@ const FIELDS: { key: keyof Omit<PricingRule, "id" | "vehicle_type">; label: stri
   { key: "min_fare", label: "Minimum fare (৳)", step: "1" },
   { key: "max_multiplier", label: "Max demand multiplier", step: "0.1" },
   { key: "commission_pct", label: "Platform commission (%)", step: "0.5" },
+  { key: "cancel_fee", label: "Late-cancellation fee (৳)", step: "1" },
 ];
 
 function RuleCard({ rule, onSaved }: { rule: PricingRule; onSaved: () => void }) {

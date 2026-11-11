@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Banknote, Check, Clock, Loader2, MapPin, Navigation, Phone, ShieldAlert, X } from "lucide-react";
 import { TripStatusBadge } from "@/components/ride-bits";
+import { TripChat } from "@/components/trip-chat";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -142,7 +143,14 @@ export function ActiveTripCard({
     <div className="space-y-4 rounded-xl border p-4">
       <div className="flex items-center justify-between">
         <TripStatusBadge status={trip.status} />
-        <span className="font-semibold tabular-nums">{formatTaka(trip.fare_estimate)} cash</span>
+        <span className="text-right">
+          <span className="block font-semibold tabular-nums">{formatTaka(Math.max(0, trip.fare_estimate + (trip.fee_adjustment ?? 0)))} cash</span>
+          {!!trip.fee_adjustment && (
+            <span className="block text-xs text-muted-foreground">
+              {trip.fee_adjustment > 0 ? `incl. ${formatTaka(trip.fee_adjustment)} earlier fee` : `after ${formatTaka(-trip.fee_adjustment)} credit`}
+            </span>
+          )}
+        </span>
       </div>
       <div className="flex items-center justify-between gap-2">
         <div>
@@ -168,6 +176,7 @@ export function ActiveTripCard({
         </div>
         {trip.status === "accepted" && trip.arrived_at && <div className="text-xs text-emerald-300">You&apos;re at the pickup. The passenger has been told.</div>}
       </div>
+      <TripChat basePath={`/api/rider/trips/${trip.id}`} otherName={trip.passenger_name.split(" ")[0]} canSend />
       {trip.has_alert && (
         <Alert>
           <ShieldAlert />
@@ -224,6 +233,13 @@ export function CollectCard({ trip, onDone }: { trip: Trip; onDone: () => void }
       <p className="text-xs text-muted-foreground">
         Your earning {formatTaka(p.rider_earning)} · platform commission {formatTaka(p.commission)} (settled later)
       </p>
+      {!!trip.fee_adjustment && (
+        <p className="text-xs text-muted-foreground">
+          {trip.fee_adjustment > 0
+            ? `Includes a ${formatTaka(trip.fee_adjustment)} late-cancellation fee from the passenger's earlier ride. It goes to the platform, not your earning.`
+            : `The passenger had a ${formatTaka(-trip.fee_adjustment)} credit. The platform covers it, so your earning is unchanged.`}
+        </p>
+      )}
       <Button
         className="w-full"
         disabled={busy}

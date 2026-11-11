@@ -1,11 +1,17 @@
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, PlainSerializer
+from pydantic import AfterValidator, BaseModel, Field, PlainSerializer
+from pydantic_core import PydanticCustomError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.db import utcnow
+from app.geo import haversine_km
 from app.models import Rating, Rider, SafetyAlert, Trip, Vehicle
+from app.services import cancel_fees
+from app.services.predictors import eta_predictor
+from app.services.routing import DETOUR_FACTOR
 
 def iso_utc(d: datetime | None) -> str | None:
     """Stored datetimes are naive UTC; send them with an explicit offset so browsers parse them correctly."""
@@ -25,12 +31,22 @@ class LatLng(BaseModel):
 # --- auth ---------------------------------------------------------------------------------
 
 
+def _fits_bcrypt(password: str) -> str:
+    # bcrypt's limit is in bytes, so a 72-character password in Bangla, say, can still be too long.
+    if len(password.encode()) > 72:
+        raise PydanticCustomError("password_too_long", "Password is too long. Use fewer characters.")
+    return password
+
+
+NewPassword = Annotated[str, Field(min_length=8, max_length=72), AfterValidator(_fits_bcrypt)]
+
+
 class RegisterIn(BaseModel):
     full_name: str = Field(min_length=2, max_length=120)
     email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=160)
     phone: str = Field(min_length=6, max_length=32)
-    password: str = Field(min_length=6, max_length=72)
-    role: Literal["user", "rider"] = "user"
+    password: NewPassword
+    role: Literal["user", "rider", "support"] = "user"
     license_no: str | None = Field(default=None, max_length=40)
     vehicle_type: VehicleType | None = None
     plate_no: str | None = Field(default=None, max_length=32)
@@ -48,6 +64,7 @@ class ProfileOut(BaseModel):
     email: str
     phone: str
     role: str
+    approval_status: str | None = None
 
 
 class AuthOut(BaseModel):
@@ -102,6 +119,8 @@ class QuoteOut(BaseModel):
 
 
 class EstimateOut(BaseModel):
+    # Late-cancellation fees owed (positive) or credits (negative) that the next ride will include.
+    outstanding_fee: float = 0
     pickup_address: str
     drop_address: str
     distance_km: float
@@ -167,6 +186,16 @@ class TripOut(BaseModel):
     arrived_at: UTCDateTime | None
     started_at: UTCDateTime | None
     completed_at: UTCDateTime | None
+    # Earlier late-cancellation fees (positive) or credits (negative) on this ride.
+    fee_adjustment: float | None = None
+    # This trip's own late-cancellation fee, if the passenger cancelled late. Hidden from riders.
+    cancel_fee: float | None = None
+    cancel_fee_status: str | None = None
+    # For an accepted trip: when free cancellation ends, and the fee after that. Hidden from riders.
+    free_cancel_until: UTCDateTime | None = None
+    late_cancel_fee: float | None = None
+    # Minutes to the next stop (pickup, then drop-off) from the rider's latest position.
+    live_eta_min: float | None = None
 
 
 def vehicle_out(v: Vehicle | None) -> VehicleOut | None:
@@ -194,6 +223,22 @@ def rider_public(db: Session, rider: Rider, vehicle: Vehicle | None = None) -> R
         lat=rider.current_lat,
         lng=rider.current_lng,
     )
+
+
+def live_eta_min(trip: Trip) -> float | None:
+    """Minutes from the rider's latest position to the next stop. Worked out on each request, so it
+    updates as the rider moves; the stored ETAs stay as they were for measuring model accuracy."""
+    rider = trip.rider
+    if rider is None or rider.current_lat is None:
+        return None
+    if trip.status == "accepted" and trip.arrived_at is None:
+        target = (trip.pickup_lat, trip.pickup_lng)
+    elif trip.status == "ongoing":
+        target = (trip.drop_lat, trip.drop_lng)
+    else:
+        return None
+    km = haversine_km((rider.current_lat, rider.current_lng), target) * DETOUR_FACTOR
+    return round(eta_predictor.predict_eta(km, trip.vehicle_type_requested, utcnow()), 1)
 
 
 def trip_out(db: Session, trip: Trip, include_route: bool = True, for_rider: bool = False) -> TripOut:
@@ -246,11 +291,29 @@ def trip_out(db: Session, trip: Trip, include_route: bool = True, for_rider: boo
         arrived_at=trip.arrived_at,
         started_at=trip.started_at,
         completed_at=trip.completed_at,
+        fee_adjustment=trip.fee_adjustment,
+        cancel_fee=None if for_rider else trip.cancel_fee,
+        cancel_fee_status=None if for_rider else trip.cancel_fee_status,
+        free_cancel_until=None if for_rider else cancel_fees.free_cancel_until(trip),
+        late_cancel_fee=None if for_rider or trip.status != "accepted" else cancel_fees.fee_for(db, trip.vehicle_type_requested),
+        live_eta_min=live_eta_min(trip),
     )
 
 
 class SosIn(BaseModel):
     note: str = Field(default="", max_length=300)
+
+
+CancelReason = Literal["changed_plans", "wait_too_long", "rider_not_moving", "wrong_pickup", "found_other_ride", "price_too_high", "other"]
+
+
+class CancelIn(BaseModel):
+    reason: CancelReason = "other"
+    note: str = Field(default="", max_length=120)
+
+
+class MessageIn(BaseModel):
+    body: str = Field(min_length=1, max_length=500)
 
 
 class ReportIn(BaseModel):
@@ -280,7 +343,7 @@ class ProfileUpdateIn(BaseModel):
 
 class PasswordChangeIn(BaseModel):
     current_password: str
-    new_password: str = Field(min_length=6, max_length=72)
+    new_password: NewPassword
 
 
 # --- rider portal ---------------------------------------------------------------------------
@@ -337,6 +400,12 @@ class AlertStatusIn(BaseModel):
     status: Literal["open", "reviewed", "closed"]
 
 
+class AlertNoteIn(BaseModel):
+    body: str = Field(min_length=1, max_length=2000)
+    # True sends it to the passenger as a reply (reports only); false keeps it internal.
+    for_passenger: bool = False
+
+
 class PricingRuleIn(BaseModel):
     base_fare: float = Field(ge=0)
     per_km: float = Field(ge=0)
@@ -344,6 +413,7 @@ class PricingRuleIn(BaseModel):
     min_fare: float = Field(ge=0)
     max_multiplier: float = Field(ge=1, le=3)
     commission_pct: float = Field(default=15, ge=0, le=50)
+    cancel_fee: float | None = Field(default=None, ge=0, le=1000)
 
 
 # --- assistant ------------------------------------------------------------------------------

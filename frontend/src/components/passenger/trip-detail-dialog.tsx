@@ -1,9 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import useSWR from "swr";
-import { Flag, RotateCcw, ShieldAlert } from "lucide-react";
+import useSWR, { useSWRConfig } from "swr";
+import { Flag, MessageSquareReply, Receipt, RotateCcw, ShieldAlert } from "lucide-react";
 import { RideMap } from "@/components/map/ride-map";
 import { FareBreakdownView, PaymentStatus, RateForm, ReportForm } from "@/components/passenger/trip-parts";
 import { RatingText, TripStatusBadge, VehicleTag } from "@/components/ride-bits";
@@ -14,7 +15,8 @@ import { fetcher } from "@/lib/api";
 import { formatDateTime, formatKm, formatMinutes, formatTaka } from "@/lib/format";
 import { toTuple } from "@/lib/geo";
 import { setPrefill } from "@/lib/prefill";
-import type { Trip } from "@/lib/types";
+import { Badge } from "@/components/ui/badge";
+import type { PassengerReport, Trip } from "@/lib/types";
 
 function Timeline({ trip }: { trip: Trip }) {
   const steps: [string, string | null][] = [
@@ -38,9 +40,40 @@ function Timeline({ trip }: { trip: Trip }) {
   );
 }
 
+const REPORT_STATUS: Record<PassengerReport["status"], string> = { received: "Received", in_review: "Being reviewed", closed: "Closed" };
+
+/** The passenger's reports on this trip, with their status and any reply from support. */
+function ReportUpdates({ tripId }: { tripId: string }) {
+  const { data: reports } = useSWR<PassengerReport[]>(`/api/trips/${tripId}/reports`, fetcher);
+  if (!reports?.length) return null;
+  return (
+    <div className="space-y-2">
+      <h3 className="text-xs font-medium text-muted-foreground">Your reports</h3>
+      {reports.map((r) => (
+        <div key={r.id} className="space-y-2 rounded-lg border p-3 text-sm">
+          <div className="flex items-center justify-between gap-2">
+            <span className="capitalize">{(r.category ?? "other").replace(/_/g, " ")}</span>
+            <Badge variant="outline">{REPORT_STATUS[r.status]}</Badge>
+          </div>
+          <p className="text-muted-foreground">“{r.note}”</p>
+          {r.replies.map((reply) => (
+            <div key={reply.id} className="space-y-1 rounded-md bg-muted/50 p-2">
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <MessageSquareReply className="size-3.5" /> Cholo support · {formatDateTime(reply.created_at)}
+              </div>
+              <p className="whitespace-pre-wrap">{reply.body}</p>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Body({ trip, onChanged }: { trip: Trip; onChanged: () => void }) {
   const router = useRouter();
   const [reporting, setReporting] = useState(false);
+  const { mutate } = useSWRConfig();
   const ended = trip.status === "completed" || trip.status === "cancelled";
 
   function rideAgain() {
@@ -85,6 +118,14 @@ function Body({ trip, onChanged }: { trip: Trip; onChanged: () => void }) {
       </div>
 
       {trip.cancel_reason && <p className="text-sm text-muted-foreground">{trip.cancel_reason}</p>}
+      {trip.cancel_fee != null && (
+        <p className="text-sm text-muted-foreground">
+          Late-cancellation fee {formatTaka(trip.cancel_fee)}:{" "}
+          {{ owed: "added to your next ride", paid: "paid with a later ride", waived: "waived", credited: "refunded as credit on your next ride", credit_used: "refunded as credit" }[
+            trip.cancel_fee_status ?? "owed"
+          ] ?? ""}
+        </p>
+      )}
 
       <div className="grid gap-5 sm:grid-cols-2">
         <div className="space-y-2">
@@ -97,6 +138,15 @@ function Body({ trip, onChanged }: { trip: Trip; onChanged: () => void }) {
             <FareBreakdownView breakdown={trip.fare_breakdown} />
           ) : (
             <p className="text-sm">{formatTaka(trip.fare_final ?? trip.fare_estimate)}</p>
+          )}
+          {!!trip.fee_adjustment && (
+            <p className="flex justify-between gap-3 text-sm">
+              <span className="text-muted-foreground">{trip.fee_adjustment > 0 ? "Earlier late-cancellation fee" : "Credit"}</span>
+              <span className="tabular-nums">
+                {trip.fee_adjustment > 0 ? "+" : "−"}
+                {formatTaka(Math.abs(trip.fee_adjustment))}
+              </span>
+            </p>
           )}
         </div>
       </div>
@@ -132,13 +182,30 @@ function Body({ trip, onChanged }: { trip: Trip; onChanged: () => void }) {
         </p>
       )}
 
-      {reporting && <ReportForm tripId={trip.id} onDone={() => setReporting(false)} />}
+      {ended && <ReportUpdates tripId={trip.id} />}
+
+      {reporting && (
+        <ReportForm
+          tripId={trip.id}
+          onDone={() => {
+            setReporting(false);
+            void mutate(`/api/trips/${trip.id}/reports`);
+          }}
+        />
+      )}
 
       {ended && (
         <div className="flex flex-wrap gap-2">
           <Button onClick={rideAgain}>
             <RotateCcw /> Ride again
           </Button>
+          {trip.status === "completed" && (
+            <Button variant="outline" asChild>
+              <Link href={`/user/receipt?trip=${trip.id}`} target="_blank" rel="noopener">
+                <Receipt /> Receipt
+              </Link>
+            </Button>
+          )}
           {!reporting && (
             <Button variant="outline" onClick={() => setReporting(true)}>
               <Flag /> Report a problem
