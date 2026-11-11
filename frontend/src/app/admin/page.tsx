@@ -9,20 +9,12 @@ import { OverviewTab } from "@/components/admin/overview-tab";
 import { PaymentsTab } from "@/components/admin/payments-tab";
 import { PricingTab } from "@/components/admin/pricing-tab";
 import { RidersTab } from "@/components/admin/riders-tab";
-import { Badge } from "@/components/ui/badge";
+import { SupportTab } from "@/components/admin/support-tab";
+import { CountBadge } from "@/components/ride-bits";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { fetcher } from "@/lib/api";
 import { useLiveInterval } from "@/lib/realtime";
 import type { AdminStats } from "@/lib/types";
-
-function CountBadge({ n }: { n: number | undefined }) {
-  if (!n) return null;
-  return (
-    <Badge variant="secondary" className="ml-1 h-4 min-w-4 px-1 text-[10px] tabular-nums">
-      {n}
-    </Badge>
-  );
-}
 
 function AdminDashboard() {
   const [tab, setTab] = useState("overview");
@@ -41,6 +33,9 @@ function AdminDashboard() {
             <TabsTrigger value="alerts">
               Safety <CountBadge n={stats?.open_alerts} />
             </TabsTrigger>
+            <TabsTrigger value="support">
+              Support <CountBadge n={stats?.pending_support} />
+            </TabsTrigger>
             <TabsTrigger value="payments">Payments</TabsTrigger>
             <TabsTrigger value="demand">Demand</TabsTrigger>
             <TabsTrigger value="pricing">Pricing</TabsTrigger>
@@ -54,6 +49,9 @@ function AdminDashboard() {
         </TabsContent>
         <TabsContent value="alerts">
           <AlertsTab />
+        </TabsContent>
+        <TabsContent value="support">
+          <SupportTab />
         </TabsContent>
         <TabsContent value="payments">
           <PaymentsTab />

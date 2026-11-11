@@ -25,7 +25,9 @@ class Profile(Base):
     phone: Mapped[str] = mapped_column(String(32))
     email: Mapped[str] = mapped_column(String(160), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(100))
-    role: Mapped[str] = mapped_column(String(10))  # user, rider, admin
+    role: Mapped[str] = mapped_column(String(10))  # user, rider, admin, support
+    # Support agents only: pending until an admin approves, revoked if access is removed.
+    approval_status: Mapped[str | None] = mapped_column(String(10))  # pending, approved, revoked
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     rider: Mapped["Rider | None"] = relationship(back_populates="profile", uselist=False)
@@ -102,6 +104,12 @@ class Trip(Base):
     actual_duration_min: Mapped[float | None] = mapped_column(Float)
     cancelled_by: Mapped[str | None] = mapped_column(String(10))  # user, rider, system
     cancel_reason: Mapped[str | None] = mapped_column(String(160))
+    # Late-cancellation fee charged for this trip, and what happened to it (see services/cancel_fees.py).
+    cancel_fee: Mapped[float | None] = mapped_column(Float)
+    cancel_fee_status: Mapped[str | None] = mapped_column(String(12))  # owed, paid, waived, credited, credit_used
+    fee_settled_by: Mapped[str | None] = mapped_column(String(36))  # the later ride carrying this fee
+    # On a later ride: earlier fees (positive) or credits (negative) added to what the passenger pays.
+    fee_adjustment: Mapped[float | None] = mapped_column(Float)
 
     # Matching state: the rider currently being offered this trip.
     offered_rider_id: Mapped[str | None] = mapped_column(ForeignKey("riders.id"))
@@ -223,8 +231,11 @@ class SafetyAlert(Base):
     summary: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(10), default="open")  # open, reviewed, closed
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    # The admin or support agent handling this alert, so two people don't work on the same one.
+    assigned_to: Mapped[str | None] = mapped_column(ForeignKey("profiles.id"))
 
     trip: Mapped[Trip] = relationship()
+    notes: Mapped[list["AlertNote"]] = relationship(back_populates="alert", order_by="AlertNote.created_at")
 
     @property
     def details(self) -> dict:
@@ -241,6 +252,8 @@ class PricingRule(Base):
     per_min: Mapped[float] = mapped_column(Float)
     min_fare: Mapped[float] = mapped_column(Float)
     max_multiplier: Mapped[float] = mapped_column(Float)
+    # Late-cancellation fee; None falls back to the default in services/cancel_fees.py.
+    cancel_fee: Mapped[float | None] = mapped_column(Float)
     # Platform share of each fare, in percent; None falls back to settings.default_commission_pct.
     commission_pct: Mapped[float | None] = mapped_column(Float)
 
@@ -253,6 +266,36 @@ class WeatherHourly(Base):
     temperature_c: Mapped[float] = mapped_column(Float)
     precipitation_mm: Mapped[float] = mapped_column(Float)
     source: Mapped[str] = mapped_column(String(20), default="open-meteo")
+
+
+class TripMessage(Base):
+    """Chat between a passenger and their rider during a trip."""
+
+    __tablename__ = "trip_messages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    trip_id: Mapped[str] = mapped_column(ForeignKey("trips.id"), index=True)
+    sender_id: Mapped[str] = mapped_column(ForeignKey("profiles.id"))
+    sender_role: Mapped[str] = mapped_column(String(10))  # user (passenger) or rider
+    body: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class AlertNote(Base):
+    """A note on a safety alert. Notes are internal unless `for_passenger` is set, which makes them a
+    reply the passenger can read on their own report. Never shown to the rider."""
+
+    __tablename__ = "alert_notes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    alert_id: Mapped[str] = mapped_column(ForeignKey("safety_alerts.id"), index=True)
+    author_id: Mapped[str] = mapped_column(ForeignKey("profiles.id"))
+    body: Mapped[str] = mapped_column(Text)
+    for_passenger: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    alert: Mapped[SafetyAlert] = relationship(back_populates="notes")
+    author: Mapped[Profile] = relationship()
 
 
 class Payment(Base):

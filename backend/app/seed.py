@@ -151,6 +151,9 @@ def seed_demo(db: Session, rng: random.Random | None = None) -> bool:
     demo_rider_profile = _profile("rider@ride.local", "Demo Rider", "rider", hash_password("rider123"), rng)
     pending_profile = _profile("pending@ride.local", "Pending Rider", "rider", hash_password("rider123"), rng)
     db.add_all([demo_rider_profile, pending_profile])
+    demo_support = _profile("support@ride.local", "Demo Support Agent", "support", hash_password("support123"), rng)
+    demo_support.approval_status = "approved"
+    db.add(demo_support)
     db.flush()
 
     demo_rider = Rider(profile_id=demo_rider_profile.id, license_no="DK-0451278", status="verified", current_lat=23.7815, current_lng=90.4140)

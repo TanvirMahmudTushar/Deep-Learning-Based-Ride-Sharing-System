@@ -1,4 +1,4 @@
-export type Role = "user" | "rider" | "admin";
+export type Role = "user" | "rider" | "admin" | "support";
 export type VehicleType = "bike" | "cng" | "car";
 export type TripStatus = "requested" | "accepted" | "ongoing" | "completed" | "cancelled";
 
@@ -13,6 +13,8 @@ export interface Profile {
   email: string;
   phone: string;
   role: Role;
+  /** Support agents only. */
+  approval_status?: "pending" | "approved" | "revoked" | null;
 }
 
 export interface AuthResponse {
@@ -85,6 +87,8 @@ export interface Estimate {
   route: [number, number][];
   route_source: "osrm" | "straight";
   quotes: Quote[];
+  /** Late-cancellation fees owed (positive) or credits (negative) the next ride will include. */
+  outstanding_fee?: number;
 }
 
 export interface TripPayment {
@@ -133,6 +137,16 @@ export interface Trip {
   arrived_at: string | null;
   started_at: string | null;
   completed_at: string | null;
+  /** Earlier late-cancellation fees (positive) or credits (negative) on this ride. */
+  fee_adjustment?: number | null;
+  /** This trip's own late-cancellation fee, if the passenger cancelled late. */
+  cancel_fee?: number | null;
+  cancel_fee_status?: "owed" | "paid" | "waived" | "credited" | "credit_used" | null;
+  /** For an accepted trip: when free cancellation ends, and the fee after that. */
+  free_cancel_until?: string | null;
+  late_cancel_fee?: number | null;
+  /** Minutes to the next stop from the rider's latest position. */
+  live_eta_min?: number | null;
 }
 
 export interface RiderMe {
@@ -163,7 +177,17 @@ export interface Offer {
   pickup_distance_km: number;
 }
 
+export interface AdminSupportAgent {
+  id: string;
+  full_name: string;
+  email: string;
+  phone: string;
+  status: "pending" | "approved" | "revoked";
+  joined_at: string;
+}
+
 export interface AdminStats {
+  pending_support: number;
   trips_today: number;
   completed_today: number;
   active_trips: number;
@@ -229,6 +253,49 @@ export interface SafetyAlert {
   drop_address: string;
   route: [number, number][];
   rider_name: string | null;
+  rider_phone: string | null;
+  passenger_name: string;
+  assigned_to: { id: string; name: string } | null;
+  last_changed_by: string | null;
+  notes: AlertNote[];
+}
+
+export interface AlertNote {
+  id: string;
+  body: string;
+  /** A reply the passenger can read; otherwise an internal note. */
+  for_passenger: boolean;
+  author_name: string;
+  author_role: Role;
+  created_at: string;
+}
+
+export interface AlertSummary {
+  open_total: number;
+  by_type: Record<SafetyAlert["alert_type"], number>;
+  unassigned: number;
+  oldest_open_at: string | null;
+  oldest_open_minutes: number | null;
+}
+
+export interface StaffTripDetail {
+  trip: Trip;
+  alerts: SafetyAlert[];
+}
+
+export interface TripPage {
+  trips: Trip[];
+  has_more: boolean;
+}
+
+/** A passenger's own report on a trip, as they see it. */
+export interface PassengerReport {
+  id: string;
+  category: string | null;
+  note: string;
+  status: "received" | "in_review" | "closed";
+  created_at: string;
+  replies: { id: string; body: string; created_at: string }[];
 }
 
 export interface ZoneForecast {
@@ -260,6 +327,7 @@ export interface PricingRule {
   min_fare: number;
   max_multiplier: number;
   commission_pct: number;
+  cancel_fee: number;
 }
 
 export interface ModelInfo {
@@ -313,6 +381,7 @@ export interface PassengerSummary {
   weekly: { week_start: string; spent: number; rides: number }[];
   top_destinations: { address: string; trips: number; lat: number; lng: number; vehicle_type: VehicleType }[];
   member_since: string | null;
+  outstanding_fee?: number;
 }
 
 export interface ServerHealth {
@@ -403,4 +472,38 @@ export interface PaymentsOverview {
   balances: (RiderBalance & { rider_id: string; full_name: string; phone: string; is_simulated: boolean; vehicle_type: VehicleType | null })[];
   open_payments: PaymentRow[];
   settlements: { id: string; rider_name: string; amount: number; note: string; created_at: string | null }[];
+}
+
+export type CancelReason = "changed_plans" | "wait_too_long" | "rider_not_moving" | "wrong_pickup" | "found_other_ride" | "price_too_high" | "other";
+
+export interface TripMessage {
+  id: string;
+  sender_role: "user" | "rider";
+  body: string;
+  created_at: string;
+  mine: boolean;
+}
+
+export interface PassengerReview {
+  trip_id: string;
+  stars: number;
+  comment: string | null;
+  rated_at: string;
+  requested_at: string;
+  pickup_address: string;
+  drop_address: string;
+  vehicle_type: VehicleType;
+  rider_name: string | null;
+}
+
+export interface AdminCancelFee {
+  trip_id: string;
+  passenger_name: string;
+  rider_name: string | null;
+  vehicle_type: VehicleType;
+  pickup_address: string;
+  cancelled_at: string | null;
+  cancel_reason: string | null;
+  fee: number;
+  status: NonNullable<Trip["cancel_fee_status"]>;
 }

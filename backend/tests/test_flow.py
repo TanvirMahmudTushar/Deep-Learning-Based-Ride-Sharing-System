@@ -183,7 +183,7 @@ def test_admin_dashboard_endpoints(client, admin_h):
 
 def test_register_rider_needs_verification(client):
     body = {
-        "full_name": "New Rider", "email": "new.rider@example.com", "phone": "+8801700000000", "password": "secret1",
+        "full_name": "New Rider", "email": "new.rider@example.com", "phone": "+8801700000000", "password": "secret123",
         "role": "rider", "license_no": "DK-1", "vehicle_type": "cng", "plate_no": "dhaka metro-tha 11-1111", "vehicle_model": "Bajaj RE",
     }
     resp = client.post("/api/auth/register", json=body)

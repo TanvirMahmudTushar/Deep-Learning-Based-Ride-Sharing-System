@@ -1,15 +1,19 @@
-"""Passenger dashboard: ride statistics and saved places."""
+"""Passenger dashboard: ride statistics, saved places, reviews and trip export."""
 
+import csv
+import io
 from collections import Counter
 from datetime import timedelta
 
 from fastapi import APIRouter, HTTPException, status
+from fastapi.responses import Response
 from sqlalchemy import func, select
 
 from app.db import local_month_start, local_time, utcnow
 from app.models import VEHICLE_TYPES, Rating, SavedPlace, Trip
 from app.schemas import SavedPlaceIn, SavedPlaceOut, iso_utc
 from app.security import DB, Passenger
+from app.services import cancel_fees
 from app.services.zones import describe_point
 
 router = APIRouter(prefix="/api/passenger", tags=["passenger"])
@@ -75,7 +79,70 @@ def summary(db: DB, user: Passenger):
         "weekly": [{"week_start": w.isoformat(), "spent": round(spend[w]), "rides": rides[w]} for w in weeks],
         "top_destinations": top_destinations,
         "member_since": iso_utc(user.created_at),
+        "outstanding_fee": cancel_fees.outstanding(db, user.id),
     }
+
+
+@router.get("/reviews")
+def reviews(db: DB, user: Passenger):
+    """The passenger's ratings, newest first."""
+    rows = db.execute(
+        select(Rating, Trip).join(Trip, Trip.id == Rating.trip_id).where(Trip.user_id == user.id).order_by(Rating.created_at.desc()).limit(200)
+    ).all()
+    return [
+        {
+            "trip_id": trip.id,
+            "stars": rating.stars,
+            "comment": rating.comment or None,
+            "rated_at": iso_utc(rating.created_at),
+            "requested_at": iso_utc(trip.requested_at),
+            "pickup_address": trip.pickup_address,
+            "drop_address": trip.drop_address,
+            "vehicle_type": trip.vehicle_type_requested,
+            "rider_name": trip.rider.profile.full_name if trip.rider else None,
+        }
+        for rating, trip in rows
+    ]
+
+
+def _csv_cell(value) -> str:
+    """Stop spreadsheet apps from running a cell as a formula."""
+    text = "" if value is None else str(value)
+    return "'" + text if text[:1] in ("=", "+", "-", "@") else text
+
+
+@router.get("/trips/export")
+def export_trips(db: DB, user: Passenger):
+    """All of the passenger's trips as a CSV file. Times are Dhaka time."""
+    trips = db.scalars(select(Trip).where(Trip.user_id == user.id).order_by(Trip.requested_at.desc()).limit(5000)).all()
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(["Date", "From", "To", "Vehicle", "Distance (km)", "Fare (BDT)", "Earlier fees or credits (BDT)", "Status", "Payment", "Your rating", "Cancellation reason", "Late-cancellation fee (BDT)"])
+    for t in trips:
+        writer.writerow(
+            [
+                _csv_cell(v)
+                for v in (
+                    local_time(t.requested_at).strftime("%Y-%m-%d %H:%M"),
+                    t.pickup_address,
+                    t.drop_address,
+                    t.vehicle_type_requested,
+                    round(t.distance_km, 1),
+                    round(float(t.fare_final if t.fare_final is not None else t.fare_estimate)),
+                    t.fee_adjustment or "",
+                    t.status,
+                    t.payment.status if t.payment else "",
+                    t.rating.stars if t.rating else "",
+                    t.cancel_reason or "",
+                    f"{t.cancel_fee:g} ({t.cancel_fee_status})" if t.cancel_fee else "",
+                )
+            ]
+        )
+    return Response(
+        content="\ufeff" + out.getvalue(),  # BOM, so Excel reads Bangla addresses correctly
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="cholo-trips.csv"', "Cache-Control": "no-store"},
+    )
 
 
 def _place_out(p: SavedPlace) -> SavedPlaceOut:

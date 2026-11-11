@@ -10,6 +10,7 @@ thread, so messages are handed to the event loop with run_coroutine_threadsafe.
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import threading
@@ -24,6 +25,9 @@ from sqlalchemy.orm import Session
 log = logging.getLogger(__name__)
 
 ADMINS = "admins"
+# Of the events sent to ADMINS, the ones approved support agents also get. Everything else
+# (payments, riders, settlements) stays admin-only.
+SUPPORT_EVENTS = frozenset({"alert.new", "alert.updated", "live.changed"})
 _PENDING = "realtime_events"
 
 
@@ -54,12 +58,13 @@ class Hub:
         with self._lock:
             return {pid for pid, conns in self._by_profile.items() if conns}
 
-    def _targets(self, audience: Iterable[str]) -> list[WebSocket]:
+    def _targets(self, audience: Iterable[str], event_type: str | None = None) -> list[WebSocket]:
         with self._lock:
             out: list[WebSocket] = []
+            staff_roles = {"admin", "support"} if event_type in SUPPORT_EVENTS else {"admin"}
             for a in audience:
                 if a == ADMINS:
-                    out.extend(ws for ws, (_, role) in self._roles.items() if role == "admin")
+                    out.extend(ws for ws, (_, role) in self._roles.items() if role in staff_roles)
                 else:
                     out.extend(self._by_profile.get(a, ()))
             return list(dict.fromkeys(out))
@@ -80,18 +85,36 @@ class Hub:
                 if now - self._last_sent.get(coalesce, 0) < interval:
                     return
                 self._last_sent[coalesce] = now
-        targets = self._targets(audience)
+        targets = self._targets(audience, message.get("type"))
         if not targets:
             return
-        text = json.dumps(message, default=str)
+        self._submit(self._send(targets, json.dumps(message, default=str)))
+
+    def close_profile(self, profile_id: str, code: int = 4403) -> None:
+        """Disconnect every socket of one profile, such as a support agent whose access was removed."""
+        if self._loop is None or self._loop.is_closed():
+            return
+        with self._lock:
+            sockets = list(self._by_profile.get(profile_id, ()))
+        for ws in sockets:
+            self.disconnect(ws)
+        if sockets:
+            self._submit(self._close(sockets, code))
+
+    async def _close(self, sockets: list[WebSocket], code: int) -> None:
+        for ws in sockets:
+            with contextlib.suppress(Exception):
+                await ws.close(code=code, reason="access removed")
+
+    def _submit(self, coro) -> None:
         try:
             running = asyncio.get_running_loop()
         except RuntimeError:
             running = None
         if running is self._loop:
-            self._loop.create_task(self._send(targets, text))
+            self._loop.create_task(coro)
         else:
-            asyncio.run_coroutine_threadsafe(self._send(targets, text), self._loop)
+            asyncio.run_coroutine_threadsafe(coro, self._loop)
 
 
 hub = Hub()

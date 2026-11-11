@@ -1,0 +1,34 @@
+# Render blueprint for the backend. Never put secret values in this file: the repo is public.
+# `sync: false` makes Render ask for the value in its dashboard when the blueprint is first created.
+services:
+  - type: web
+    name: cholo-backend
+    runtime: docker
+    plan: free
+    region: singapore
+    branch: main
+    dockerContext: ./backend
+    dockerfilePath: ./backend/Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: PORT
+        value: "8000"
+      - key: DEMO_MODE
+        value: "false"
+      # Only the deployed frontend may call the API from a browser.
+      - key: CORS_ORIGINS
+        value: '["https://heycholo.vercel.app"]'
+      # Render creates this and keeps it, so tokens survive restarts and nobody has to handle it.
+      - key: JWT_SECRET
+        generateValue: true
+      # Use Supabase's Session pooler address, not the direct db.*.supabase.co one (IPv6 only).
+      - key: DATABASE_URL
+        sync: false
+      # Creates the first admin, if the database has no admin yet.
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      # Optional: without it, price reasons and alert summaries use fixed templates.
+      - key: GROQ_API_KEY
+        sync: false

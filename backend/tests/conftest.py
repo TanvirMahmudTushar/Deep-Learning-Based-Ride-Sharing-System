@@ -5,7 +5,8 @@ from pathlib import Path
 # Configure before the app (and its settings) are imported: isolated DB, no network, no background loop.
 _tmp = Path(tempfile.mkdtemp()) / "test.db"
 os.environ.update(
-    DATABASE_URL=f"sqlite:///{_tmp.as_posix()}",
+    # TEST_DATABASE_URL runs the suite on an empty Postgres database instead.
+    DATABASE_URL=os.environ.get("TEST_DATABASE_URL") or f"sqlite:///{_tmp.as_posix()}",
     DEMO_MODE="true",
     RUN_SIMULATOR="false",
     USE_GEOCODING="false",
@@ -51,3 +52,8 @@ def rider_h(client):
 @pytest.fixture(scope="session")
 def admin_h(client):
     return login(client, "admin@ride.local", "admin123")
+
+
+@pytest.fixture(scope="session")
+def support_h(client):
+    return login(client, "support@ride.local", "support123")

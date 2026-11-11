@@ -14,6 +14,16 @@ export function VehicleIcon({ type, className, ...props }: { type: VehicleType }
   return <Icon className={className} {...props} />;
 }
 
+/** Small number on a tab, hidden when there is nothing to count. */
+export function CountBadge({ n }: { n: number | undefined }) {
+  if (!n) return null;
+  return (
+    <Badge variant="secondary" className="ml-1 h-4 min-w-4 px-1 text-[10px] tabular-nums">
+      {n}
+    </Badge>
+  );
+}
+
 /** Vehicle chip: colored dot carries identity, the text label is always present. */
 export function VehicleTag({ type, className }: { type: VehicleType; className?: string }) {
   return (

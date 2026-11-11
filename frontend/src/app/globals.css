@@ -4,6 +4,9 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+  /* From the logo: the route line and the destination pin. */
+  --color-route: #e26d5a;
+  --color-pin: #05a7e3;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-sans);
@@ -130,10 +133,54 @@
     @apply font-sans;
   }
 }
+/*
+ * The 3D "Cholo" lettering, in the logo's colours: "Chol" is the coral route, the last "o" the blue pin.
+ * The letters themselves draw the solid side of the extrusion; ::after lays the lit face over them.
+ * Everything is in em, so the depth scales with the font size.
+ */
+.wordmark {
+  display: inline-flex;
+  font-family: var(--font-wordmark), var(--font-sans);
+  font-weight: 800;
+  line-height: 1.25;
+  letter-spacing: -0.015em;
+}
+.wordmark-part {
+  --face-top: #ffd3c9;
+  --face-bottom: #e26d5a;
+  --side: #8f3a2b;
+  position: relative;
+  color: var(--side);
+  text-shadow:
+    0.012em 0.012em 0,
+    0.024em 0.024em 0,
+    0.036em 0.036em 0,
+    0.048em 0.048em 0,
+    0.06em 0.06em 0,
+    0.072em 0.072em 0,
+    0.1em 0.16em 0.2em rgb(0 0 0 / 0.7);
+}
+.wordmark-pin {
+  --face-top: #b5ebff;
+  --face-bottom: #05a7e3;
+  --side: #035f82;
+}
+.wordmark-part::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  color: transparent;
+  background: linear-gradient(180deg, var(--face-top) 20%, var(--face-bottom) 78%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  text-shadow: none;
+}
 /* Map: dark tiles sit on the page background; markers are plain divIcons styled here. */
 .leaflet-container {
   background: var(--background);
   font-family: var(--font-sans);
+  /* Leaflet's layers use z-index up to 1000; keep them inside the map, under menus and dialogs. */
+  isolation: isolate;
 }
 .map-tiles-dark {
   filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.85) saturate(0.6);
@@ -194,4 +241,13 @@
 @keyframes map-pulse {
   from { transform: scale(0.6); opacity: 0.9; }
   to { transform: scale(1.5); opacity: 0; }
+}
+
+/* Receipts print on white paper, whatever the screen theme. */
+@media print {
+  html,
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
 }

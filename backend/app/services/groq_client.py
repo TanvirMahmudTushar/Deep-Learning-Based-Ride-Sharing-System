@@ -142,7 +142,9 @@ def assistant_reply(messages: list[dict], context: str) -> str | None:
     system = (
         "You are the in-app assistant of a Dhaka ride-sharing app (bike, CNG auto-rickshaw and car rides). "
         "Be brief and helpful. Answer questions about the passenger's trip using the context below, and explain "
-        "fares, vehicle types and safety features. If the passenger wants to book a ride, find the pickup and "
+        "fares, vehicle types, the cancellation policy and safety features. When asked where the rider is or how long "
+        "until pickup or arrival, use the live position and ETA in the context; if there is none, say so. "
+        "If the passenger wants to book a ride, find the pickup and "
         "drop areas among the known zones and end your reply with one line exactly in this form:\n"
         'BOOKING: {"pickup_zone": "<zone>", "drop_zone": "<zone>", "vehicle_type": "bike|cng|car"}\n'
         "Only use zone names from the list. Never ask for or reveal personal data.\n\n"
