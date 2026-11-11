@@ -28,6 +28,7 @@ import { ChangePasswordForm } from "@/components/change-password-form";
 import { RatingText, Stat, VehicleIcon, VehicleTag } from "@/components/ride-bits";
 import { ChangeVehicleScreen } from "@/components/rider/change-vehicle-screen";
 import { DocumentsScreen } from "@/components/rider/documents-screen";
+import { EarningsScreen } from "@/components/rider/earnings-screen";
 import { EditPersonalDetailsScreen } from "@/components/rider/edit-personal-details-screen";
 import { TripHistory } from "@/components/trip-history";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -121,8 +122,8 @@ export function RiderProfile({ onClose, initialSection }: { onClose: () => void;
   const router = useRouter();
   const [closing, setClosing] = useState(false);
   const [changingPassword, setChangingPassword] = useState(false);
-  const [activeSubscreen, setActiveSubscreen] = useState<"edit-personal" | "change-vehicle" | "documents" | null>(
-    initialSection === "documents" ? "documents" : null,
+  const [activeSubscreen, setActiveSubscreen] = useState<"edit-personal" | "change-vehicle" | "documents" | "earnings" | null>(
+    initialSection === "documents" ? "documents" : initialSection === "earnings" ? "earnings" : null,
   );
   const scroller = useRef<HTMLDivElement>(null);
 
@@ -157,7 +158,7 @@ export function RiderProfile({ onClose, initialSection }: { onClose: () => void;
   }, [activeSubscreen]);
 
   useEffect(() => {
-    if (!initialSection || initialSection === "documents") return;
+    if (!initialSection || initialSection === "documents" || initialSection === "earnings") return;
     const t = setTimeout(() => document.getElementById(initialSection)?.scrollIntoView({ behavior: "smooth" }), 350);
     return () => clearTimeout(t);
   }, [initialSection]);
@@ -329,7 +330,21 @@ export function RiderProfile({ onClose, initialSection }: { onClose: () => void;
               </Section>
 
               {/* Section 3: Overview Earnings Data (week, month, commission) */}
-              <Section id="earnings" icon={<CreditCard />} title="Earnings Overview">
+              <Section
+                id="earnings"
+                icon={<CreditCard />}
+                title="Earnings Overview"
+                action={
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-8 gap-1 text-xs text-primary"
+                    onClick={() => setActiveSubscreen("earnings")}
+                  >
+                    Full Summary <ChevronRight className="size-3.5" />
+                  </Button>
+                }
+              >
                 <div className="grid grid-cols-2 gap-2">
                   <Stat
                     label="Last 7 days"
@@ -458,6 +473,10 @@ export function RiderProfile({ onClose, initialSection }: { onClose: () => void;
 
       {activeSubscreen === "documents" && (
         <DocumentsScreen onBack={() => setActiveSubscreen(null)} />
+      )}
+
+      {activeSubscreen === "earnings" && (
+        <EarningsScreen onBack={() => setActiveSubscreen(null)} />
       )}
     </div>,
     document.body,

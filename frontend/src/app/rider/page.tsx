@@ -5,9 +5,10 @@ import useSWR from "swr";
 import { toast } from "sonner";
 import { FileWarning, Loader2, LocateFixed, LocateOff, MapPin, ShieldAlert } from "lucide-react";
 import { PortalShell } from "@/components/app-shell";
-import { RideMap, type MapLine, type MapMarker } from "@/components/map/ride-map";
+import { RideMap, type MapCircle, type MapLine, type MapMarker } from "@/components/map/ride-map";
 import { BottomSheet } from "@/components/rider/bottom-sheet";
 import { AvailabilityToggle } from "@/components/rider/availability-toggle";
+import { DemandHintsCard, demandCircleColor } from "@/components/rider/demand-hints-card";
 import { OPEN_PROFILE_EVENT } from "@/components/rider/rider-profile";
 import { ActiveTripCard, CollectCard, OfferCard, run } from "@/components/rider/trip-cards";
 import { Stat, VehicleIcon, VehicleTag } from "@/components/ride-bits";
@@ -22,7 +23,7 @@ import { haversineKm, toTuple } from "@/lib/geo";
 import { useLiveInterval } from "@/lib/realtime";
 import { useServerHealth } from "@/lib/server";
 import { useGeolocation, type GeoFix } from "@/lib/use-geolocation";
-import type { Offer, RiderMe, Trip } from "@/lib/types";
+import type { Offer, RiderDemandHints, RiderDemandZone, RiderMe, Trip } from "@/lib/types";
 
 const ROUTE_COLOR = "#e8e8e3";
 /** Send a fix when moved this far, or at least this often while standing still (keeps the rider "fresh"). */
@@ -79,6 +80,7 @@ function RiderPortal() {
   const [toggling, setToggling] = useState(false);
   const [manual, setManual] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(true);
+  const [selectedZone, setSelectedZone] = useState<RiderDemandZone | null>(null);
   const [blocked, setBlocked] = useState<{ title: string; message: string; toDocuments: boolean } | null>(null);
   const interval = useLiveInterval(3000, 30000);
   const { data: health } = useServerHealth();
@@ -126,6 +128,29 @@ function RiderPortal() {
     setSeenOfferId(offerId);
     if (offerId) setSheetOpen(true); // a new request should never stay hidden below the fold
   }
+
+  const sheetBodyRef = useRef<HTMLDivElement>(null);
+  const sheetStopRef = useRef<HTMLDivElement>(null);
+  const [idleSheetHeight, setIdleSheetHeight] = useState<number | null>(null);
+  const clampToIdlePrompt = !!me && verified && !active && !offer && !toCollect;
+
+  useEffect(() => {
+    if (!clampToIdlePrompt) {
+      setIdleSheetHeight(null);
+      return;
+    }
+    const body = sheetBodyRef.current;
+    const stop = sheetStopRef.current;
+    if (!body || !stop) return;
+    const measure = () => {
+      // 104px = drag handle (32px) + sheet header (72px); stop.offsetTop includes top/bottom 16px padding.
+      setIdleSheetHeight(104 + stop.offsetTop);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(body);
+    return () => ro.disconnect();
+  }, [clampToIdlePrompt, me?.is_online, geo.status, manual]);
 
   const refreshAll = () => {
     void refreshMe();
@@ -192,35 +217,64 @@ function RiderPortal() {
 
   // ---- map ----------------------------------------------------------------------------------
   const position = !manual && geo.fix ? { lat: geo.fix.lat, lng: geo.fix.lng } : me?.lat != null && me.lng != null ? { lat: me.lat, lng: me.lng } : null;
+  const hintsKey = verified
+    ? position
+      ? `/api/rider/demand-hints?lat=${position.lat.toFixed(3)}&lng=${position.lng.toFixed(3)}`
+      : "/api/rider/demand-hints"
+    : null;
+  const { data: hints } = useSWR<RiderDemandHints>(hintsKey, fetcher, { refreshInterval: 60000 });
+
   const markers: MapMarker[] = [];
   const lines: MapLine[] = [];
+  const circles: MapCircle[] = [];
   const shownTrip = active ?? offer?.trip ?? null;
   if (shownTrip) {
     markers.push({ id: "pickup", kind: "pickup", position: toTuple(shownTrip.pickup), label: shownTrip.pickup_address });
     markers.push({ id: "drop", kind: "drop", position: toTuple(shownTrip.drop), label: shownTrip.drop_address });
     lines.push({ id: "route", points: shownTrip.route, color: ROUTE_COLOR });
     if (active?.status === "accepted") lines.push({ id: "approach", points: active.approach, color: VEHICLE_COLOR[active.vehicle_type], dashed: true, weight: 3 });
+  } else if (hints?.zones.length) {
+    const maxReq = Math.max(...hints.zones.map((z) => z.expected_requests), 0.1);
+    for (const z of hints.zones) {
+      if (z.expected_requests <= 0 && selectedZone?.zone_id !== z.zone_id) continue;
+      const isSelected = selectedZone?.zone_id === z.zone_id;
+      circles.push({
+        id: `demand-${z.zone_id}`,
+        center: [z.lat, z.lng],
+        radius: isSelected ? 28 : 8 + 18 * Math.sqrt(z.expected_requests / maxReq),
+        color: isSelected ? "#f97316" : demandCircleColor(z.demand_level),
+        label: `${z.zone}: ~${z.expected_requests.toFixed(1)} req/hr · ${z.free_riders} free`,
+      });
+    }
   }
   if (position) markers.push({ id: "me", kind: "rider", position: toTuple(position), vehicleType: me?.vehicle?.vehicle_type, live: me?.is_online, label: "You" });
   const fitTo: [number, number][] = shownTrip
     ? [toTuple(shownTrip.pickup), toTuple(shownTrip.drop), ...(position ? [toTuple(position)] : [])]
-    : position
-      ? [toTuple(position)]
-      : [];
-  const fitKey = shownTrip ? `${shownTrip.id}-${shownTrip.status}` : position ? "me" : "none";
+    : selectedZone
+      ? [[selectedZone.lat, selectedZone.lng], ...(position ? [toTuple(position)] : [])]
+      : position
+        ? [toTuple(position)]
+        : [];
+  const fitKey = shownTrip
+    ? `${shownTrip.id}-${shownTrip.status}`
+    : selectedZone
+      ? `zone-${selectedZone.zone_id}`
+      : position
+        ? "me"
+        : "none";
 
   return (
     <div className="relative min-h-0 flex-1 overflow-hidden">
       {/* Layer 0: the map fills everything; every other element floats above it. */}
       <section className="absolute inset-0 isolate z-0">
-        <RideMap markers={markers} lines={lines} fitTo={fitTo} fitKey={fitKey} onMapClick={onMapClick} />
+        <RideMap markers={markers} lines={lines} circles={circles} fitTo={fitTo} fitKey={fitKey} onMapClick={onMapClick} />
       </section>
 
       {/* Floating online toggle, independent of the panel. */}
       {me && (
-        <div className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center px-3 md:justify-start md:pl-[calc(26.25rem+0.75rem)]">
+        <div className="pointer-events-none absolute inset-x-0 top-3 z-20 px-3 md:pr-3 md:pl-[calc(26.25rem+0.75rem)]">
           <AvailabilityToggle
-            className="pointer-events-auto max-w-sm"
+            className="pointer-events-auto w-full"
             online={me.is_online}
             busy={toggling}
             disabled={!!active}
@@ -240,6 +294,7 @@ function RiderPortal() {
       <BottomSheet
         expanded={sheetOpen}
         onExpandedChange={setSheetOpen}
+        mobileHeight={clampToIdlePrompt ? idleSheetHeight : null}
         header={
           me && (
             <div className="flex h-16 items-center gap-3 rounded-xl border bg-card px-3">
@@ -254,8 +309,8 @@ function RiderPortal() {
           )
         }
       >
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden p-4">
-          <div className="space-y-4">
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+          <div ref={sheetBodyRef} className="relative space-y-4 p-4">
             {!me && <Loader2 className="mx-auto size-5 animate-spin text-muted-foreground" />}
             {me && (
               <>
@@ -284,17 +339,26 @@ function RiderPortal() {
                 {verified && <GpsStatus status={geo.status} fix={geo.fix} manual={manual} onManual={setManual} />}
 
                 {/* Instantaneous data modules for rider home screen */}
-                <div className="grid grid-cols-2 gap-2">
-                  <Stat
-                    label="Today's Earnings"
-                    value={formatTaka(me.earnings_today)}
-                    hint="After platform cut"
-                  />
-                  <Stat
-                    label="Completed Today"
-                    value={`${me.trips_today ?? 0} rides`}
-                    hint={`${me.trips_completed} lifetime`}
-                  />
+                <div className="space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <Stat
+                      label="Today's Earnings"
+                      value={formatTaka(me.earnings_today)}
+                      hint="After platform cut"
+                    />
+                    <Stat
+                      label="Completed Today"
+                      value={`${me.trips_today ?? 0} rides`}
+                      hint={`${me.trips_completed} lifetime`}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => openProfile("earnings")}
+                    className="w-full text-right text-xs font-medium text-primary hover:underline"
+                  >
+                    View daily &amp; weekly earnings summary →
+                  </button>
                 </div>
 
                 {toCollect && <CollectCard trip={toCollect} onDone={refreshAll} />}
@@ -309,6 +373,14 @@ function RiderPortal() {
                   <p className="text-sm text-muted-foreground">
                     Go online to receive requests for <VehicleTag type={me.vehicle?.vehicle_type ?? "bike"} className="inline-flex" /> rides.
                   </p>
+                )}
+                <div ref={sheetStopRef} aria-hidden className="h-0" />
+                {!active && !offer && verified && hints && (
+                  <DemandHintsCard
+                    hints={hints}
+                    selectedZoneId={selectedZone?.zone_id ?? null}
+                    onSelectZone={setSelectedZone}
+                  />
                 )}
               </>
             )}

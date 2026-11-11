@@ -457,13 +457,42 @@ export interface EarningsPeriod {
   trips: number;
 }
 
+export interface DailyEarning {
+  date: string;
+  label: string;
+  short_label: string;
+  gross: number;
+  earnings: number;
+  trips: number;
+}
+
 export interface RiderEarnings {
   balance: RiderBalance;
   today: EarningsPeriod;
   week: EarningsPeriod;
   month: EarningsPeriod;
+  daily?: DailyEarning[];
   payments: PaymentRow[];
   settlements: { id: string; amount: number; note: string; created_at: string | null }[];
+}
+
+export interface RiderDemandZone {
+  zone_id: number;
+  zone: string;
+  lat: number;
+  lng: number;
+  expected_requests: number;
+  free_riders: number;
+  demand_level: "low" | "normal" | "high" | "very high";
+  estimated_multiplier: number;
+  distance_km: number | null;
+}
+
+export interface RiderDemandHints {
+  vehicle_type: VehicleType;
+  generated_at: string | null;
+  raining: boolean;
+  zones: RiderDemandZone[];
 }
 
 export interface PaymentsOverview {

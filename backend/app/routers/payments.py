@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
-from app.db import local_day_start, local_month_start, utcnow
+from app.db import local_day_start, local_month_start, local_time, utcnow
 from app.models import Payment, Rider, Settlement, Trip
 from app.realtime import ADMINS, emit
 from app.schemas import TripOut, iso_utc, trip_out
@@ -51,6 +51,47 @@ def _period(db: DB, rider_id: str, since) -> dict:
     return {"gross": round(float(gross)), "earnings": round(float(earning)), "trips": int(trips)}
 
 
+def _daily_breakdown(db: DB, rider_id: str, days: int = 7) -> list[dict]:
+    """Per-day totals for the last `days` local days, newest first."""
+    today_local = local_time(utcnow()).date()
+    since = local_day_start() - timedelta(days=days - 1)
+    rows = db.execute(
+        select(Payment.amount, Payment.rider_earning, Payment.created_at).where(
+            Payment.rider_id == rider_id, Payment.status != "disputed", Payment.created_at >= since
+        )
+    ).all()
+
+    by_day: dict = {}
+    for amount, earning, created_at in rows:
+        d = local_time(created_at).date()
+        bucket = by_day.setdefault(d, [0.0, 0.0, 0])
+        bucket[0] += float(amount or 0)
+        bucket[1] += float(earning or 0)
+        bucket[2] += 1
+
+    out = []
+    for offset in range(days):
+        d = today_local - timedelta(days=offset)
+        gross, earning, trips = by_day.get(d, (0.0, 0.0, 0))
+        if offset == 0:
+            label = "Today"
+        elif offset == 1:
+            label = "Yesterday"
+        else:
+            label = d.strftime("%a, %b %-d")
+        out.append(
+            {
+                "date": d.isoformat(),
+                "label": label,
+                "short_label": d.strftime("%a"),
+                "gross": round(gross),
+                "earnings": round(earning),
+                "trips": trips,
+            }
+        )
+    return out
+
+
 @router.post("/rider/trips/{trip_id}/collect", response_model=TripOut)
 def collect_cash(trip_id: str, db: DB, rider: CurrentRider):
     trip = db.get(Trip, trip_id)
@@ -89,6 +130,7 @@ def rider_earnings(db: DB, rider: CurrentRider):
         "today": _period(db, rider.id, local_day_start()),
         "week": _period(db, rider.id, now - timedelta(days=7)),
         "month": _period(db, rider.id, local_month_start()),
+        "daily": _daily_breakdown(db, rider.id),
         "payments": [_payment_row(p) for p in recent],
         "settlements": [{"id": s.id, "amount": s.amount, "note": s.note, "created_at": iso_utc(s.created_at)} for s in settlements],
     }
