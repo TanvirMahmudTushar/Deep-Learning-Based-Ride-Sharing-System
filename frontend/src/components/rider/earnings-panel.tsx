@@ -18,14 +18,46 @@ export function EarningsPanel() {
   const { data } = useSWR<RiderEarnings>("/api/rider/earnings", fetcher);
   if (!data) return <Skeleton className="h-64" />;
   const b = data.balance;
+  const daily = data.daily ?? [];
+  const maxDay = Math.max(...daily.map((d) => d.earnings), 1);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <div className="grid grid-cols-3 gap-2">
         <Stat label="Today" value={formatTaka(data.today.earnings)} hint={`${data.today.trips} trips`} />
         <Stat label="7 days" value={formatTaka(data.week.earnings)} hint={`${data.week.trips} trips`} />
         <Stat label="This month" value={formatTaka(data.month.earnings)} hint={`${data.month.trips} trips`} />
       </div>
+
+      {daily.length > 0 && (
+        <div className="space-y-3 rounded-xl border p-4">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-sm font-medium">Daily breakdown (last 7 days)</h3>
+            <span className="text-xs text-muted-foreground tabular-nums">Gross {formatTaka(data.week.gross)}</span>
+          </div>
+          <ul className="space-y-2.5">
+            {daily.map((d) => {
+              const pct = d.earnings > 0 ? Math.max(6, Math.round((d.earnings / maxDay) * 100)) : 0;
+              return (
+                <li key={d.date} className="space-y-1 text-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0 truncate">
+                      <span className="font-medium">{d.label}</span>
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        {d.trips} {d.trips === 1 ? "trip" : "trips"}
+                      </span>
+                    </div>
+                    <span className="shrink-0 font-medium tabular-nums">{formatTaka(d.earnings)}</span>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                    {pct > 0 && <div className="h-full rounded-full bg-emerald-400/80" style={{ width: `${pct}%` }} />}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
 
       <div className="space-y-2 rounded-xl border p-4">
         <div className="flex items-center justify-between">
@@ -75,12 +107,12 @@ export function EarningsPanel() {
           <h3 className="text-xs font-medium text-muted-foreground">Settlements</h3>
           <ul className="space-y-1.5 text-sm">
             {data.settlements.map((s) => (
-              <li key={s.id} className="flex justify-between rounded-lg bg-muted/50 px-3 py-2">
-                <span className="text-muted-foreground">
+              <li key={s.id} className="flex justify-between gap-2 rounded-lg bg-muted/50 px-3 py-2">
+                <span className="min-w-0 truncate text-muted-foreground">
                   {formatDateTime(s.created_at)}
                   {s.note && ` · ${s.note}`}
                 </span>
-                <span className="tabular-nums">{formatTaka(s.amount)}</span>
+                <span className="shrink-0 tabular-nums">{formatTaka(s.amount)}</span>
               </li>
             ))}
           </ul>
