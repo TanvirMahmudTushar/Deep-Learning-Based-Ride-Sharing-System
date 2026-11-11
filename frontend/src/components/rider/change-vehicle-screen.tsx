@@ -10,11 +10,9 @@ import {
   ChevronLeft,
   Clock,
   Eye,
-  FileCheck2,
   FileUp,
   Loader2,
   Plus,
-  RefreshCw,
   XCircle,
 } from "lucide-react";
 import { VehicleIcon, VehicleTag } from "@/components/ride-bits";
@@ -33,7 +31,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, fetcher } from "@/lib/api";
-import { formatDateTime, VEHICLE_COLOR, VEHICLE_LABEL } from "@/lib/format";
+import { formatDateTime, VEHICLE_COLOR } from "@/lib/format";
 import { useServerHealth } from "@/lib/server";
 import { cn } from "@/lib/utils";
 import type { DocumentType, RiderMe, VehicleChange, VehicleType } from "@/lib/types";
