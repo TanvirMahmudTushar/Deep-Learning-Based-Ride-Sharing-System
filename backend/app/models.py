@@ -83,6 +83,23 @@ class Zone(Base):
     center_lng: Mapped[float] = mapped_column(Float)
 
 
+class BRTARegion(Base):
+    __tablename__ = "brta_regions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    bengali_text: Mapped[str] = mapped_column(String(80))
+
+
+class BRTAClassCode(Base):
+    __tablename__ = "brta_class_codes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(10), index=True)
+    bengali_text: Mapped[str] = mapped_column(String(40))
+    vehicle_type: Mapped[str] = mapped_column(String(8), index=True)  # bike, cng, car
+
+
 class Trip(Base):
     __tablename__ = "trips"
 
