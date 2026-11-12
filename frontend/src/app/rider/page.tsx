@@ -118,22 +118,26 @@ function RiderPortal() {
     if (!sharing || !gpsWanted || !fix) return;
     const prev = lastSent.current;
     const now = Date.now();
+    const minGap = active ? 2500 : MIN_GAP_MS;
+    const minMove = active ? 5 : MIN_MOVE_M;
+    const heartbeat = active ? 7000 : HEARTBEAT_MS;
     const moved = prev ? haversineKm(prev, fix) * 1000 : Infinity;
-    if (prev && (now - prev.at < MIN_GAP_MS || (moved < MIN_MOVE_M && now - prev.at < HEARTBEAT_MS))) return;
+    if (prev && (now - prev.at < minGap || (moved < minMove && now - prev.at < heartbeat))) return;
     lastSent.current = { lat: fix.lat, lng: fix.lng, at: now };
     sendFix(fix).catch(() => undefined);
-  }, [geo.fix, sharing, gpsWanted]);
+  }, [geo.fix, sharing, gpsWanted, active]);
 
   useEffect(() => {
     if (!sharing || !gpsWanted) return;
+    const intervalTime = active ? 7000 : HEARTBEAT_MS;
     const id = setInterval(() => {
       const fix = latestFix.current;
       if (!fix) return;
       lastSent.current = { lat: fix.lat, lng: fix.lng, at: Date.now() };
       sendFix(fix).catch(() => undefined);
-    }, HEARTBEAT_MS);
+    }, intervalTime);
     return () => clearInterval(id);
-  }, [sharing, gpsWanted]);
+  }, [sharing, gpsWanted, active]);
 
   const offerId = offer?.trip.id;
   const [seenOfferId, setSeenOfferId] = useState<string | undefined>();
@@ -251,8 +255,20 @@ function RiderPortal() {
   if (shownTrip) {
     markers.push({ id: "pickup", kind: "pickup", position: toTuple(shownTrip.pickup), label: shownTrip.pickup_address });
     markers.push({ id: "drop", kind: "drop", position: toTuple(shownTrip.drop), label: shownTrip.drop_address });
-    lines.push({ id: "route", points: shownTrip.route, color: ROUTE_COLOR });
-    if (active?.status === "accepted") lines.push({ id: "approach", points: active.approach, color: VEHICLE_COLOR[active.vehicle_type], dashed: true, weight: 3 });
+
+    if (active?.status === "accepted") {
+      // Approach to pickup is the primary navigation leg
+      if (active.approach && active.approach.length > 0) {
+        lines.push({ id: "approach", points: active.approach, color: VEHICLE_COLOR[active.vehicle_type] ?? "#38bdf8", weight: 5 });
+      }
+      // Drop-off route is drawn dashed as the upcoming leg
+      lines.push({ id: "route", points: shownTrip.route, color: "#9ca3af", dashed: true, weight: 3 });
+    } else if (active?.status === "ongoing") {
+      // Drop-off route is the primary active navigation leg
+      lines.push({ id: "route", points: shownTrip.route, color: VEHICLE_COLOR[active.vehicle_type] ?? "#22c55e", weight: 5 });
+    } else {
+      lines.push({ id: "route", points: shownTrip.route, color: ROUTE_COLOR, weight: 4 });
+    }
   } else if (hints?.zones.length) {
     const maxReq = Math.max(...hints.zones.map((z) => z.expected_requests), 0.1);
     for (const z of hints.zones) {
@@ -268,20 +284,37 @@ function RiderPortal() {
     }
   }
   if (position) markers.push({ id: "me", kind: "rider", position: toTuple(position), vehicleType: me?.vehicle?.vehicle_type, live: me?.is_online, label: "You" });
-  const fitTo: [number, number][] = shownTrip
-    ? [toTuple(shownTrip.pickup), toTuple(shownTrip.drop), ...(position ? [toTuple(position)] : [])]
-    : selectedZone
-      ? [[selectedZone.lat, selectedZone.lng], ...(position ? [toTuple(position)] : [])]
-      : position
-        ? [toTuple(position)]
-        : [];
-  const fitKey = shownTrip
-    ? `${shownTrip.id}-${shownTrip.status}`
-    : selectedZone
-      ? `zone-${selectedZone.zone_id}`
-      : position
-        ? "me"
-        : "none";
+
+  let fitTo: [number, number][] = [];
+  if (active?.status === "accepted") {
+    // Zoom focus on rider and pickup point during approach/arrival
+    fitTo = [
+      toTuple(active.pickup),
+      ...(position ? [toTuple(position)] : active.approach?.length ? [active.approach[0] as [number, number]] : []),
+    ];
+  } else if (active?.status === "ongoing") {
+    // Zoom focus on rider and drop-off point during ongoing trip
+    fitTo = [
+      toTuple(active.drop),
+      ...(position ? [toTuple(position)] : [toTuple(active.pickup)]),
+    ];
+  } else if (shownTrip) {
+    fitTo = [toTuple(shownTrip.pickup), toTuple(shownTrip.drop), ...(position ? [toTuple(position)] : [])];
+  } else if (selectedZone) {
+    fitTo = [[selectedZone.lat, selectedZone.lng], ...(position ? [toTuple(position)] : [])];
+  } else if (position) {
+    fitTo = [toTuple(position)];
+  }
+
+  const fitKey = active
+    ? `${active.id}-${active.status}-${active.arrived_at ? "arrived" : "heading"}`
+    : shownTrip
+      ? `${shownTrip.id}-${shownTrip.status}`
+      : selectedZone
+        ? `zone-${selectedZone.zone_id}`
+        : position
+          ? "me"
+          : "none";
 
   return (
     <div className="relative min-h-0 flex-1 overflow-hidden">

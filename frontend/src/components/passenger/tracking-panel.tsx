@@ -2,6 +2,7 @@
 
 import { Check, Loader2, Phone, Radar, Share2, Siren, X } from "lucide-react";
 import { useState } from "react";
+import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { CancelDialog } from "@/components/passenger/cancel-dialog";
 import { FareBreakdownView, PaymentStatus, RateForm } from "@/components/passenger/trip-parts";
@@ -11,30 +12,59 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { RatingText, TripStatusBadge, VehicleIcon, VehicleTag } from "@/components/ride-bits";
+import { SPRING_UI } from "@/components/ui/motion";
 import { api } from "@/lib/api";
 import { formatKm, formatMinutes, formatTaka, VEHICLE_LABEL } from "@/lib/format";
 import { haversineKm } from "@/lib/geo";
 import { cn } from "@/lib/utils";
 import type { Trip } from "@/lib/types";
 
-const STEPS = [
-  { key: "requested", label: "Matching" },
-  { key: "accepted", label: "Pickup" },
-  { key: "ongoing", label: "On trip" },
-  { key: "completed", label: "Arrived" },
-] as const;
-
 /** Bangladesh national emergency number. */
 const EMERGENCY_NUMBER = "999";
 
-function Steps({ status }: { status: Trip["status"] }) {
-  const current = STEPS.findIndex((s) => s.key === status);
+function Steps({ trip }: { trip: Trip }) {
+  const steps = [
+    { key: "requested", label: "Matching", active: trip.status === "requested", done: trip.status !== "requested" },
+    {
+      key: "accepted",
+      label: trip.arrived_at ? "Rider arrived" : "Pickup",
+      active: trip.status === "accepted",
+      done: trip.status === "ongoing" || trip.status === "completed",
+    },
+    { key: "ongoing", label: "On trip", active: trip.status === "ongoing", done: trip.status === "completed" },
+    { key: "completed", label: "Arrived", active: trip.status === "completed", done: false },
+  ];
+
   return (
     <ol className="grid grid-cols-4 gap-1.5" aria-label="Trip progress">
-      {STEPS.map((s, i) => (
+      {steps.map((s) => (
         <li key={s.key} className="space-y-1.5">
-          <div className={cn("h-1 rounded-full", i <= current ? "bg-foreground" : "bg-muted")} />
-          <div className={cn("text-[11px]", i === current ? "text-foreground" : "text-muted-foreground")}>{s.label}</div>
+          <div
+            className={cn(
+              "h-1 rounded-full transition-all duration-300",
+              s.active
+                ? s.key === "accepted" && trip.arrived_at
+                  ? "bg-emerald-400"
+                  : "bg-foreground"
+                : s.done
+                  ? "bg-foreground/70"
+                  : "bg-muted"
+            )}
+          />
+          <div
+            className={cn(
+              "text-[11px] truncate transition-colors",
+              s.active
+                ? s.key === "accepted" && trip.arrived_at
+                  ? "font-semibold text-emerald-400"
+                  : "font-semibold text-foreground"
+                : s.done
+                  ? "text-foreground/70"
+                  : "text-muted-foreground"
+            )}
+          >
+            {s.label}
+          </div>
         </li>
       ))}
     </ol>
@@ -121,12 +151,16 @@ function SafetyControls({ trip, onChanged }: { trip: Trip; onChanged: () => void
         </Alert>
       )}
       <div className="grid grid-cols-2 gap-2">
-        <Button variant="outline" onClick={share}>
-          <Share2 /> Share trip
-        </Button>
-        <Button variant="destructive" onClick={() => setOpen(true)} disabled={trip.sos_active}>
-          <Siren /> {trip.sos_active ? "Alert sent" : "Emergency"}
-        </Button>
+        <motion.div whileTap={{ scale: 0.97 }} transition={SPRING_UI}>
+          <Button variant="outline" className="w-full h-11 font-medium" onClick={share}>
+            <Share2 className="mr-1.5 size-4" /> Share trip
+          </Button>
+        </motion.div>
+        <motion.div whileTap={{ scale: 0.97 }} transition={SPRING_UI}>
+          <Button variant="destructive" className="w-full h-11 font-medium" onClick={() => setOpen(true)} disabled={trip.sos_active}>
+            <Siren className="mr-1.5 size-4" /> {trip.sos_active ? "Alert sent" : "Emergency"}
+          </Button>
+        </motion.div>
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
@@ -139,14 +173,18 @@ function SafetyControls({ trip, onChanged }: { trip: Trip; onChanged: () => void
           </DialogHeader>
           <Textarea placeholder="What's happening? (optional)" value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} />
           <DialogFooter className="gap-2 sm:justify-between">
-            <Button variant="outline" asChild>
-              <a href={`tel:${EMERGENCY_NUMBER}`}>
-                <Phone /> Call {EMERGENCY_NUMBER}
-              </a>
-            </Button>
-            <Button variant="destructive" onClick={sendSos} disabled={sending}>
-              {sending ? <Loader2 className="animate-spin" /> : <Siren />} Send alert
-            </Button>
+            <motion.div whileTap={{ scale: 0.97 }} transition={SPRING_UI}>
+              <Button variant="outline" className="h-11" asChild>
+                <a href={`tel:${EMERGENCY_NUMBER}`}>
+                  <Phone className="mr-1.5 size-4" /> Call {EMERGENCY_NUMBER}
+                </a>
+              </Button>
+            </motion.div>
+            <motion.div whileTap={{ scale: 0.97 }} transition={SPRING_UI}>
+              <Button variant="destructive" className="h-11 font-semibold" onClick={sendSos} disabled={sending}>
+                {sending ? <Loader2 className="animate-spin" /> : <Siren className="mr-1.5 size-4" />} Send alert
+              </Button>
+            </motion.div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -166,7 +204,7 @@ export function TrackingPanel({ trip, onChanged }: { trip: Trip; onChanged: () =
         <TripStatusBadge status={trip.status} />
         <span className="text-xs text-muted-foreground">Trip ETA {formatMinutes(trip.predicted_eta_min)}</span>
       </div>
-      <Steps status={trip.status} />
+      <Steps trip={trip} />
 
       {trip.status === "requested" && (
         <div className="flex items-start gap-3 rounded-lg border p-4">
@@ -179,10 +217,12 @@ export function TrackingPanel({ trip, onChanged }: { trip: Trip; onChanged: () =
       )}
 
       {trip.status === "accepted" && trip.arrived_at && (
-        <Alert>
-          <Check />
-          <AlertTitle>Your rider has arrived</AlertTitle>
-          <AlertDescription>Look for {rider?.vehicle ? rider.vehicle.plate_no : "your rider"} at the pickup point.</AlertDescription>
+        <Alert className="border-emerald-500/40 bg-emerald-500/10">
+          <Check className="size-4 text-emerald-400" />
+          <AlertTitle className="text-emerald-400 font-semibold">Your rider has arrived</AlertTitle>
+          <AlertDescription className="text-foreground">
+            Look for {rider?.vehicle ? `${rider.vehicle.model} (${rider.vehicle.plate_no})` : "your rider"} at the pickup point.
+          </AlertDescription>
         </Alert>
       )}
 
@@ -233,9 +273,11 @@ export function TrackingPanel({ trip, onChanged }: { trip: Trip; onChanged: () =
       <TripSummary trip={trip} />
 
       {(trip.status === "requested" || trip.status === "accepted") && (
-        <Button variant="ghost" className="w-full text-destructive hover:text-destructive" onClick={() => setCancelOpen(true)}>
-          <X /> Cancel ride
-        </Button>
+        <motion.div whileTap={{ scale: 0.97 }} transition={SPRING_UI}>
+          <Button variant="ghost" className="w-full h-11 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setCancelOpen(true)}>
+            <X className="mr-1.5 size-4" /> Cancel ride
+          </Button>
+        </motion.div>
       )}
       <CancelDialog trip={trip} open={cancelOpen} onOpenChange={setCancelOpen} onCancelled={onChanged} />
     </div>

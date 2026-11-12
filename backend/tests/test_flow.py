@@ -299,3 +299,53 @@ def test_brta_dataset_and_plate_format(client):
     assert any(c["code"] == "HA" and c["bengali"] == "হ" and c["vehicle_type"] == "bike" for c in data["class_codes"])
     assert any(c["code"] == "KA" and c["bengali"] == "ক" and c["vehicle_type"] == "car" for c in data["class_codes"])
     assert any(c["code"] == "THA" and c["bengali"] == "থ" and c["vehicle_type"] == "cng" for c in data["class_codes"])
+
+
+def test_trip_navigation_status_steps_and_tracking(client, user_h, rider_h):
+    with SessionLocal() as db:
+        db.execute(update(Rider).where(Rider.is_simulated.is_(True)).values(is_online=False))
+        db.commit()
+
+    online = client.post("/api/rider/online", headers=rider_h, json={"is_online": True, "lat": 23.7815, "lng": 90.4140})
+    assert online.status_code == 200
+
+    trip = client.post("/api/trips", headers=user_h, json={"pickup": GULSHAN, "drop": DHANMONDI, "vehicle_type": "bike"}).json()
+    trip_id = trip["id"]
+
+    # 1. Accept trip: approach route is generated
+    accepted = client.post(f"/api/rider/offers/{trip_id}/accept", headers=rider_h).json()
+    assert accepted["status"] == "accepted"
+    assert accepted["arrived_at"] is None
+    assert len(accepted["approach"]) >= 2
+    assert len(accepted["route"]) >= 2
+
+    # 2. Live tracking while heading to pickup: GPS ping updates rider location and tracks
+    ping = client.post("/api/rider/location", headers=rider_h, json={"lat": 23.7850, "lng": 90.4150, "speed_kmh": 25.0, "accuracy_m": 5})
+    assert ping.status_code == 200
+
+    # 3. Arrived step: Rider explicitly marks arrived
+    arrived = client.post(f"/api/rider/trips/{trip_id}/arrived", headers=rider_h).json()
+    assert arrived["status"] == "accepted"
+    assert arrived["arrived_at"] is not None
+
+    # Idempotent arrival
+    arrived_again = client.post(f"/api/rider/trips/{trip_id}/arrived", headers=rider_h).json()
+    assert arrived_again["arrived_at"] == arrived["arrived_at"]
+
+    # 4. Start trip: status becomes ongoing
+    started = client.post(f"/api/rider/trips/{trip_id}/start", headers=rider_h).json()
+    assert started["status"] == "ongoing"
+    assert started["started_at"] is not None
+
+    # Calling arrived on ongoing trip returns 409
+    assert client.post(f"/api/rider/trips/{trip_id}/arrived", headers=rider_h).status_code == 409
+
+    # 5. Live tracking during trip
+    ping2 = client.post("/api/rider/location", headers=rider_h, json={"lat": 23.7700, "lng": 90.3900, "speed_kmh": 30.0, "accuracy_m": 8})
+    assert ping2.status_code == 200
+
+    # 6. Complete trip
+    completed = client.post(f"/api/rider/trips/{trip_id}/complete", headers=rider_h).json()
+    assert completed["status"] == "completed"
+    assert completed["completed_at"] is not None
+
