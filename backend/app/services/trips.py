@@ -137,7 +137,12 @@ def accept(db: Session, trip: Trip, rider: Rider) -> Trip:
     trip.sim_progress_km = 0.0
     matching.set_offer_status(db, trip, rider.id, "accepted")
 
-    approach = get_route((rider.current_lat, rider.current_lng), (trip.pickup_lat, trip.pickup_lng))
+    rider_point = (
+        (rider.current_lat, rider.current_lng)
+        if rider.current_lat is not None and rider.current_lng is not None
+        else (trip.pickup_lat, trip.pickup_lng)
+    )
+    approach = get_route(rider_point, (trip.pickup_lat, trip.pickup_lng))
     trip.approach = approach.points
     trip.pickup_eta_min = eta_predictor.predict_eta(approach.distance_km, trip.vehicle_type_requested, now)
     db.flush()
@@ -152,6 +157,19 @@ def decline(db: Session, trip: Trip, rider: Rider) -> None:
         raise TripError(409, "This trip is no longer offered to you")
     matching.set_offer_status(db, trip, rider.id, "declined")
     advance_offer(db, trip)
+
+
+def arrived(db: Session, trip: Trip, rider: Rider | None = None) -> Trip:
+    if trip.status != "accepted":
+        raise TripError(409, "Only an accepted trip can be marked as arrived")
+    if rider and trip.rider_id != rider.id:
+        raise TripError(403, "You are not assigned to this trip")
+    if trip.arrived_at is None:
+        trip.arrived_at = utcnow()
+        db.flush()
+        plate = trip.vehicle.plate_no if trip.vehicle else "your rider"
+        _trip_event(db, trip, notify_passenger=("Your rider has arrived", f"Look for {plate} at the pickup point."))
+    return trip
 
 
 def start(db: Session, trip: Trip) -> Trip:
