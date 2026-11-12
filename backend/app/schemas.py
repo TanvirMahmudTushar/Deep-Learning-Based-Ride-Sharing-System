@@ -66,6 +66,64 @@ class VehicleOut(BaseModel):
     verified: bool
 
 
+class AdminAccountStatsOut(BaseModel):
+    trips_total: int
+    trips_completed: int
+    trips_cancelled: int
+    account_cancellations: int
+    cancellation_rate: float
+
+
+class AdminAccountOut(BaseModel):
+    id: str
+    role: Literal["user", "rider"]
+    full_name: str
+    email: str
+    phone: str
+    status: Literal["active", "pending", "verified", "suspended"]
+    account_status: Literal["active", "suspended"]
+    rider_verification_status: Literal["pending", "verified"] | None
+    rider_id: str | None
+    license_no: str | None
+    is_simulated: bool
+    is_online: bool
+    busy: bool
+    lat: float | None
+    lng: float | None
+    rating: float | None
+    rating_count: int
+    vehicle: VehicleOut | None
+    documents_ready: bool
+    joined_at: str | None
+    stats: AdminAccountStatsOut
+
+
+class AdminAccountPageOut(BaseModel):
+    items: list[AdminAccountOut]
+    total: int
+
+
+class AdminAccountTripOut(BaseModel):
+    id: str
+    status: str
+    vehicle_type: VehicleType
+    pickup_address: str
+    drop_address: str
+    distance_km: float
+    fare_estimate: float
+    fare_final: float | None
+    requested_at: str
+    completed_at: str | None
+    cancelled_by: Literal["user", "rider", "system"] | None
+    cancel_reason: str | None
+
+
+class AdminAccountTripPageOut(BaseModel):
+    items: list[AdminAccountTripOut]
+    total: int
+    has_more: bool
+
+
 class RiderPublic(BaseModel):
     id: str
     full_name: str

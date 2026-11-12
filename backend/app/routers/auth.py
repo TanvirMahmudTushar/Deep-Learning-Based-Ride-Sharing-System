@@ -3,7 +3,7 @@ from sqlalchemy import select
 
 from app.models import Profile, Rider, Vehicle
 from app.schemas import AuthOut, LoginIn, PasswordChangeIn, ProfileOut, ProfileUpdateIn, RegisterIn
-from app.security import DB, CurrentUser, create_token, hash_password, verify_password
+from app.security import DB, CurrentUser, account_is_suspended, create_token, hash_password, verify_password
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -43,6 +43,8 @@ def login(body: LoginIn, db: DB):
     profile = db.scalar(select(Profile).where(Profile.email == body.email.strip().lower()))
     if profile is None or not verify_password(body.password, profile.password_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong email or password")
+    if account_is_suspended(profile):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Account suspended. Contact support.")
     return AuthOut(token=create_token(profile), profile=profile_out(profile))
 
 

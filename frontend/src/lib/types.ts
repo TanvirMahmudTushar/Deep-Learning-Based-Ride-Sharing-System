@@ -199,6 +199,64 @@ export interface AdminRider {
   documents_ready: boolean;
 }
 
+export interface AdminAccountStats {
+  trips_total: number;
+  trips_completed: number;
+  trips_cancelled: number;
+  account_cancellations: number;
+  cancellation_rate: number;
+}
+
+export interface AdminAccount {
+  id: string;
+  role: "user" | "rider";
+  full_name: string;
+  email: string;
+  phone: string;
+  status: "active" | "pending" | "verified" | "suspended";
+  account_status: "active" | "suspended";
+  rider_verification_status: "pending" | "verified" | null;
+  rider_id: string | null;
+  license_no: string | null;
+  is_simulated: boolean;
+  is_online: boolean;
+  busy: boolean;
+  lat: number | null;
+  lng: number | null;
+  rating: number | null;
+  rating_count: number;
+  vehicle: Vehicle | null;
+  documents_ready: boolean;
+  joined_at: string | null;
+  stats: AdminAccountStats;
+}
+
+export interface AdminAccountPage {
+  items: AdminAccount[];
+  total: number;
+}
+
+export interface AdminAccountTrip {
+  id: string;
+  status: TripStatus;
+  vehicle_type: VehicleType;
+  pickup_address: string;
+  drop_address: string;
+  distance_km: number;
+  fare_estimate: number;
+  fare_final: number | null;
+  requested_at: string;
+  completed_at: string | null;
+  cancelled_by: "user" | "rider" | "system" | null;
+  cancel_reason: string | null;
+}
+
+export interface AdminAccountTripPage {
+  items: AdminAccountTrip[];
+  total: number;
+  has_more: boolean;
+}
+
 export interface LiveData {
   trips: Trip[];
   riders: { id: string; lat: number; lng: number; vehicle_type: VehicleType | null; busy: boolean }[];

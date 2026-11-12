@@ -26,6 +26,7 @@ class Profile(Base):
     email: Mapped[str] = mapped_column(String(160), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(100))
     role: Mapped[str] = mapped_column(String(10))  # user, rider, admin
+    account_status: Mapped[str | None] = mapped_column(String(10), default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     rider: Mapped["Rider | None"] = relationship(back_populates="profile", uselist=False)

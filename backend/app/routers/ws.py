@@ -7,7 +7,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.db import SessionLocal
 from app.realtime import hub
-from app.security import profile_from_token
+from app.security import account_is_suspended, profile_from_token
 
 router = APIRouter()
 
@@ -17,7 +17,7 @@ AUTH_TIMEOUT_SECONDS = 10
 def _authenticate(token: str | None) -> tuple[str, str] | None:
     with SessionLocal() as db:
         profile = profile_from_token(db, token)
-        return (profile.id, profile.role) if profile else None
+        return (profile.id, profile.role) if profile and not account_is_suspended(profile) else None
 
 
 @router.websocket("/ws")

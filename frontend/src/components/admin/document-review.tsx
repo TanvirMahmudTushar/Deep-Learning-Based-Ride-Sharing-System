@@ -165,7 +165,7 @@ export function DocumentReviewDialog({ rider, onOpenChange, onChanged }: { rider
         )}
         <DialogFooter className="items-center gap-2 sm:justify-between">
           <span className="text-xs text-muted-foreground">{data && !data.ready ? `Still needed: ${data.missing.join(", ")}` : "All documents approved"}</span>
-          {rider?.status !== "verified" && (
+          {rider?.status === "pending" && (
             <Button onClick={verify} disabled={verifying || !data?.ready}>
               {verifying && <Loader2 className="animate-spin" />} Verify rider
             </Button>

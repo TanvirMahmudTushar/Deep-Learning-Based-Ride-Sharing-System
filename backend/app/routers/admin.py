@@ -5,15 +5,25 @@ from collections import defaultdict
 from datetime import timedelta
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.db import local_day_start, local_time, utcnow
 from app.geo import haversine_km
 from app.models import ACTIVE_TRIP_STATUSES, VEHICLE_TYPES, DemandForecast, PricingRule, PricingRuleChange, Profile, Rider, SafetyAlert, Trip
-from app.schemas import AlertStatusIn, PricingRuleIn, iso_utc, rider_rating, trip_out, vehicle_out
-from app.security import DB, Admin
+from app.schemas import (
+    AdminAccountOut,
+    AdminAccountPageOut,
+    AdminAccountTripPageOut,
+    AlertStatusIn,
+    PricingRuleIn,
+    iso_utc,
+    rider_rating,
+    trip_out,
+    vehicle_out,
+)
+from app.security import DB, Admin, account_is_suspended
 from app.realtime import ADMINS, emit
 from app.services import availability, demand, documents
 from app.services import trips as trip_service
@@ -68,7 +78,15 @@ def stats(db: DB, admin: Admin):
         "online_riders": len(online),
         "busy_riders": sum(1 for r in online if r.id in busy),
         "online_by_type": {vt: online_by_type.get(vt, 0) for vt in VEHICLE_TYPES},
-        "pending_riders": db.scalar(select(func.count(Rider.id)).where(Rider.status == "pending")) or 0,
+        "pending_riders": db.scalar(
+            select(func.count(Rider.id))
+            .join(Profile, Profile.id == Rider.profile_id)
+            .where(
+                Rider.status == "pending",
+                or_(Profile.account_status.is_(None), Profile.account_status == "active"),
+            )
+        )
+        or 0,
         "open_alerts": db.scalar(select(func.count(SafetyAlert.id)).where(SafetyAlert.status == "open")) or 0,
         "weather": {"temperature_c": weather.temperature_c, "precipitation_mm": weather.precipitation_mm, "raining": is_raining(db)}
         if weather
@@ -79,8 +97,17 @@ def stats(db: DB, admin: Admin):
 @router.get("/riders")
 def riders(db: DB, admin: Admin, status_filter: str | None = None):
     q = select(Rider).options(selectinload(Rider.vehicles), selectinload(Rider.profile)).order_by(Rider.is_simulated, Rider.status)
-    if status_filter:
-        q = q.where(Rider.status == status_filter)
+    if status_filter and status_filter != "all":
+        if status_filter not in {"pending", "verified", "suspended"}:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Unknown rider status")
+        q = q.join(Profile, Profile.id == Rider.profile_id)
+        if status_filter == "suspended":
+            q = q.where(or_(Profile.account_status == "suspended", Rider.status == "suspended"))
+        else:
+            q = q.where(
+                Rider.status == status_filter,
+                or_(Profile.account_status.is_(None), Profile.account_status == "active"),
+            )
     busy = availability.busy_rider_ids(db)
     out = []
     for r in db.scalars(q):
@@ -92,7 +119,7 @@ def riders(db: DB, admin: Admin, status_filter: str | None = None):
                 "email": r.profile.email,
                 "phone": r.profile.phone,
                 "license_no": r.license_no,
-                "status": r.status,
+                "status": "suspended" if account_is_suspended(r.profile) else r.status,
                 "is_online": r.is_online,
                 "is_simulated": r.is_simulated,
                 "busy": r.id in busy,
@@ -108,6 +135,237 @@ def riders(db: DB, admin: Admin, status_filter: str | None = None):
     return out
 
 
+def _account_trip_stats(db: DB, owner_column, owner_ids: list[str], cancellation_actor: str) -> dict[str, dict[str, int | float]]:
+    if not owner_ids:
+        return {}
+    rows = db.execute(
+        select(
+            owner_column,
+            func.count(Trip.id),
+            func.sum(case((Trip.status == "completed", 1), else_=0)),
+            func.sum(case((Trip.status == "cancelled", 1), else_=0)),
+            func.sum(case((Trip.cancelled_by == cancellation_actor, 1), else_=0)),
+        )
+        .where(owner_column.in_(owner_ids))
+        .group_by(owner_column)
+    ).all()
+    stats = {}
+    for owner_id, trips_total, completed, cancelled, account_cancellations in rows:
+        total = int(trips_total or 0)
+        cancellations = int(account_cancellations or 0)
+        stats[owner_id] = {
+            "trips_total": total,
+            "trips_completed": int(completed or 0),
+            "trips_cancelled": int(cancelled or 0),
+            "account_cancellations": cancellations,
+            "cancellation_rate": cancellations / total if total else 0.0,
+        }
+    return stats
+
+
+@router.get("/accounts", response_model=AdminAccountPageOut)
+def admin_accounts(
+    db: DB,
+    admin: Admin,
+    search: str | None = None,
+    role_filter: str = "all",
+    status_filter: str = "all",
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+):
+    if role_filter not in {"all", "user", "rider"}:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Unknown account role")
+    if status_filter not in {"all", "active", "pending", "verified", "suspended"}:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Unknown account status")
+
+    filters = [Profile.role.in_(("user", "rider"))]
+    if role_filter != "all":
+        filters.append(Profile.role == role_filter)
+
+    active_account = or_(Profile.account_status.is_(None), Profile.account_status == "active")
+    suspended_account = or_(Profile.account_status == "suspended", Rider.status == "suspended")
+    if status_filter == "suspended":
+        filters.append(suspended_account)
+    elif status_filter == "active":
+        filters.extend((active_account, or_(Profile.role == "user", Rider.status == "verified")))
+    elif status_filter == "pending":
+        filters.extend((active_account, Profile.role == "rider", Rider.status == "pending"))
+    elif status_filter == "verified":
+        filters.extend((active_account, Profile.role == "rider", Rider.status == "verified"))
+
+    if search and search.strip():
+        term = search.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{term}%"
+        filters.append(
+            or_(
+                Profile.full_name.ilike(pattern, escape="\\"),
+                Profile.email.ilike(pattern, escape="\\"),
+                Profile.id.ilike(pattern, escape="\\"),
+                Rider.id.ilike(pattern, escape="\\"),
+                Rider.license_no.ilike(pattern, escape="\\"),
+            )
+        )
+
+    total = db.scalar(select(func.count(Profile.id)).outerjoin(Rider, Rider.profile_id == Profile.id).where(*filters)) or 0
+    profiles = db.scalars(
+        select(Profile)
+        .outerjoin(Rider, Rider.profile_id == Profile.id)
+        .options(selectinload(Profile.rider).selectinload(Rider.vehicles))
+        .where(*filters)
+        .order_by(Profile.created_at.desc(), Profile.id)
+        .offset(offset)
+        .limit(limit)
+    ).all()
+
+    riders_page = [p.rider for p in profiles if p.rider is not None]
+    user_stats = _account_trip_stats(db, Trip.user_id, [p.id for p in profiles if p.role == "user"], "user")
+    rider_stats = _account_trip_stats(db, Trip.rider_id, [r.id for r in riders_page], "rider")
+    busy = availability.busy_rider_ids(db)
+    items = []
+    for profile in profiles:
+        rider = profile.rider
+        suspended = account_is_suspended(profile)
+        stats = (rider_stats.get(rider.id) if rider else None) or (user_stats.get(profile.id) if profile.role == "user" else None)
+        if stats is None:
+            stats = {"trips_total": 0, "trips_completed": 0, "trips_cancelled": 0, "account_cancellations": 0, "cancellation_rate": 0.0}
+        rating, rating_count = rider_rating(db, rider.id) if rider else (None, 0)
+        items.append(
+            {
+                "id": profile.id,
+                "role": profile.role,
+                "full_name": profile.full_name,
+                "email": profile.email,
+                "phone": profile.phone,
+                "status": "suspended" if suspended else (rider.status if rider else "active"),
+                "account_status": "suspended" if suspended else "active",
+                "rider_verification_status": (
+                    rider.status if rider and rider.status in {"pending", "verified"} else ("verified" if rider else None)
+                ),
+                "rider_id": rider.id if rider else None,
+                "license_no": rider.license_no if rider else None,
+                "is_simulated": rider.is_simulated if rider else False,
+                "is_online": rider.is_online if rider else False,
+                "busy": rider.id in busy if rider else False,
+                "lat": rider.current_lat if rider else None,
+                "lng": rider.current_lng if rider else None,
+                "rating": rating,
+                "rating_count": rating_count,
+                "vehicle": vehicle_out(rider.vehicle).model_dump() if rider and rider.vehicle else None,
+                "documents_ready": documents.verification_ready(db, rider)[0] if rider else False,
+                "joined_at": iso_utc(profile.created_at),
+                "stats": stats,
+            }
+        )
+    return {"items": items, "total": total}
+
+
+@router.get("/accounts/{account_id}/trips", response_model=AdminAccountTripPageOut)
+def admin_account_trips(
+    account_id: str,
+    db: DB,
+    admin: Admin,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+):
+    profile = db.get(Profile, account_id)
+    if profile is None or profile.role not in {"user", "rider"}:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Account not found")
+    if profile.role == "user":
+        owner_column, owner_id = Trip.user_id, profile.id
+    else:
+        if profile.rider is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Rider profile not found")
+        owner_column, owner_id = Trip.rider_id, profile.rider.id
+    base = select(Trip).where(owner_column == owner_id)
+    total = db.scalar(select(func.count(Trip.id)).where(owner_column == owner_id)) or 0
+    trips = db.scalars(base.order_by(Trip.requested_at.desc(), Trip.id).offset(offset).limit(limit + 1)).all()
+    has_more = len(trips) > limit
+    return {
+        "items": [
+            {
+                "id": trip.id,
+                "status": trip.status,
+                "vehicle_type": trip.vehicle_type_requested,
+                "pickup_address": trip.pickup_address,
+                "drop_address": trip.drop_address,
+                "distance_km": trip.distance_km,
+                "fare_estimate": float(trip.fare_estimate),
+                "fare_final": float(trip.fare_final) if trip.fare_final is not None else None,
+                "requested_at": iso_utc(trip.requested_at),
+                "completed_at": iso_utc(trip.completed_at),
+                "cancelled_by": trip.cancelled_by,
+                "cancel_reason": trip.cancel_reason,
+            }
+            for trip in trips[:limit]
+        ],
+        "total": total,
+        "has_more": has_more,
+    }
+
+
+def _set_account_status(db: DB, profile: Profile, suspended: bool) -> dict:
+    if profile.role not in {"user", "rider"}:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Account not found")
+    rider = profile.rider
+    if profile.role == "rider" and rider is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Rider profile not found")
+    if rider and rider.is_simulated:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Simulated accounts cannot be suspended or reactivated")
+
+    if suspended:
+        if account_is_suspended(profile):
+            profile.account_status = "suspended"
+            db.commit()
+            return {"ok": True, "account_status": "suspended", "status": "suspended"}
+        if profile.role == "user":
+            active_trip = trip_service.active_trip_for_user(db, profile.id)
+        else:
+            active_trip = db.scalar(
+                select(Trip.id)
+                .where(
+                    Trip.status.in_(ACTIVE_TRIP_STATUSES),
+                    or_(Trip.rider_id == rider.id, Trip.offered_rider_id == rider.id),
+                )
+                .limit(1)
+            )
+        if active_trip:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Finish the active trip before suspending this account")
+        profile.account_status = "suspended"
+        if rider:
+            rider.is_online = False
+        emit(db, profile.id, "account.suspended", notify=("Account suspended", "Contact support for details."))
+        emit(db, ADMINS, "riders.changed")
+        db.commit()
+        return {"ok": True, "account_status": "suspended", "status": "suspended"}
+
+    was_suspended = account_is_suspended(profile)
+    if was_suspended:
+        profile.account_status = "active"
+        if rider and rider.status == "suspended":
+            rider.status = "verified"
+        emit(db, profile.id, "profile.updated", notify=("Account reactivated", "You can sign in and use your account again."))
+        emit(db, ADMINS, "riders.changed")
+        db.commit()
+    status_value = rider.status if rider else "active"
+    return {"ok": True, "account_status": "active", "status": status_value}
+
+
+@router.post("/accounts/{account_id}/suspend")
+def suspend_account(account_id: str, db: DB, admin: Admin):
+    profile = db.get(Profile, account_id)
+    if profile is None or profile.role not in {"user", "rider"}:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Account not found")
+    return _set_account_status(db, profile, suspended=True)
+
+
+@router.post("/accounts/{account_id}/reactivate")
+def reactivate_account(account_id: str, db: DB, admin: Admin):
+    profile = db.get(Profile, account_id)
+    if profile is None or profile.role not in {"user", "rider"}:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Account not found")
+    return _set_account_status(db, profile, suspended=False)
+
+
 def _rider_or_404(db: DB, rider_id: str) -> Rider:
     rider = db.get(Rider, rider_id)
     if rider is None:
@@ -118,10 +376,13 @@ def _rider_or_404(db: DB, rider_id: str) -> Rider:
 @router.post("/riders/{rider_id}/verify")
 def verify_rider(rider_id: str, db: DB, admin: Admin):
     rider = _rider_or_404(db, rider_id)
+    if account_is_suspended(rider.profile):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Reactivate this account before verifying the rider")
     ready, missing = documents.verification_ready(db, rider)
     if not ready:
         raise HTTPException(status.HTTP_409_CONFLICT, "Approve these documents first: " + ", ".join(missing))
     rider.status = "verified"
+    rider.profile.account_status = "active"
     for v in rider.vehicles:
         v.verified = True
     emit(db, rider.profile_id, "profile.updated", notify=("You're verified", "You can go online and start accepting trips."))
@@ -133,14 +394,7 @@ def verify_rider(rider_id: str, db: DB, admin: Admin):
 @router.post("/riders/{rider_id}/suspend")
 def suspend_rider(rider_id: str, db: DB, admin: Admin):
     rider = _rider_or_404(db, rider_id)
-    if trip_service.active_trip_for_rider(db, rider.id):
-        raise HTTPException(status.HTTP_409_CONFLICT, "Rider is on a trip; suspend after it ends")
-    rider.status = "suspended"
-    rider.is_online = False
-    emit(db, rider.profile_id, "profile.updated", notify=("Account suspended", "Contact support for details."))
-    emit(db, ADMINS, "riders.changed")
-    db.commit()
-    return {"ok": True, "status": rider.status}
+    return _set_account_status(db, rider.profile, suspended=True)
 
 
 @router.get("/trips/live")
