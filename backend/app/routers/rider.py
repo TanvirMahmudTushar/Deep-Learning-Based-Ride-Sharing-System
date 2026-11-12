@@ -6,11 +6,12 @@ from datetime import timedelta
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import func, or_, select
 
+from app.brta import normalize_plate
 from app.config import settings
 from app.db import local_day_start, utcnow
 from app.geo import haversine_km
 from app.models import DemandForecast, Payment, Profile, Rider, Trip, Vehicle
-from app.schemas import RiderContactIn, AutoDriveIn, LocationIn, MessageIn, OfferOut, OnlineIn, RiderMe, TripOut, iso_utc, rider_rating, trip_out, vehicle_out
+from app.schemas import RiderContactIn, RiderOnboardingVehicleIn, AutoDriveIn, LocationIn, MessageIn, OfferOut, OnlineIn, RiderMe, TripOut, iso_utc, rider_rating, trip_out, vehicle_out
 from app.security import DB, CurrentRider, verify_password
 from app.realtime import ADMINS, emit
 from app.services import availability, demand, documents, messages, payments, pricing, weather
@@ -37,15 +38,26 @@ def _offered_trip(db: DB, rider: Rider, trip_id: str) -> Trip:
 
 @router.get("/me", response_model=RiderMe)
 def me(db: DB, rider: CurrentRider):
-    rating, count = rider_rating(db, rider.id)
-    completed = db.scalar(select(func.count()).where(Trip.rider_id == rider.id, Trip.status == "completed")) or 0
-    earnings = db.scalar(
-        select(func.sum(Payment.rider_earning)).where(
-            Payment.rider_id == rider.id, Payment.status != "disputed", Payment.created_at >= local_day_start()
+    is_verified = rider.status == "verified"
+    rating, count = rider_rating(db, rider.id) if is_verified else (None, 0)
+    completed = (
+        db.scalar(select(func.count()).where(Trip.rider_id == rider.id, Trip.status == "completed")) or 0
+        if is_verified
+        else 0
+    )
+    earnings = (
+        db.scalar(
+            select(func.sum(Payment.rider_earning)).where(
+                Payment.rider_id == rider.id, Payment.status != "disputed", Payment.created_at >= local_day_start()
+            )
         )
+        if is_verified
+        else 0
     )
     trips_today = (
         db.scalar(select(func.count()).where(Trip.rider_id == rider.id, Trip.status == "completed", Trip.completed_at >= local_day_start())) or 0
+        if is_verified
+        else 0
     )
     ready, missing = documents.verification_ready(db, rider)
     return RiderMe(
@@ -58,17 +70,18 @@ def me(db: DB, rider: CurrentRider):
         is_online=rider.is_online,
         lat=rider.current_lat,
         lng=rider.current_lng,
-        vehicle=vehicle_out(rider.vehicle),
+        vehicle=vehicle_out(rider.vehicle, rider_verified=is_verified),
         rating=rating,
         rating_count=count,
         trips_completed=completed,
         trips_today=trips_today,
         earnings_today=float(earnings or 0),
-        cancel_rate=round(rider_cancel_rates(db, [rider.id]).get(rider.id, 0.05), 3),
+        cancel_rate=round(rider_cancel_rates(db, [rider.id]).get(rider.id, 0.05), 3) if is_verified else 0.0,
         is_simulated=rider.is_simulated,
         documents_ready=ready,
         missing_documents=missing,
-        commission_due=payments.rider_balance(db, rider.id)["commission_due"],
+        commission_due=payments.rider_balance(db, rider.id)["commission_due"] if is_verified else 0.0,
+        avatar_url=f"/api/documents/{rider.profile.avatar_doc_id}/file" if rider.profile.avatar_doc_id else None,
     )
 
 
@@ -84,6 +97,40 @@ def update_contact(body: RiderContactIn, db: DB, rider: CurrentRider):
         profile.email = email
     profile.phone = body.phone.strip()
     db.commit()
+    return me(db, rider)
+
+
+@router.post("/onboarding/vehicle", response_model=RiderMe)
+def save_onboarding_vehicle(body: RiderOnboardingVehicleIn, db: DB, rider: CurrentRider):
+    if rider.status == "verified":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Verified riders must submit a vehicle change request")
+    plate = normalize_plate(body.plate_no, body.vehicle_type)
+    taken = db.scalar(
+        select(Vehicle.id).where(Vehicle.plate_no == plate, Vehicle.retired_at.is_(None), Vehicle.rider_id != rider.id)
+    )
+    if taken:
+        raise HTTPException(status.HTTP_409_CONFLICT, "A vehicle with this plate number is already registered")
+    rider.license_no = body.license_no.strip()
+    v = rider.vehicle
+    if v is None:
+        v = Vehicle(
+            rider_id=rider.id,
+            vehicle_type=body.vehicle_type,
+            plate_no=plate,
+            model=body.model.strip(),
+            color=body.color.strip(),
+            registration_no=body.registration_no.strip().upper(),
+        )
+        db.add(v)
+    else:
+        v.vehicle_type = body.vehicle_type
+        v.plate_no = plate
+        v.model = body.model.strip()
+        v.color = body.color.strip()
+        v.registration_no = body.registration_no.strip().upper()
+    emit(db, ADMINS, "riders.changed")
+    db.commit()
+    db.refresh(rider)
     return me(db, rider)
 
 

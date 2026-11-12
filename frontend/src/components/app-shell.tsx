@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
+import useSWR from "swr";
 import { LottieSvg } from "lottie-react";
 import { Bell, BellOff, BellRing, KeyRound, LogOut } from "lucide-react";
 import { OPEN_PROFILE_EVENT, RiderProfile } from "@/components/rider/rider-profile";
 import { ChangePasswordForm } from "@/components/change-password-form";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -22,7 +23,10 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import logoAnimation from "@/assets/cholo-logo.json";
+import { fetcher } from "@/lib/api";
 import { useNotificationPermission } from "@/lib/notifications";
+import { useAuthFileUrl } from "@/lib/server";
+import type { RiderMe } from "@/lib/types";
 import { useRealtime } from "@/lib/realtime";
 import { clearSession, homeFor, useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
@@ -118,6 +122,8 @@ function UserMenu({ profile }: { profile: Profile }) {
 function RiderProfileButton({ profile }: { profile: Profile }) {
   const [open, setOpen] = useState(false);
   const [section, setSection] = useState<string | undefined>();
+  const { data: riderMe } = useSWR<RiderMe>("/api/rider/me", fetcher);
+  const avatarUrl = useAuthFileUrl(riderMe?.avatar_url ?? profile.avatar_url);
   useEffect(() => {
     const onOpen = (e: Event) => {
       setSection((e as CustomEvent<string | undefined>).detail);
@@ -138,6 +144,7 @@ function RiderProfileButton({ profile }: { profile: Profile }) {
         }}
       >
         <Avatar className="size-8">
+          {avatarUrl && <AvatarImage src={avatarUrl} alt={profile.full_name} />}
           <AvatarFallback className="text-xs">{initials(profile.full_name)}</AvatarFallback>
         </Avatar>
         <span className="hidden text-sm sm:inline">{profile.full_name}</span>

@@ -1,9 +1,11 @@
 from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
 
+from app.brta import normalize_plate
+from app.config import settings
 from app.models import Profile, Rider, Vehicle
 from app.realtime import ADMINS, emit
-from app.schemas import AuthOut, LoginIn, PasswordChangeIn, ProfileOut, ProfileUpdateIn, RegisterIn
+from app.schemas import AuthOut, LoginIn, OtpRequestIn, OtpRequestOut, OtpVerifyIn, PasswordChangeIn, ProfileOut, ProfileUpdateIn, RegisterIn
 from app.security import DB, CurrentUser, create_token, hash_password, verify_password
 from app.services import login_throttle
 
@@ -11,7 +13,32 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 def profile_out(p: Profile) -> ProfileOut:
-    return ProfileOut(id=p.id, full_name=p.full_name, email=p.email, phone=p.phone, role=p.role, approval_status=p.approval_status)
+    return ProfileOut(
+        id=p.id,
+        full_name=p.full_name,
+        email=p.email,
+        phone=p.phone,
+        role=p.role,
+        approval_status=p.approval_status,
+        phone_verified=bool(p.phone_verified),
+        avatar_url=f"/api/documents/{p.avatar_doc_id}/file" if p.avatar_doc_id else None,
+    )
+
+
+@router.post("/otp/request", response_model=OtpRequestOut)
+def request_otp(body: OtpRequestIn, db: DB):
+    email = body.email.strip().lower()
+    if db.scalar(select(Profile.id).where(Profile.email == email)):
+        raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email already exists")
+    # Testing-mode OTP: always accepts settings.default_test_otp ("000000").
+    return OtpRequestOut(ok=True, message=f"Verification code sent to {body.phone.strip()}")
+
+
+@router.post("/otp/verify", response_model=OtpRequestOut)
+def verify_otp(body: OtpVerifyIn):
+    if body.otp.strip() != settings.default_test_otp:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid verification code. Please check and try again.")
+    return OtpRequestOut(ok=True, message="Phone number verified")
 
 
 @router.post("/register", response_model=AuthOut, status_code=status.HTTP_201_CREATED)
@@ -19,7 +46,12 @@ def register(body: RegisterIn, db: DB):
     email = body.email.strip().lower()
     if db.scalar(select(Profile.id).where(Profile.email == email)):
         raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email already exists")
-    if body.role == "rider" and not (body.license_no and body.vehicle_type and body.plate_no and body.vehicle_model):
+    if body.otp is not None and body.otp.strip() != settings.default_test_otp:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid verification code")
+
+    vehicle_fields = (body.license_no, body.vehicle_type, body.plate_no, body.vehicle_model)
+    has_any_vehicle = any(vehicle_fields)
+    if body.role == "rider" and has_any_vehicle and not all(vehicle_fields):
         raise HTTPException(422, "Riders must provide licence, vehicle type, plate number and model")
 
     profile = Profile(
@@ -30,16 +62,25 @@ def register(body: RegisterIn, db: DB):
         role=body.role,
         # Support agents can see other people's trips, so they get no access until an admin approves them.
         approval_status="pending" if body.role == "support" else None,
+        phone_verified=body.otp is not None,
     )
     db.add(profile)
     db.flush()
     if body.role == "support":
         emit(db, ADMINS, "support.changed", notify=("New support agent", f"{profile.full_name} is waiting for approval."))
     if body.role == "rider":
-        rider = Rider(profile_id=profile.id, license_no=body.license_no.strip(), status="pending")
+        rider = Rider(profile_id=profile.id, license_no=(body.license_no or "").strip(), status="pending")
         db.add(rider)
         db.flush()
-        db.add(Vehicle(rider_id=rider.id, vehicle_type=body.vehicle_type, plate_no=body.plate_no.strip().upper(), model=body.vehicle_model.strip()))
+        if all(vehicle_fields):
+            db.add(
+                Vehicle(
+                    rider_id=rider.id,
+                    vehicle_type=body.vehicle_type,
+                    plate_no=normalize_plate(body.plate_no, body.vehicle_type),
+                    model=body.vehicle_model.strip(),
+                )
+            )
     db.commit()
     return AuthOut(token=create_token(profile), profile=profile_out(profile))
 

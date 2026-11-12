@@ -15,6 +15,8 @@ export interface Profile {
   role: Role;
   /** Support agents only. */
   approval_status?: "pending" | "approved" | "revoked" | null;
+  phone_verified?: boolean;
+  avatar_url?: string | null;
 }
 
 export interface AuthResponse {
@@ -34,6 +36,8 @@ export interface Vehicle {
   vehicle_type: VehicleType;
   plate_no: string;
   model: string;
+  color?: string | null;
+  registration_no?: string | null;
   verified: boolean;
 }
 
@@ -173,6 +177,7 @@ export interface RiderMe {
   documents_ready: boolean;
   missing_documents: string[];
   commission_due: number;
+  avatar_url?: string | null;
 }
 
 export interface Offer {
@@ -406,7 +411,7 @@ export interface GeoResult {
   lng: number;
 }
 
-export type DocumentType = "license" | "registration" | "photo" | "vehicle_photo";
+export type DocumentType = "license" | "insurance" | "registration" | "photo" | "vehicle_photo";
 
 export interface RiderDocument {
   id: string;

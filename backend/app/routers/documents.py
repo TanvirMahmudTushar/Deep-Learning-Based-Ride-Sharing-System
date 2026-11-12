@@ -57,8 +57,9 @@ def my_documents(db: DB, rider: CurrentRider):
 def upload_document(
     db: DB,
     rider: CurrentRider,
-    doc_type: Annotated[Literal["license", "registration", "photo"], Form()],
+    doc_type: Annotated[Literal["license", "insurance", "registration", "photo"], Form()],
     file: Annotated[UploadFile, File()],
+    use_as_profile_photo: Annotated[bool, Form()] = False,
 ):
     limit = int(settings.max_upload_mb * 1024 * 1024)
     data = file.file.read(limit + 1)
@@ -66,6 +67,8 @@ def upload_document(
 
     # A new upload replaces earlier unapproved versions of the same document.
     for old in db.scalars(select(RiderDocument).where(RiderDocument.rider_id == rider.id, RiderDocument.doc_type == doc_type, RiderDocument.status != "approved", RiderDocument.vehicle_change_id.is_(None))):
+        if rider.profile.avatar_doc_id == old.id:
+            rider.profile.avatar_doc_id = None
         docs.delete_file(old)
         db.delete(old)
     doc = RiderDocument(
@@ -77,6 +80,10 @@ def upload_document(
         size_bytes=len(data),
     )
     db.add(doc)
+    db.flush()
+    if doc_type == "photo" and use_as_profile_photo:
+        rider.profile.avatar_doc_id = doc.id
+        emit(db, rider.profile_id, "profile.updated")
     emit(db, ADMINS, "riders.changed")
     db.commit()
     return doc_out(doc)

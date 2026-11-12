@@ -228,3 +228,74 @@ def test_offer_details_decline_feeds_cancel_rate_and_vehicle_guard(client, user_
     bad_accept = client.post(f"/api/rider/offers/{mismatched['id']}/accept", headers=rider_h)
     assert bad_accept.status_code == 409 and "vehicle type" in bad_accept.json()["detail"].lower()
     assert client.get("/api/rider/offer", headers=rider_h).json() is None
+
+
+def test_rider_otp_signup_and_onboarding_vehicle(client):
+    req = client.post("/api/auth/otp/request", json={"email": "otp.rider@example.com", "phone": "+8801799999999"})
+    assert req.status_code == 200
+    assert client.post("/api/auth/otp/verify", json={"phone": "+8801799999999", "otp": "123456"}).status_code == 400
+    assert client.post("/api/auth/otp/verify", json={"phone": "+8801799999999", "otp": "000000"}).status_code == 200
+
+    reg = client.post(
+        "/api/auth/register",
+        json={
+            "full_name": "OTP Rider",
+            "email": "otp.rider@example.com",
+            "phone": "+8801799999999",
+            "password": "secret123",
+            "role": "rider",
+            "otp": "000000",
+        },
+    )
+    assert reg.status_code == 201, reg.text
+    data = reg.json()
+    assert data["profile"]["phone_verified"] is True
+    h = {"Authorization": f"Bearer {data['token']}"}
+
+    me_before = client.get("/api/rider/me", headers=h).json()
+    assert me_before["status"] == "pending" and me_before["vehicle"] is None
+
+    saved = client.post(
+        "/api/rider/onboarding/vehicle",
+        headers=h,
+        json={
+            "vehicle_type": "car",
+            "model": "Toyota Axio",
+            "plate_no": "dhaka metro-ga 22-3344",
+            "color": "Pearl White",
+            "registration_no": "reg-998877",
+            "license_no": "DK-9988",
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    v = saved.json()["vehicle"]
+    assert v["vehicle_type"] == "car"
+    assert v["plate_no"] == "DHAKA METRO GA-22-3344"
+    assert v["color"] == "Pearl White"
+    assert v["registration_no"] == "REG-998877"
+    assert v["verified"] is False
+    assert saved.json()["license_no"] == "DK-9988"
+    assert saved.json()["earnings_today"] == 0 and saved.json()["trips_completed"] == 0
+
+    from app.services.documents import placeholder_png
+
+    selfie = client.post(
+        "/api/rider/documents",
+        headers=h,
+        data={"doc_type": "photo", "use_as_profile_photo": "true"},
+        files={"file": ("selfie.png", placeholder_png("selfie"), "image/png")},
+    )
+    assert selfie.status_code == 201, selfie.text
+    assert client.get("/api/rider/me", headers=h).json()["avatar_url"] == f"/api/documents/{selfie.json()['id']}/file"
+
+
+def test_brta_dataset_and_plate_format(client):
+    res = client.get("/api/brta")
+    assert res.status_code == 200
+    data = res.json()
+    assert len(data["regions"]) == 69
+    assert any(r["code"] == "DHAKA METRO" and r["bengali"] == "ঢাকা মেট্রো" for r in data["regions"])
+    assert any(r["code"] == "SHERPUR" and r["bengali"] == "শেরপুর" for r in data["regions"])
+    assert any(c["code"] == "HA" and c["bengali"] == "হ" and c["vehicle_type"] == "bike" for c in data["class_codes"])
+    assert any(c["code"] == "KA" and c["bengali"] == "ক" and c["vehicle_type"] == "car" for c in data["class_codes"])
+    assert any(c["code"] == "THA" and c["bengali"] == "থ" and c["vehicle_type"] == "cng" for c in data["class_codes"])
