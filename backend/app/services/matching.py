@@ -22,7 +22,7 @@ CANCEL_PENALTY_MIN = 20.0
 def rider_cancel_rates(db: Session, rider_ids: list[str]) -> dict[str, float]:
     if not rider_ids:
         return {}
-    rows = db.execute(
+    trip_rows = db.execute(
         select(
             Trip.rider_id,
             func.count(),
@@ -31,8 +31,18 @@ def rider_cancel_rates(db: Session, rider_ids: list[str]) -> dict[str, float]:
         .where(Trip.rider_id.in_(rider_ids))
         .group_by(Trip.rider_id)
     ).all()
+    decline_rows = db.execute(
+        select(MatchScore.rider_id, func.count())
+        .where(MatchScore.rider_id.in_(rider_ids), MatchScore.status == "declined")
+        .group_by(MatchScore.rider_id)
+    ).all()
+    totals: dict[str, list[int]] = {rid: [int(total), int(cancelled or 0)] for rid, total, cancelled in trip_rows}
+    for rid, declined in decline_rows:
+        bucket = totals.setdefault(rid, [0, 0])
+        bucket[0] += int(declined)
+        bucket[1] += int(declined)
     # Laplace smoothing so a rider with no history gets a modest prior instead of 0.
-    return {rid: (cancelled + 0.5) / (total + 10) for rid, total, cancelled in rows}
+    return {rid: (bad + 0.5) / (total + 10) for rid, (total, bad) in totals.items()}
 
 
 def rank_candidates(db: Session, trip: Trip) -> list[MatchScore]:
