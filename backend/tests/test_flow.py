@@ -202,3 +202,29 @@ def test_assistant_fallback_suggests_booking(client, user_h):
     assert body["booking"]["pickup_zone"] == "Banani"
     assert body["booking"]["drop_zone"] == "Motijheel"
     assert body["booking"]["vehicle_type"] == "car"
+
+
+def test_offer_details_decline_feeds_cancel_rate_and_vehicle_guard(client, user_h, rider_h):
+    client.post("/api/rider/online", headers=rider_h, json={"is_online": True, "lat": 23.7810, "lng": 90.4150})
+    before_rate = client.get("/api/rider/me", headers=rider_h).json()["cancel_rate"]
+
+    trip = client.post("/api/trips", headers=user_h, json={"pickup": GULSHAN, "drop": DHANMONDI, "vehicle_type": "bike"}).json()
+    offer = client.get("/api/rider/offer", headers=rider_h).json()
+    assert offer is not None
+    assert offer["trip"]["id"] == trip["id"]
+    assert offer["trip"]["passenger_name"]
+    assert offer["trip"]["pickup_eta_min"] is not None
+    assert offer["pickup_distance_km"] >= 0
+
+    assert client.post(f"/api/rider/offers/{trip['id']}/decline", headers=rider_h).status_code == 200
+    after_rate = client.get("/api/rider/me", headers=rider_h).json()["cancel_rate"]
+    assert after_rate > before_rate
+
+    mismatched = client.post("/api/trips", headers=user_h, json={"pickup": GULSHAN, "drop": DHANMONDI, "vehicle_type": "bike"}).json()
+    with SessionLocal() as db:
+        db.execute(update(Trip).where(Trip.id == mismatched["id"]).values(vehicle_type_requested="car"))
+        db.commit()
+
+    bad_accept = client.post(f"/api/rider/offers/{mismatched['id']}/accept", headers=rider_h)
+    assert bad_accept.status_code == 409 and "vehicle type" in bad_accept.json()["detail"].lower()
+    assert client.get("/api/rider/offer", headers=rider_h).json() is None

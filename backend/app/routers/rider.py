@@ -129,10 +129,19 @@ def current_offer(db: DB, rider: CurrentRider):
     trip = db.scalar(select(Trip).where(Trip.status == "requested", Trip.offered_rider_id == rider.id))
     if trip is None:
         return None
+    if not rider.vehicle or rider.vehicle.vehicle_type != trip.vehicle_type_requested:
+        trip_service.decline(db, trip, rider)
+        db.commit()
+        return None
+    pickup_dist = (
+        round(haversine_km((rider.current_lat, rider.current_lng), (trip.pickup_lat, trip.pickup_lng)), 2)
+        if rider.current_lat is not None and rider.current_lng is not None
+        else 0.0
+    )
     return OfferOut(
         trip=trip_out(db, trip, for_rider=True),
         expires_at=trip.offered_at + timedelta(seconds=settings.offer_timeout_seconds),
-        pickup_distance_km=round(haversine_km((rider.current_lat, rider.current_lng), (trip.pickup_lat, trip.pickup_lng)), 2),
+        pickup_distance_km=pickup_dist,
     )
 
 

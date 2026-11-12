@@ -126,6 +126,8 @@ def expire_stale_offers(db: Session) -> int:
 def accept(db: Session, trip: Trip, rider: Rider) -> Trip:
     if trip.status != "requested" or trip.offered_rider_id != rider.id:
         raise TripError(409, "This trip is no longer offered to you")
+    if not rider.vehicle or rider.vehicle.vehicle_type != trip.vehicle_type_requested:
+        raise TripError(409, "This trip does not match your vehicle type")
     now = utcnow()
     trip.status = "accepted"
     trip.rider_id = rider.id

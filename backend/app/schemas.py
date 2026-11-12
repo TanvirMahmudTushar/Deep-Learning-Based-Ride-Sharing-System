@@ -176,6 +176,9 @@ class TripOut(BaseModel):
     rider: RiderPublic | None
     passenger_name: str
     passenger_phone: str | None
+    passenger_photo: str | None = None
+    passenger_rating: float | None = None
+    passenger_rating_count: int = 0
     payment: PaymentOut | None
     rating: int | None
     rating_comment: str | None
