@@ -127,6 +127,9 @@ export interface Trip {
   passenger_name: string;
   /** Only for the assigned rider while the trip is in progress. */
   passenger_phone: string | null;
+  passenger_photo?: string | null;
+  passenger_rating?: number | null;
+  passenger_rating_count?: number;
   payment: TripPayment | null;
   rating: number | null;
   rating_comment: string | null;
