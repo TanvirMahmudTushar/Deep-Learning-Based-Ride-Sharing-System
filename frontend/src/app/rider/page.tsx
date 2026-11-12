@@ -126,7 +126,14 @@ function RiderPortal() {
   const [seenOfferId, setSeenOfferId] = useState<string | undefined>();
   if (offerId !== seenOfferId) {
     setSeenOfferId(offerId);
-    if (offerId) setSheetOpen(true); // a new request should never stay hidden below the fold
+    if (offerId) setSheetOpen(false); // let the map + floating offer pill take focus
+  }
+
+  const activeId = active?.id;
+  const [seenActiveId, setSeenActiveId] = useState<string | undefined>();
+  if (activeId !== seenActiveId) {
+    setSeenActiveId(activeId);
+    if (activeId) setSheetOpen(true); // open sheet for the active trip controls
   }
 
   const sheetBodyRef = useRef<HTMLDivElement>(null);
@@ -283,11 +290,18 @@ function RiderPortal() {
           />
         </div>
       )}
-      {me && (manual || !position) && (
+      {me && !offer && (manual || !position) && (
         <div className="pointer-events-none absolute top-20 left-1/2 z-20 -translate-x-1/2 md:left-[calc(50%+13rem)]">
           <Badge variant="outline" className="bg-background/90 backdrop-blur">
             {manual ? "Tap the map to set your position" : "Waiting for GPS…"}
           </Badge>
+        </div>
+      )}
+
+      {/* Incoming ride request floating pill over the map */}
+      {me && !active && offer && (
+        <div className="pointer-events-none absolute inset-x-3 top-20 z-30 md:right-3 md:left-[calc(26.25rem+0.75rem)] md:max-w-md">
+          <OfferCard key={offer.trip.id} offer={offer} me={me} onDone={refreshAll} className="pointer-events-auto" />
         </div>
       )}
 
@@ -363,7 +377,6 @@ function RiderPortal() {
 
                 {toCollect && <CollectCard trip={toCollect} onDone={refreshAll} />}
                 {active && <ActiveTripCard trip={active} position={position} canAutoDrive={!!health?.simulator} onChanged={refreshAll} />}
-                {!active && offer && <OfferCard key={offer.trip.id} offer={offer} me={me} onDone={refreshAll} />}
                 {!active && !offer && me.is_online && (
                   <div className="flex items-center gap-3 rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
                     <Loader2 className="size-4 animate-spin" /> Waiting for trip requests near you…
