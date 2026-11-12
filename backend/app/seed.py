@@ -27,7 +27,21 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.db import Base, SessionLocal, create_schema, engine, utcnow
 from app.geo import haversine_km, offset_point
-from app.models import DOCUMENT_TYPES, Payment, PricingRule, Profile, Rating, Rider, RiderDocument, Trip, Vehicle, Zone
+from app.models import (
+    BRTAClassCode,
+    BRTARegion,
+    DOCUMENT_TYPES,
+    Payment,
+    PricingRule,
+    Profile,
+    Rating,
+    Rider,
+    RiderDocument,
+    Trip,
+    Vehicle,
+    Zone,
+)
+from app.brta import BRTA_CLASS_CODES, BRTA_REGIONS
 from app.security import hash_password
 from app.services import documents
 from app.services.predictors import eta_predictor
@@ -83,7 +97,9 @@ def _name(rng: random.Random) -> str:
 
 
 def _plate(rng: random.Random, vt: str) -> str:
-    return f"DHAKA METRO-{PLATE_CLASS[vt]} {rng.randint(11, 99)}-{rng.randint(1000, 9999)}"
+    # Format: <A> <B>-<C> e.g. DHAKA METRO HA-11-2408
+    cls = PLATE_CLASS.get(vt, "HA")
+    return f"DHAKA METRO {cls}-{rng.randint(11, 99):02d}-{rng.randint(1000, 9999):04d}"
 
 
 def _jitter(rng: random.Random, lat: float, lng: float, km: float) -> tuple[float, float]:
@@ -103,6 +119,14 @@ def seed_reference(db: Session) -> None:
         db.add_all(
             PricingRule(id=i, vehicle_type=vt, base_fare=b, per_km=km, per_min=m, min_fare=mn, max_multiplier=mx, commission_pct=c)
             for i, vt, b, km, m, mn, mx, c in PRICING
+        )
+    if not db.scalar(select(BRTARegion.id).limit(1)):
+        db.add_all(BRTARegion(code=code, bengali_text=bn) for code, bn in BRTA_REGIONS)
+    if not db.scalar(select(BRTAClassCode.id).limit(1)):
+        db.add_all(
+            BRTAClassCode(code=code, bengali_text=bn, vehicle_type=vt)
+            for vt, items in BRTA_CLASS_CODES.items()
+            for code, bn in items
         )
     db.commit()
 

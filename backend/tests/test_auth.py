@@ -14,7 +14,7 @@ from app.services import login_throttle
 from .conftest import login
 
 # Everything else under /api must demand a login, so a new route without a guard fails these tests.
-PUBLIC_ROUTES = {"/api/auth/register", "/api/auth/login", "/api/auth/otp/request", "/api/auth/otp/verify", "/api/health", "/api/zones", "/api/models"}
+PUBLIC_ROUTES = {"/api/auth/register", "/api/auth/login", "/api/auth/otp/request", "/api/auth/otp/verify", "/api/health", "/api/zones", "/api/models", "/api/brta"}
 PASSENGER_PREFIXES = ("/api/trips", "/api/passenger", "/api/assistant")
 RIDER_PREFIXES = ("/api/rider",)
 ADMIN_PREFIXES = ("/api/admin",)

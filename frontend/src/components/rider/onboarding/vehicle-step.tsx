@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { ArrowRight, CheckCircle2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { VehicleIcon } from "@/components/ride-bits";
+import { PlateNumberInput } from "@/components/rider/plate-number-input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -115,17 +116,16 @@ export function VehicleStep({ me, onSaved }: { me: RiderMe; onSaved: (updated: R
         </div>
       </div>
 
+      <div className="space-y-2">
+        <Label>License Plate Number</Label>
+        <PlateNumberInput
+          value={me.vehicle?.plate_no ?? ""}
+          vehicleType={vehicleType}
+          name="plate_no"
+        />
+      </div>
+
       <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-2">
-          <Label htmlFor="plate_no">Plate number</Label>
-          <Input
-            id="plate_no"
-            name="plate_no"
-            required
-            minLength={3}
-            defaultValue={me.vehicle?.plate_no ?? ""}
-          />
-        </div>
         <div className="space-y-2">
           <Label htmlFor="registration_no">Registration number</Label>
           <Input
@@ -136,11 +136,10 @@ export function VehicleStep({ me, onSaved }: { me: RiderMe; onSaved: (updated: R
             defaultValue={me.vehicle?.registration_no ?? ""}
           />
         </div>
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="license_no">Driving licence number</Label>
-        <Input id="license_no" name="license_no" required minLength={2} defaultValue={me.license_no ?? ""} />
+        <div className="space-y-2">
+          <Label htmlFor="license_no">Driving licence number</Label>
+          <Input id="license_no" name="license_no" required minLength={2} defaultValue={me.license_no ?? ""} />
+        </div>
       </div>
 
       <Button type="submit" size="lg" className="h-11 w-full" disabled={busy}>

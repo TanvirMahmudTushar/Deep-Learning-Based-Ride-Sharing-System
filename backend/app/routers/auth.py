@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
 
+from app.brta import normalize_plate
 from app.config import settings
 from app.models import Profile, Rider, Vehicle
 from app.realtime import ADMINS, emit
@@ -76,7 +77,7 @@ def register(body: RegisterIn, db: DB):
                 Vehicle(
                     rider_id=rider.id,
                     vehicle_type=body.vehicle_type,
-                    plate_no=body.plate_no.strip().upper(),
+                    plate_no=normalize_plate(body.plate_no, body.vehicle_type),
                     model=body.vehicle_model.strip(),
                 )
             )

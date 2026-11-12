@@ -270,7 +270,7 @@ def test_rider_otp_signup_and_onboarding_vehicle(client):
     assert saved.status_code == 200, saved.text
     v = saved.json()["vehicle"]
     assert v["vehicle_type"] == "car"
-    assert v["plate_no"] == "DHAKA METRO-GA 22-3344"
+    assert v["plate_no"] == "DHAKA METRO GA-22-3344"
     assert v["color"] == "Pearl White"
     assert v["registration_no"] == "REG-998877"
     assert v["verified"] is False
@@ -287,3 +287,15 @@ def test_rider_otp_signup_and_onboarding_vehicle(client):
     )
     assert selfie.status_code == 201, selfie.text
     assert client.get("/api/rider/me", headers=h).json()["avatar_url"] == f"/api/documents/{selfie.json()['id']}/file"
+
+
+def test_brta_dataset_and_plate_format(client):
+    res = client.get("/api/brta")
+    assert res.status_code == 200
+    data = res.json()
+    assert len(data["regions"]) == 69
+    assert any(r["code"] == "DHAKA METRO" and r["bengali"] == "ঢাকা মেট্রো" for r in data["regions"])
+    assert any(r["code"] == "SHERPUR" and r["bengali"] == "শেরপুর" for r in data["regions"])
+    assert any(c["code"] == "HA" and c["bengali"] == "হ" and c["vehicle_type"] == "bike" for c in data["class_codes"])
+    assert any(c["code"] == "KA" and c["bengali"] == "ক" and c["vehicle_type"] == "car" for c in data["class_codes"])
+    assert any(c["code"] == "THA" and c["bengali"] == "থ" and c["vehicle_type"] == "cng" for c in data["class_codes"])
