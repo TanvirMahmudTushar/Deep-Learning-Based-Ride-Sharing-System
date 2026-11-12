@@ -1,9 +1,11 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
+import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
-import { FileWarning, Loader2, LocateFixed, LocateOff, MapPin, ShieldAlert } from "lucide-react";
+import { FileCheck2, FileWarning, Loader2, LocateFixed, LocateOff, Lock, MapPin, RefreshCw, ShieldAlert } from "lucide-react";
 import { PortalShell } from "@/components/app-shell";
 import { RideMap, type MapCircle, type MapLine, type MapMarker } from "@/components/map/ride-map";
 import { BottomSheet } from "@/components/rider/bottom-sheet";
@@ -16,6 +18,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { SPRING_BOUNCY, SPRING_UI } from "@/components/ui/motion";
 import { Switch } from "@/components/ui/switch";
 import { api, fetcher } from "@/lib/api";
 import { formatTaka, VEHICLE_COLOR } from "@/lib/format";
@@ -77,7 +80,9 @@ function openProfile(section?: string) {
 }
 
 function RiderPortal() {
+  const router = useRouter();
   const [toggling, setToggling] = useState(false);
+  const [refreshingStatus, setRefreshingStatus] = useState(false);
   const [manual, setManual] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(true);
   const [selectedZone, setSelectedZone] = useState<RiderDemandZone | null>(null);
@@ -93,6 +98,14 @@ function RiderPortal() {
 
   // ---- device GPS -------------------------------------------------------------------------
   const verified = me?.status === "verified";
+  const needsOnboarding = !!me && !verified && (!me.vehicle || !me.license_no);
+  const lockedOut = !!me && !verified;
+
+  useEffect(() => {
+    if (needsOnboarding) {
+      router.replace("/rider/onboarding");
+    }
+  }, [needsOnboarding, router]);
   const gpsWanted = !!verified && !manual && !active?.auto_drive;
   const geo = useGeolocation(gpsWanted);
   const sharing = !!me && (me.is_online || !!active); // never track an offline rider
@@ -272,57 +285,58 @@ function RiderPortal() {
 
   return (
     <div className="relative min-h-0 flex-1 overflow-hidden">
-      {/* Layer 0: the map fills everything; every other element floats above it. */}
-      <section className="absolute inset-0 isolate z-0">
-        <RideMap markers={markers} lines={lines} circles={circles} fitTo={fitTo} fitKey={fitKey} onMapClick={onMapClick} />
-      </section>
+      <div className={lockedOut ? "pointer-events-none absolute inset-0 select-none blur-md transition-[filter] duration-300" : "absolute inset-0"}>
+        {/* Layer 0: the map fills everything; every other element floats above it. */}
+        <section className="absolute inset-0 isolate z-0">
+          <RideMap markers={markers} lines={lines} circles={circles} fitTo={fitTo} fitKey={fitKey} onMapClick={onMapClick} />
+        </section>
 
-      {/* Floating online toggle, independent of the panel. */}
-      {me && (
-        <div className="pointer-events-none absolute inset-x-0 top-3 z-20 px-3 md:pr-3 md:pl-[calc(26.25rem+0.75rem)]">
-          <AvailabilityToggle
-            className="pointer-events-auto w-full"
-            online={me.is_online}
-            busy={toggling}
-            disabled={!!active}
-            hint={active ? "Finish your current trip to go offline" : !canGoOnline ? "Verification required to go online" : undefined}
-            onChange={requestOnline}
-          />
-        </div>
-      )}
-      {me && !offer && (manual || !position) && (
-        <div className="pointer-events-none absolute top-20 left-1/2 z-20 -translate-x-1/2 md:left-[calc(50%+13rem)]">
-          <Badge variant="outline" className="bg-background/90 backdrop-blur">
-            {manual ? "Tap the map to set your position" : "Waiting for GPS…"}
-          </Badge>
-        </div>
-      )}
+        {/* Floating online toggle, independent of the panel. */}
+        {me && (
+          <div className="pointer-events-none absolute inset-x-0 top-3 z-20 px-3 md:pr-3 md:pl-[calc(26.25rem+0.75rem)]">
+            <AvailabilityToggle
+              className="pointer-events-auto w-full"
+              online={me.is_online}
+              busy={toggling}
+              disabled={!!active}
+              hint={active ? "Finish your current trip to go offline" : !canGoOnline ? "Verification required to go online" : undefined}
+              onChange={requestOnline}
+            />
+          </div>
+        )}
+        {me && !offer && (manual || !position) && (
+          <div className="pointer-events-none absolute top-20 left-1/2 z-20 -translate-x-1/2 md:left-[calc(50%+13rem)]">
+            <Badge variant="outline" className="bg-background/90 backdrop-blur">
+              {manual ? "Tap the map to set your position" : "Waiting for GPS…"}
+            </Badge>
+          </div>
+        )}
 
-      {/* Incoming ride request floating pill over the map */}
-      {me && !active && offer && (
-        <div className="pointer-events-none absolute inset-x-3 top-20 z-30 md:right-3 md:left-[calc(26.25rem+0.75rem)] md:max-w-md">
-          <OfferCard key={offer.trip.id} offer={offer} me={me} onDone={refreshAll} className="pointer-events-auto" />
-        </div>
-      )}
+        {/* Incoming ride request floating pill over the map */}
+        {me && !active && offer && (
+          <div className="pointer-events-none absolute inset-x-3 top-20 z-30 md:right-3 md:left-[calc(26.25rem+0.75rem)] md:max-w-md">
+            <OfferCard key={offer.trip.id} offer={offer} me={me} onDone={refreshAll} className="pointer-events-auto" />
+          </div>
+        )}
 
-      <BottomSheet
-        expanded={sheetOpen}
-        onExpandedChange={setSheetOpen}
-        mobileHeight={clampToIdlePrompt ? idleSheetHeight : null}
-        header={
-          me && (
-            <div className="flex h-16 items-center gap-3 rounded-xl border bg-card px-3">
-              <span className="grid size-10 shrink-0 place-items-center rounded-full bg-muted">
-                {me.vehicle && <VehicleIcon type={me.vehicle.vehicle_type} className="size-5" style={{ color: VEHICLE_COLOR[me.vehicle.vehicle_type] }} />}
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="truncate font-medium">{me.full_name}</div>
-                <div className="truncate text-xs text-muted-foreground">{me.vehicle ? `${me.vehicle.model} · ${me.vehicle.plate_no}` : "No vehicle"}</div>
+        <BottomSheet
+          expanded={sheetOpen}
+          onExpandedChange={setSheetOpen}
+          mobileHeight={clampToIdlePrompt ? idleSheetHeight : null}
+          header={
+            me && (
+              <div className="flex h-16 items-center gap-3 rounded-xl border bg-card px-3">
+                <span className="grid size-10 shrink-0 place-items-center rounded-full bg-muted">
+                  {me.vehicle && <VehicleIcon type={me.vehicle.vehicle_type} className="size-5" style={{ color: VEHICLE_COLOR[me.vehicle.vehicle_type] }} />}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium">{me.full_name}</div>
+                  <div className="truncate text-xs text-muted-foreground">{me.vehicle ? `${me.vehicle.model} · ${me.vehicle.plate_no}` : "No vehicle"}</div>
+                </div>
               </div>
-            </div>
-          )
-        }
-      >
+            )
+          }
+        >
         <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
           <div ref={sheetBodyRef} className="relative space-y-4 p-4">
             {!me && <Loader2 className="mx-auto size-5 animate-spin text-muted-foreground" />}
@@ -399,7 +413,97 @@ function RiderPortal() {
             )}
           </div>
         </div>
-      </BottomSheet>
+        </BottomSheet>
+      </div>
+
+      {/* Lockout overlay until rider passes verification */}
+      <AnimatePresence>
+        {lockedOut && me && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={SPRING_UI}
+            className="absolute inset-0 z-40 flex items-center justify-center bg-background/65 p-4 backdrop-blur-md"
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.93, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 12 }}
+              transition={SPRING_UI}
+              className="w-full max-w-md space-y-4 rounded-2xl border bg-card/95 p-6 shadow-2xl"
+            >
+              <div className="flex items-start gap-3.5">
+                <motion.span
+                  initial={{ scale: 0.7 }}
+                  animate={{ scale: 1 }}
+                  transition={SPRING_BOUNCY}
+                  className={
+                    me.status === "suspended"
+                      ? "grid size-12 shrink-0 place-items-center rounded-full bg-red-500/15 text-red-400"
+                      : "grid size-12 shrink-0 place-items-center rounded-full bg-amber-500/15 text-amber-300"
+                  }
+                >
+                  {me.status === "suspended" ? <ShieldAlert className="size-6" /> : <Lock className="size-6" />}
+                </motion.span>
+                <div className="min-w-0 space-y-1">
+                  <h2 className="text-lg font-bold">
+                    {me.status === "suspended" ? "Account suspended" : "You haven't been verified yet"}
+                  </h2>
+                  <p className="text-sm text-muted-foreground">
+                    {me.status === "suspended"
+                      ? "Your rider account is currently suspended. Contact support to restore access."
+                      : me.documents_ready
+                        ? "All your documents are approved. An admin will finish your background verification shortly."
+                        : "Complete your vehicle details and upload all required documents. The rider app unlocks once you're verified."}
+                  </p>
+                </div>
+              </div>
+
+              {me.status === "pending" && !me.documents_ready && me.missing_documents.length > 0 && (
+                <div className="rounded-xl border border-amber-400/25 bg-amber-400/5 p-3 text-xs">
+                  <div className="mb-1.5 font-semibold text-amber-200">Pending documents:</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {me.missing_documents.map((doc) => (
+                      <Badge key={doc} variant="outline" className="border-amber-400/30 bg-amber-400/10 text-amber-200">
+                        {doc}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-col gap-3 pt-1 sm:flex-row">
+                <Button type="button" className="h-12 min-h-12 w-full text-base sm:w-auto sm:flex-1" onClick={() => router.push("/rider/onboarding")}>
+                  <FileCheck2 /> Vehicle &amp; Documents
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-12 min-h-12 w-full text-base sm:w-auto sm:flex-1"
+                  disabled={refreshingStatus}
+                  onClick={() => {
+                    setRefreshingStatus(true);
+                    void refreshMe()
+                      .then((updated) => {
+                        if (updated?.status === "verified") {
+                          toast.success("Account verified! Welcome to Cholo.");
+                        } else {
+                          toast.info("Still waiting for admin verification");
+                        }
+                      })
+                      .finally(() => setRefreshingStatus(false));
+                  }}
+                >
+                  <RefreshCw className={refreshingStatus ? "animate-spin" : undefined} />
+                  {refreshingStatus ? "Checking…" : "Check Status"}
+                </Button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <Dialog open={blocked !== null} onOpenChange={(o) => !o && setBlocked(null)}>
         <DialogContent>
           <DialogHeader>

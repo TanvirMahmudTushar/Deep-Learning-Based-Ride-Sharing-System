@@ -47,10 +47,26 @@ class RegisterIn(BaseModel):
     phone: str = Field(min_length=6, max_length=32)
     password: NewPassword
     role: Literal["user", "rider", "support"] = "user"
+    otp: str | None = Field(default=None, min_length=4, max_length=10)
     license_no: str | None = Field(default=None, max_length=40)
     vehicle_type: VehicleType | None = None
     plate_no: str | None = Field(default=None, max_length=32)
     vehicle_model: str | None = Field(default=None, max_length=60)
+
+
+class OtpRequestIn(BaseModel):
+    email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=160)
+    phone: str = Field(min_length=6, max_length=32)
+
+
+class OtpRequestOut(BaseModel):
+    ok: bool
+    message: str
+
+
+class OtpVerifyIn(BaseModel):
+    phone: str = Field(min_length=6, max_length=32)
+    otp: str = Field(min_length=4, max_length=10)
 
 
 class LoginIn(BaseModel):
@@ -65,6 +81,8 @@ class ProfileOut(BaseModel):
     phone: str
     role: str
     approval_status: str | None = None
+    phone_verified: bool = False
+    avatar_url: str | None = None
 
 
 class AuthOut(BaseModel):
@@ -80,7 +98,18 @@ class VehicleOut(BaseModel):
     vehicle_type: str
     plate_no: str
     model: str
+    color: str | None = None
+    registration_no: str | None = None
     verified: bool
+
+
+class RiderOnboardingVehicleIn(BaseModel):
+    vehicle_type: VehicleType
+    model: str = Field(min_length=2, max_length=60)
+    plate_no: str = Field(min_length=3, max_length=32)
+    color: str = Field(min_length=2, max_length=32)
+    registration_no: str = Field(min_length=3, max_length=64)
+    license_no: str = Field(min_length=2, max_length=40)
 
 
 class RiderPublic(BaseModel):
@@ -201,10 +230,18 @@ class TripOut(BaseModel):
     live_eta_min: float | None = None
 
 
-def vehicle_out(v: Vehicle | None) -> VehicleOut | None:
+def vehicle_out(v: Vehicle | None, *, rider_verified: bool = True) -> VehicleOut | None:
     if v is None:
         return None
-    return VehicleOut(id=v.id, vehicle_type=v.vehicle_type, plate_no=v.plate_no, model=v.model, verified=v.verified)
+    return VehicleOut(
+        id=v.id,
+        vehicle_type=v.vehicle_type,
+        plate_no=v.plate_no,
+        model=v.model,
+        color=v.color,
+        registration_no=v.registration_no,
+        verified=bool(v.verified and rider_verified),
+    )
 
 
 def rider_rating(db: Session, rider_id: str) -> tuple[float | None, int]:
@@ -404,6 +441,7 @@ class RiderMe(BaseModel):
     documents_ready: bool
     missing_documents: list[str]
     commission_due: float
+    avatar_url: str | None = None
 
 
 # --- admin ----------------------------------------------------------------------------------

@@ -16,7 +16,13 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models import DOCUMENT_TYPES, Rider, RiderDocument
 
-DOC_LABEL = {"license": "Driving licence", "registration": "Vehicle registration", "photo": "Profile photo", "vehicle_photo": "Vehicle photo"}
+DOC_LABEL = {
+    "license": "Driving licence",
+    "insurance": "Vehicle insurance",
+    "registration": "Vehicle registration",
+    "photo": "Clear face / selfie photo",
+    "vehicle_photo": "Vehicle photo",
+}
 
 # content type -> (extension, magic-byte check)
 ALLOWED = {

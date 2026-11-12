@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     upload_dir: str = "./uploads"
     max_upload_mb: float = 5.0
 
+    # TEMPORARY TESTING OTP: replace with a real SMS/OTP provider before production.
+    default_test_otp: str = "000000"
+
     def model_post_init(self, _context: object) -> None:
         # Without a real secret, sign with a random one: everyone is logged out on restart, but
         # nobody can forge a token. A blank JWT_SECRET= (as in .env.example) means "not set".

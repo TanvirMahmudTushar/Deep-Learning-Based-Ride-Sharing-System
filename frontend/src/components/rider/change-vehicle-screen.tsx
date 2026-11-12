@@ -361,7 +361,6 @@ export function ChangeVehicleScreen({
                   id="new-vehicle-plate"
                   value={plateNo}
                   onChange={(e) => setPlateNo(e.target.value)}
-                  placeholder="e.g. DHAKA METRO-HA-12-3456"
                   required
                 />
                 <p className="text-xs text-muted-foreground">
