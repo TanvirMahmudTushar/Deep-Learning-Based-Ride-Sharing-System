@@ -6,6 +6,7 @@ from app.config import settings
 from app.db import SessionLocal
 from app.models import Rider, SafetyAlert, Trip
 from app.services import simulator
+from app.services import predictors
 
 GULSHAN = {"lat": 23.7810, "lng": 90.4150}
 DHANMONDI = {"lat": 23.7465, "lng": 90.3745}
@@ -173,6 +174,9 @@ def test_admin_dashboard_endpoints(client, admin_h, user_h):
     forecasts = client.get("/api/admin/forecasts", headers=admin_h).json()
     assert len(forecasts["zones"]) == 12 and len(forecasts["hourly"]) == 24
     assert sum(z["total"] for z in forecasts["zones"]) > 0
+    assert forecasts["horizon_minutes"] == 60
+    assert forecasts["model_comparison"]["baseline"]["status"] == "active"
+    assert forecasts["model_comparison"]["deep_learning"]["status"] == "pending"
 
     riders = client.get("/api/admin/riders", headers=admin_h, params={"status_filter": "pending"}).json()
     assert len(riders) == 1
@@ -183,6 +187,7 @@ def test_admin_dashboard_endpoints(client, admin_h, user_h):
     docs = client.get(f"/api/admin/riders/{rider_id}/documents", headers=admin_h).json()["required"]
     for d in docs:
         assert client.post(f"/api/admin/documents/{d['document']['id']}/review", headers=admin_h, json={"status": "approved"}).status_code == 200
+
     assert client.post(f"/api/admin/riders/{rider_id}/verify", headers=admin_h).json()["status"] == "verified"
 
     rules = client.get("/api/admin/pricing", headers=admin_h).json()
@@ -209,6 +214,52 @@ def test_admin_dashboard_endpoints(client, admin_h, user_h):
 
     live = client.get("/api/admin/trips/live", headers=admin_h).json()
     assert "trips" in live and "riders" in live
+
+
+def test_demand_forecast_horizons_and_vehicle_breakdowns(client, admin_h):
+    results = {
+        minutes: client.get(
+            "/api/admin/forecasts", headers=admin_h, params={"horizon_minutes": minutes}
+        ).json()
+        for minutes in (15, 30, 60)
+    }
+
+    for minutes, result in results.items():
+        assert result["horizon_minutes"] == minutes
+        assert len(result["zones"]) == 12
+        for zone in result["zones"]:
+            assert set(zone["free_riders_by_type"]) == {"bike", "cng", "car"}
+            assert abs(zone["total"] - sum(zone[vehicle] for vehicle in ("bike", "cng", "car"))) < 0.02
+        assert set(result["hourly"][0]["forecast_by_vehicle"]) == {"bike", "cng", "car"}
+        assert result["hourly"][0]["actual_by_vehicle"] is not None
+        metrics = result["model_comparison"]["baseline"]["metrics"]
+        assert set(metrics["by_vehicle"]) == {"bike", "cng", "car"}
+
+    for short, medium, long in zip(results[15]["zones"], results[30]["zones"], results[60]["zones"]):
+        assert short["total"] <= medium["total"] <= long["total"]
+    assert client.get("/api/admin/forecasts?horizon_minutes=45", headers=admin_h).status_code == 422
+
+
+def test_registered_deep_learning_demand_model_is_used(client, admin_h, monkeypatch):
+    class ConstantDemandModel:
+        name = "test-demand-dl"
+        kind = "deep-learning"
+        description = "Test model"
+
+        def predict(self, features):
+            return 1.0
+
+    monkeypatch.setitem(predictors.registry, "demand", ConstantDemandModel())
+    response = client.get("/api/admin/forecasts?horizon_minutes=30", headers=admin_h)
+    assert response.status_code == 200, response.text
+    forecasts = response.json()
+
+    assert forecasts["model"] == "test-demand-dl"
+    assert forecasts["zones"][0]["bike"] == 2.0
+    comparison = forecasts["model_comparison"]
+    assert comparison["baseline"]["status"] == "comparison"
+    assert comparison["deep_learning"]["status"] == "active"
+    assert comparison["deep_learning"]["predictions_by_vehicle"]["bike"] == 24.0
 
 
 def test_register_rider_needs_verification(client):

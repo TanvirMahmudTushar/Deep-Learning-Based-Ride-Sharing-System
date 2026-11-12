@@ -29,7 +29,7 @@ from app.services import availability, demand, documents
 from app.services import trips as trip_service
 from app.services.alert_severity import anomaly_severity
 from app.services.alerts import ensure_summary
-from app.services.predictors import demand_forecaster
+from app.services.predictors import active_demand_model, demand_baseline_forecaster, predict_demand
 from app.services.weather import current_weather, is_raining
 from app.services.zones import all_zones
 
@@ -481,56 +481,152 @@ def set_alert_status(alert_id: str, body: AlertStatusIn, db: DB, admin: Admin):
 
 
 @router.get("/forecasts")
-def forecasts(db: DB, admin: Admin):
+def forecasts(db: DB, admin: Admin, horizon_minutes: int = Query(default=60, ge=15, le=60)):
+    if horizon_minutes not in (15, 30, 60):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "horizon_minutes must be 15, 30, or 60")
+
     demand.ensure_fresh(db)
     zones = all_zones(db)
-    rows = db.scalars(select(DemandForecast)).all()
-
-    next_hour: dict[int, dict[str, float]] = defaultdict(lambda: {vt: 0.0 for vt in VEHICLE_TYPES})
-    for f in rows:
-        next_hour[f.zone_id][f.vehicle_type] += f.predicted_requests
-
-    # Today's hourly profile: forecast (all zones) vs actual requests so far.
-    today = local_day_start()
+    model = active_demand_model()
+    start = demand.forecast_start()
+    end = start + timedelta(minutes=horizon_minutes)
     raining = is_raining(db)
-    actual: dict[int, int] = defaultdict(int)
-    for (at,) in db.execute(select(Trip.requested_at).where(Trip.requested_at >= today)):
-        actual[local_time(at).hour] += 1
+    rows = db.scalars(
+        select(DemandForecast).where(DemandForecast.forecast_for >= start, DemandForecast.forecast_for < end)
+    ).all()
+
+    window_predictions: dict[int, dict[str, float]] = defaultdict(lambda: {vt: 0.0 for vt in VEHICLE_TYPES})
+    baseline_predictions = {vt: 0.0 for vt in VEHICLE_TYPES}
+    for f in rows:
+        window_predictions[f.zone_id][f.vehicle_type] += f.predicted_requests
+        baseline_predictions[f.vehicle_type] += (
+            f.predicted_requests
+            if model.name == demand_baseline_forecaster.name
+            else predict_demand(demand_baseline_forecaster, f.zone_id, f.vehicle_type, f.forecast_for, raining)
+        )
+
+    today = local_day_start()
+    actual: dict[int, dict[str, int]] = defaultdict(lambda: {vt: 0 for vt in VEHICLE_TYPES})
+    for at, vehicle_type in db.execute(
+        select(Trip.requested_at, Trip.vehicle_type_requested).where(Trip.requested_at >= today)
+    ):
+        if vehicle_type in VEHICLE_TYPES:
+            actual[local_time(at).hour][vehicle_type] += 1
+
     now_hour = local_time(utcnow()).hour
     hourly = []
+    baseline_errors: dict[str, list[float]] = {"all": [], **{vt: [] for vt in VEHICLE_TYPES}}
+    model_errors: dict[str, list[float]] = {"all": [], **{vt: [] for vt in VEHICLE_TYPES}}
+
+    def hourly_predictions(forecaster, at) -> dict[str, float]:
+        return {
+            vt: round(
+                sum(
+                    predict_demand(forecaster, z.id, vt, at + timedelta(minutes=15 * slot), raining)
+                    for z in zones
+                    for slot in range(4)
+                ),
+                1,
+            )
+            for vt in VEHICLE_TYPES
+        }
+
     for h in range(24):
         at = today + timedelta(hours=h)
-        predicted = sum(
-            demand_forecaster.forecast(z.id, vt, at + timedelta(minutes=15 * s), raining) for z in zones for vt in VEHICLE_TYPES for s in range(4)
+        baseline_by_vehicle = hourly_predictions(demand_baseline_forecaster, at)
+        model_by_vehicle = (
+            baseline_by_vehicle if model.name == demand_baseline_forecaster.name else hourly_predictions(model, at)
         )
-        hourly.append({"hour": h, "forecast": round(predicted, 1), "actual": actual.get(h, 0) if h <= now_hour else None})
+        observed = actual[h] if h <= now_hour else None
+        hourly.append(
+            {
+                "hour": h,
+                "forecast": round(sum(model_by_vehicle.values()), 1),
+                "forecast_by_vehicle": model_by_vehicle,
+                "actual": sum(observed.values()) if observed is not None else None,
+                "actual_by_vehicle": observed,
+            }
+        )
+        if h < now_hour:
+            actual_by_vehicle = actual[h]
+            baseline_errors["all"].append(sum(baseline_by_vehicle.values()) - sum(actual_by_vehicle.values()))
+            model_errors["all"].append(sum(model_by_vehicle.values()) - sum(actual_by_vehicle.values()))
+            for vt in VEHICLE_TYPES:
+                baseline_errors[vt].append(baseline_by_vehicle[vt] - actual_by_vehicle[vt])
+                model_errors[vt].append(model_by_vehicle[vt] - actual_by_vehicle[vt])
+
+    def summarize_errors(errors: list[float]) -> dict:
+        if not errors:
+            return {"mae": None, "rmse": None, "evaluated_hours": 0}
+        return {
+            "mae": round(sum(abs(error) for error in errors) / len(errors), 2),
+            "rmse": round((sum(error * error for error in errors) / len(errors)) ** 0.5, 2),
+            "evaluated_hours": len(errors),
+        }
+
+    def model_metrics(errors: dict[str, list[float]]) -> dict:
+        return {
+            "all": summarize_errors(errors["all"]),
+            "by_vehicle": {vt: summarize_errors(errors[vt]) for vt in VEHICLE_TYPES},
+        }
 
     busy = availability.busy_rider_ids(db)
-    supply: dict[int, int] = defaultdict(int)
+    supply: dict[int, dict[str, int]] = defaultdict(lambda: {vt: 0 for vt in VEHICLE_TYPES})
     zone_points = [(z.id, (z.center_lat, z.center_lng)) for z in zones]
-    for r in db.scalars(select(Rider).where(Rider.is_online.is_(True), Rider.current_lat.is_not(None))):
+    riders = db.scalars(
+        select(Rider)
+        .options(selectinload(Rider.vehicles))
+        .where(Rider.is_online.is_(True), Rider.current_lat.is_not(None))
+    )
+    for r in riders:
         if r.id in busy:
             continue
+        vehicle = r.vehicle
+        if vehicle is None or vehicle.vehicle_type not in VEHICLE_TYPES:
+            continue
         zid = min(zone_points, key=lambda zp: haversine_km(zp[1], (r.current_lat, r.current_lng)))[0]
-        supply[zid] += 1
+        supply[zid][vehicle.vehicle_type] += 1
+
+    active_by_vehicle = {
+        vt: round(sum(window_predictions[z.id][vt] for z in zones), 2) for vt in VEHICLE_TYPES
+    }
+    active_is_deep_learning = model.kind == "deep-learning"
 
     return {
-        "model": demand_forecaster.name,
+        "model": model.name,
         "generated_at": iso_utc(demand.last_refresh()),
         "raining": raining,
+        "horizon_minutes": horizon_minutes,
         "zones": [
             {
                 "zone_id": z.id,
                 "zone": z.name,
                 "lat": z.center_lat,
                 "lng": z.center_lng,
-                **{vt: round(next_hour[z.id][vt], 2) for vt in VEHICLE_TYPES},
-                "total": round(sum(next_hour[z.id].values()), 2),
-                "free_riders": supply.get(z.id, 0),
+                **{vt: round(window_predictions[z.id][vt], 2) for vt in VEHICLE_TYPES},
+                "total": round(sum(window_predictions[z.id].values()), 2),
+                "free_riders": sum(supply[z.id].values()),
+                "free_riders_by_type": supply[z.id],
             }
             for z in zones
         ],
         "hourly": hourly,
+        "model_comparison": {
+            "baseline": {
+                "name": demand_baseline_forecaster.name,
+                "kind": demand_baseline_forecaster.kind,
+                "status": "active" if model.name == demand_baseline_forecaster.name else "comparison",
+                "predictions_by_vehicle": {vt: round(baseline_predictions[vt], 2) for vt in VEHICLE_TYPES},
+                "metrics": model_metrics(baseline_errors),
+            },
+            "deep_learning": {
+                "name": model.name if active_is_deep_learning else None,
+                "kind": "deep-learning",
+                "status": "active" if active_is_deep_learning else "pending",
+                "predictions_by_vehicle": active_by_vehicle if active_is_deep_learning else None,
+                "metrics": model_metrics(model_errors) if active_is_deep_learning else None,
+            },
+        },
     }
 
 

@@ -1,4 +1,4 @@
-"""Demand forecasts per zone and vehicle type for the next hour, in 15-minute slots."""
+"""Demand forecasts per zone and vehicle type, stored in 15-minute slots."""
 
 import threading
 from datetime import datetime, timedelta
@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db import local_day_start, utcnow
 from app.models import VEHICLE_TYPES, DemandForecast, Trip
-from app.services.predictors import HistoricalTrip, demand_forecaster
+from app.services.predictors import HistoricalTrip, active_demand_model, demand_baseline_forecaster, predict_demand
 from app.services.weather import is_raining
 from app.services.zones import all_zones
 
@@ -18,6 +18,8 @@ REFRESH_EVERY = timedelta(minutes=15)
 
 _lock = threading.Lock()
 _last_refresh: datetime | None = None
+_forecast_start: datetime | None = None
+_last_model_version: str | None = None
 
 
 def slot_start(at: datetime) -> datetime:
@@ -34,24 +36,25 @@ def fit_forecaster(db: Session) -> None:
             Trip.pickup_zone_id.is_not(None),
         )
     ).all()
-    demand_forecaster.fit(HistoricalTrip(z, vt, at) for z, vt, at in rows)
+    demand_baseline_forecaster.fit(HistoricalTrip(z, vt, at) for z, vt, at in rows)
 
 
 def refresh_forecasts(db: Session) -> int:
     """Refit the forecaster on recent trips and replace the stored forecasts."""
-    global _last_refresh
+    global _forecast_start, _last_model_version, _last_refresh
     with _lock:
         fit_forecaster(db)
         raining = is_raining(db)
         start = slot_start(utcnow())
+        model = active_demand_model()
         db.execute(delete(DemandForecast))
         rows = [
             DemandForecast(
                 zone_id=zone.id,
                 vehicle_type=vt,
                 forecast_for=start + timedelta(minutes=15 * i),
-                predicted_requests=demand_forecaster.forecast(zone.id, vt, start + timedelta(minutes=15 * i), raining),
-                model_version=demand_forecaster.name,
+                predicted_requests=predict_demand(model, zone.id, vt, start + timedelta(minutes=15 * i), raining),
+                model_version=model.name,
             )
             for zone in all_zones(db)
             for vt in VEHICLE_TYPES
@@ -60,11 +63,22 @@ def refresh_forecasts(db: Session) -> int:
         db.add_all(rows)
         db.commit()
         _last_refresh = utcnow()
+        _forecast_start = start
+        _last_model_version = model.name
         return len(rows)
 
 
 def ensure_fresh(db: Session) -> None:
-    if _last_refresh is None or utcnow() - _last_refresh > REFRESH_EVERY:
+    now = utcnow()
+    current_slot = slot_start(now)
+    model = active_demand_model()
+    if (
+        _last_refresh is None
+        or _forecast_start is None
+        or _forecast_start < current_slot
+        or now - _last_refresh > REFRESH_EVERY
+        or model.name != _last_model_version
+    ):
         refresh_forecasts(db)
 
 
@@ -80,3 +94,7 @@ def expected_next_hour(db: Session, zone_id: int, vehicle_type: str) -> float:
 
 def last_refresh() -> datetime | None:
     return _last_refresh
+
+
+def forecast_start() -> datetime:
+    return _forecast_start or slot_start(utcnow())

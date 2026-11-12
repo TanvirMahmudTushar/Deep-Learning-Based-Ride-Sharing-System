@@ -301,14 +301,45 @@ export interface ZoneForecast {
   car: number;
   total: number;
   free_riders: number;
+  free_riders_by_type: Record<VehicleType, number>;
+}
+
+export interface ForecastMetrics {
+  mae: number | null;
+  rmse: number | null;
+  evaluated_hours: number;
+}
+
+export interface DemandModelMetrics {
+  all: ForecastMetrics;
+  by_vehicle: Record<VehicleType, ForecastMetrics>;
+}
+
+export interface DemandModelComparisonEntry {
+  name: string | null;
+  kind: "baseline" | "deep-learning";
+  status: "active" | "comparison" | "pending";
+  predictions_by_vehicle: Record<VehicleType, number> | null;
+  metrics: DemandModelMetrics | null;
 }
 
 export interface Forecasts {
   model: string;
   generated_at: string | null;
   raining: boolean;
+  horizon_minutes: 15 | 30 | 60;
   zones: ZoneForecast[];
-  hourly: { hour: number; forecast: number; actual: number | null }[];
+  hourly: {
+    hour: number;
+    forecast: number;
+    forecast_by_vehicle: Record<VehicleType, number>;
+    actual: number | null;
+    actual_by_vehicle: Record<VehicleType, number> | null;
+  }[];
+  model_comparison: {
+    baseline: DemandModelComparisonEntry;
+    deep_learning: DemandModelComparisonEntry;
+  };
 }
 
 export interface PricingRule {
