@@ -28,6 +28,8 @@ class Profile(Base):
     role: Mapped[str] = mapped_column(String(10))  # user, rider, admin, support
     # Support agents only: pending until an admin approves, revoked if access is removed.
     approval_status: Mapped[str | None] = mapped_column(String(10))  # pending, approved, revoked
+    phone_verified: Mapped[bool | None] = mapped_column(Boolean, default=False)
+    avatar_doc_id: Mapped[str | None] = mapped_column(String(36))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     rider: Mapped["Rider | None"] = relationship(back_populates="profile", uselist=False)
@@ -63,6 +65,8 @@ class Vehicle(Base):
     vehicle_type: Mapped[str] = mapped_column(String(8))  # bike, cng, car
     plate_no: Mapped[str] = mapped_column(String(32))
     model: Mapped[str] = mapped_column(String(60))
+    color: Mapped[str | None] = mapped_column(String(32))
+    registration_no: Mapped[str | None] = mapped_column(String(64))
     verified: Mapped[bool] = mapped_column(Boolean, default=False)
     # Set when an approved vehicle change replaces this vehicle.
     retired_at: Mapped[datetime | None] = mapped_column(DateTime)
@@ -77,6 +81,23 @@ class Zone(Base):
     name: Mapped[str] = mapped_column(String(60))
     center_lat: Mapped[float] = mapped_column(Float)
     center_lng: Mapped[float] = mapped_column(Float)
+
+
+class BRTARegion(Base):
+    __tablename__ = "brta_regions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    bengali_text: Mapped[str] = mapped_column(String(80))
+
+
+class BRTAClassCode(Base):
+    __tablename__ = "brta_class_codes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(10), index=True)
+    bengali_text: Mapped[str] = mapped_column(String(40))
+    vehicle_type: Mapped[str] = mapped_column(String(8), index=True)  # bike, cng, car
 
 
 class Trip(Base):
@@ -334,7 +355,7 @@ class Settlement(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
-DOCUMENT_TYPES = ("license", "registration", "photo")
+DOCUMENT_TYPES = ("license", "insurance", "registration", "photo")
 
 
 class RiderDocument(Base):

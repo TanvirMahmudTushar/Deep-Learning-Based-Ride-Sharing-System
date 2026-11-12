@@ -10,6 +10,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
+from app.brta import normalize_plate
 from app.config import settings
 from app.db import utcnow
 from app.models import VEHICLE_CHANGE_DOC_TYPES, Rider, RiderDocument, Vehicle, VehicleChange
@@ -118,7 +119,7 @@ def my_vehicle_change(db: DB, rider: CurrentRider):
 
 @router.post("/rider/vehicle-change", status_code=status.HTTP_201_CREATED)
 def request_vehicle_change(body: VehicleChangeIn, db: DB, rider: CurrentRider):
-    plate = body.plate_no.strip().upper()
+    plate = normalize_plate(body.plate_no, body.vehicle_type)
     if rider.vehicle and rider.vehicle.plate_no.strip().upper() == plate:
         raise HTTPException(
             422,

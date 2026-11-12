@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { VehicleIcon, VehicleTag } from "@/components/ride-bits";
 import { openDocument } from "@/components/rider/documents-panel";
+import { PlateNumberInput } from "@/components/rider/plate-number-input";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -356,13 +357,11 @@ export function ChangeVehicleScreen({
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="new-vehicle-plate">Number Plate</Label>
-                <Input
-                  id="new-vehicle-plate"
+                <Label>License Plate Number</Label>
+                <PlateNumberInput
                   value={plateNo}
-                  onChange={(e) => setPlateNo(e.target.value)}
-                  placeholder="e.g. DHAKA METRO-HA-12-3456"
-                  required
+                  onChange={setPlateNo}
+                  vehicleType={vehicleType}
                 />
                 <p className="text-xs text-muted-foreground">
                   Must be unique and match official registration papers.

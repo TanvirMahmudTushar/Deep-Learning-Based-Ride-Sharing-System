@@ -144,7 +144,7 @@ def test_document_upload_review_and_access(client, admin_h, rider_h):
     ).json()
     h = {"Authorization": f"Bearer {reg['token']}"}
     overview = client.get("/api/rider/documents", headers=h).json()
-    assert not overview["ready"] and len(overview["missing"]) == 3
+    assert not overview["ready"] and len(overview["missing"]) == 4
 
     png = placeholder_png("licence")
     bad = client.post("/api/rider/documents", headers=h, data={"doc_type": "license"}, files={"file": ("fake.png", b"not an image", "image/png")})
@@ -153,7 +153,7 @@ def test_document_upload_review_and_access(client, admin_h, rider_h):
     assert wrong_type.status_code == 422
 
     ids = {}
-    for doc_type in ("license", "registration", "photo"):
+    for doc_type in ("license", "insurance", "registration", "photo"):
         r = client.post("/api/rider/documents", headers=h, data={"doc_type": doc_type}, files={"file": (f"{doc_type}.png", png, "image/png")})
         assert r.status_code == 201, r.text
         ids[doc_type] = r.json()["id"]
@@ -170,7 +170,7 @@ def test_document_upload_review_and_access(client, admin_h, rider_h):
 
     # Re-upload replaces the rejected version.
     new = client.post("/api/rider/documents", headers=h, data={"doc_type": "photo"}, files={"file": ("p2.png", png, "image/png")}).json()
-    for doc_id in (ids["license"], ids["registration"], new["id"]):
+    for doc_id in (ids["license"], ids["insurance"], ids["registration"], new["id"]):
         client.post(f"/api/admin/documents/{doc_id}/review", headers=admin_h, json={"status": "approved"})
     assert client.get("/api/rider/me", headers=h).json()["documents_ready"] is True
 
