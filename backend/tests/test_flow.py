@@ -165,7 +165,7 @@ def test_long_stop_alert(client, user_h, rider_h, admin_h):
     client.post(f"/api/rider/trips/{trip['id']}/complete", headers=rider_h)
 
 
-def test_admin_dashboard_endpoints(client, admin_h):
+def test_admin_dashboard_endpoints(client, admin_h, user_h):
     stats = client.get("/api/admin/stats", headers=admin_h).json()
     assert stats["pending_riders"] == 1
     assert stats["eta_mae_min_7d"] is not None
@@ -187,8 +187,25 @@ def test_admin_dashboard_endpoints(client, admin_h):
 
     rules = client.get("/api/admin/pricing", headers=admin_h).json()
     bike = next(r for r in rules if r["vehicle_type"] == "bike")
-    updated = client.put("/api/admin/pricing/bike", headers=admin_h, json={**{k: bike[k] for k in ("base_fare", "per_km", "per_min", "min_fare", "max_multiplier")}, "base_fare": 25})
+    pricing_body = {k: bike[k] for k in ("base_fare", "per_km", "per_min", "min_fare", "max_multiplier", "commission_pct")}
+    pricing_body.update(base_fare=25, max_multiplier=1.6)
+    updated = client.put("/api/admin/pricing/bike", headers=admin_h, json=pricing_body)
     assert updated.json()["base_fare"] == 25
+    rule_history = client.get("/api/admin/pricing/rule-history", headers=admin_h).json()
+    assert rule_history["items"][0]["vehicle_type"] == "bike"
+    assert rule_history["items"][0]["previous_values"]["base_fare"] == bike["base_fare"]
+    assert rule_history["items"][0]["current_values"]["max_multiplier"] == 1.6
+    assert rule_history["items"][0]["changed_by_email"] == "admin@ride.local"
+
+    unchanged = client.put("/api/admin/pricing/bike", headers=admin_h, json=pricing_body)
+    assert unchanged.status_code == 200
+    assert len(client.get("/api/admin/pricing/rule-history", headers=admin_h).json()["items"]) == len(rule_history["items"])
+
+    multiplier_history = client.get("/api/admin/pricing/multiplier-history", headers=admin_h).json()
+    assert multiplier_history["items"]
+    assert {"trip_id", "vehicle_type", "multiplier", "requested_at"} <= multiplier_history["items"][0].keys()
+    assert client.get("/api/admin/pricing/multiplier-history?vehicle_type=unknown", headers=admin_h).status_code == 422
+    assert client.get("/api/admin/pricing/rule-history", headers=user_h).status_code == 403
 
     live = client.get("/api/admin/trips/live", headers=admin_h).json()
     assert "trips" in live and "riders" in live

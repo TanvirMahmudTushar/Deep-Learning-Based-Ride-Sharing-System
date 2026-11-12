@@ -264,6 +264,34 @@ export interface PricingRule {
   commission_pct: number;
 }
 
+export type PricingRuleValues = Omit<PricingRule, "id" | "vehicle_type">;
+
+export interface PricingRuleChange {
+  id: number;
+  vehicle_type: VehicleType;
+  previous_values: PricingRuleValues;
+  current_values: PricingRuleValues;
+  changed_by: string;
+  changed_by_email: string;
+  changed_at: string;
+}
+
+export interface HistoryPage<T> {
+  items: T[];
+  has_more: boolean;
+}
+
+export interface MultiplierHistoryEntry {
+  trip_id: string;
+  vehicle_type: VehicleType;
+  multiplier: number;
+  price_reason: string;
+  fare_estimate: number;
+  fare_final: number | null;
+  status: TripStatus;
+  requested_at: string;
+}
+
 export interface ModelInfo {
   component: string;
   name: string;

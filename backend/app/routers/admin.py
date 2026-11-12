@@ -1,16 +1,17 @@
 """Admin dashboard endpoints: platform stats, rider verification, live trips, alerts, forecasts, pricing."""
 
+import json
 from collections import defaultdict
 from datetime import timedelta
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.db import local_day_start, local_time, utcnow
 from app.geo import haversine_km
-from app.models import ACTIVE_TRIP_STATUSES, VEHICLE_TYPES, DemandForecast, PricingRule, Rider, SafetyAlert, Trip
+from app.models import ACTIVE_TRIP_STATUSES, VEHICLE_TYPES, DemandForecast, PricingRule, PricingRuleChange, Profile, Rider, SafetyAlert, Trip
 from app.schemas import AlertStatusIn, PricingRuleIn, iso_utc, rider_rating, trip_out, vehicle_out
 from app.security import DB, Admin
 from app.realtime import ADMINS, emit
@@ -285,10 +286,8 @@ def refresh_forecasts(db: DB, admin: Admin):
     return {"ok": True, "rows": n}
 
 
-def _rule_out(r: PricingRule) -> dict:
+def _rule_values_out(r: PricingRule) -> dict:
     return {
-        "id": r.id,
-        "vehicle_type": r.vehicle_type,
         "base_fare": float(r.base_fare),
         "per_km": float(r.per_km),
         "per_min": float(r.per_min),
@@ -298,9 +297,74 @@ def _rule_out(r: PricingRule) -> dict:
     }
 
 
+def _rule_out(r: PricingRule) -> dict:
+    return {"id": r.id, "vehicle_type": r.vehicle_type, **_rule_values_out(r)}
+
+
 @router.get("/pricing")
 def pricing_rules(db: DB, admin: Admin):
     return [_rule_out(r) for r in db.scalars(select(PricingRule).order_by(PricingRule.id))]
+
+
+@router.get("/pricing/rule-history")
+def pricing_rule_history(
+    db: DB,
+    admin: Admin,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+):
+    rows = db.execute(
+        select(PricingRuleChange, Profile.full_name, Profile.email)
+        .join(Profile, Profile.id == PricingRuleChange.changed_by_id)
+        .order_by(PricingRuleChange.changed_at.desc(), PricingRuleChange.id.desc())
+        .offset(offset)
+        .limit(limit + 1)
+    ).all()
+    has_more = len(rows) > limit
+    items = [
+        {
+            "id": change.id,
+            "vehicle_type": change.vehicle_type,
+            "previous_values": json.loads(change.previous_values_json),
+            "current_values": json.loads(change.current_values_json),
+            "changed_by": full_name,
+            "changed_by_email": email,
+            "changed_at": iso_utc(change.changed_at),
+        }
+        for change, full_name, email in rows[:limit]
+    ]
+    return {"items": items, "has_more": has_more}
+
+
+@router.get("/pricing/multiplier-history")
+def pricing_multiplier_history(
+    db: DB,
+    admin: Admin,
+    vehicle_type: str | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+):
+    if vehicle_type is not None and vehicle_type not in VEHICLE_TYPES:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Unknown vehicle type")
+    query = select(Trip).order_by(Trip.requested_at.desc(), Trip.id.desc())
+    if vehicle_type is not None:
+        query = query.where(Trip.vehicle_type_requested == vehicle_type)
+    trips = db.scalars(query.offset(offset).limit(limit + 1)).all()
+    has_more = len(trips) > limit
+    items = [
+        {
+            "trip_id": trip.id,
+            "vehicle_type": trip.vehicle_type_requested,
+            "multiplier": trip.price_multiplier,
+            "price_reason": trip.price_reason,
+            "fare_estimate": float(trip.fare_estimate),
+            "fare_final": float(trip.fare_final) if trip.fare_final is not None else None,
+            "status": trip.status,
+            "requested_at": iso_utc(trip.requested_at),
+        }
+        for trip in trips[:limit]
+    ]
+    return {"items": items, "has_more": has_more}
 
 
 @router.put("/pricing/{vehicle_type}")
@@ -308,7 +372,18 @@ def update_pricing(vehicle_type: str, body: PricingRuleIn, db: DB, admin: Admin)
     rule = db.scalar(select(PricingRule).where(PricingRule.vehicle_type == vehicle_type))
     if rule is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown vehicle type")
+    previous_values = _rule_values_out(rule)
     for k, v in body.model_dump().items():
         setattr(rule, k, v)
-    db.commit()
+    current_values = _rule_values_out(rule)
+    if previous_values != current_values:
+        db.add(
+            PricingRuleChange(
+                vehicle_type=rule.vehicle_type,
+                changed_by_id=admin.id,
+                previous_values_json=json.dumps(previous_values, sort_keys=True),
+                current_values_json=json.dumps(current_values, sort_keys=True),
+            )
+        )
+        db.commit()
     return _rule_out(rule)

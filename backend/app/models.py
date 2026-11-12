@@ -246,6 +246,17 @@ class PricingRule(Base):
     commission_pct: Mapped[float | None] = mapped_column(Float)
 
 
+class PricingRuleChange(Base):
+    __tablename__ = "pricing_rule_changes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    vehicle_type: Mapped[str] = mapped_column(String(8), index=True)
+    changed_by_id: Mapped[str] = mapped_column(ForeignKey("profiles.id"), index=True)
+    previous_values_json: Mapped[str] = mapped_column(Text)
+    current_values_json: Mapped[str] = mapped_column(Text)
+    changed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
 class WeatherHourly(Base):
     __tablename__ = "weather_hourly"
 
