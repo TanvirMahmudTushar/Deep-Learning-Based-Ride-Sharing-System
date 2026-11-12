@@ -16,6 +16,7 @@ from app.security import DB, Admin
 from app.realtime import ADMINS, emit
 from app.services import availability, demand, documents
 from app.services import trips as trip_service
+from app.services.alert_severity import anomaly_severity
 from app.services.alerts import ensure_summary
 from app.services.predictors import demand_forecaster
 from app.services.weather import current_weather, is_raining
@@ -174,8 +175,10 @@ def _alert_out(db: DB, a: SafetyAlert) -> dict:
         "trip_id": a.trip_id,
         "alert_type": a.alert_type,
         "anomaly_score": a.anomaly_score,
+        "severity": anomaly_severity(a.anomaly_score) if a.alert_type in {"route_deviation", "long_stop"} else None,
         "details": a.details,
         "summary": a.summary,
+        "resolution_note": a.resolution_note,
         "status": a.status,
         "created_at": iso_utc(a.created_at),
         "trip_status": a.trip.status,
@@ -191,7 +194,7 @@ def _alert_out(db: DB, a: SafetyAlert) -> dict:
 def alerts(db: DB, admin: Admin, status_filter: str | None = None):
     q = select(SafetyAlert).order_by(SafetyAlert.created_at.desc()).limit(100)
     if status_filter:
-        q = q.where(SafetyAlert.status == status_filter)
+        q = q.where(SafetyAlert.status == ("closed" if status_filter == "resolved" else status_filter))
     return [_alert_out(db, a) for a in db.scalars(q)]
 
 
@@ -211,9 +214,13 @@ def summarize(alert_id: str, db: DB, admin: Admin):
 
 @router.post("/alerts/{alert_id}/status")
 def set_alert_status(alert_id: str, body: AlertStatusIn, db: DB, admin: Admin):
+    if body.status == "closed" and not (body.resolution_note or "").strip():
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "A resolution note is required")
     alert = _alert_or_404(db, alert_id)
     alert.status = body.status
     alert.reviewed_by = admin.id
+    if body.resolution_note is not None:
+        alert.resolution_note = body.resolution_note.strip() or None
     db.commit()
     return _alert_out(db, alert)
 

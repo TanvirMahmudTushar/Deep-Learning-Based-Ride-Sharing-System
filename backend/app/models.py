@@ -221,6 +221,7 @@ class SafetyAlert(Base):
     anomaly_score: Mapped[float] = mapped_column(Float)
     details_json: Mapped[str] = mapped_column(Text, default="{}")
     summary: Mapped[str | None] = mapped_column(Text)
+    resolution_note: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(10), default="open")  # open, reviewed, closed
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 

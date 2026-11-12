@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
 import { Loader2, MapPinned, MessageSquareWarning, Siren, Sparkles, Timer } from "lucide-react";
@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 import { api, fetcher } from "@/lib/api";
 import { timeAgo } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -58,7 +59,26 @@ export function AlertsTab() {
   const { data: alerts, mutate } = useSWR<SafetyAlert[]>(key, fetcher, { refreshInterval: useLiveInterval(4000, 30000) });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [summarizingId, setSummarizingId] = useState<string | null>(null);
+  const [resolutionDraft, setResolutionDraft] = useState<{ alertId: string; note: string } | null>(null);
+  const autoSummarized = useRef(new Set<string>());
   const selected = alerts?.find((a) => a.id === selectedId) ?? alerts?.[0] ?? null;
+  const resolutionNote =
+    resolutionDraft && resolutionDraft.alertId === selected?.id ? resolutionDraft.note : selected?.resolution_note ?? "";
+  const selectedAlertId = selected && !selected.summary ? selected.id : null;
+
+  useEffect(() => {
+    if (!selectedAlertId || autoSummarized.current.has(selectedAlertId)) return;
+    const alertId = selectedAlertId;
+    autoSummarized.current.add(alertId);
+    setSummarizingId(alertId);
+    void api<SafetyAlert>(`/api/admin/alerts/${alertId}/summarize`, { method: "POST" })
+      .then(async (updated) => {
+        await mutate((current) => current?.map((a) => (a.id === alertId ? updated : a)), { revalidate: false });
+      })
+      .catch((e) => toast.error(e instanceof Error ? e.message : "Could not generate summary"))
+      .finally(() => setSummarizingId((current) => (current === alertId ? null : current)));
+  }, [selectedAlertId, mutate]);
 
   async function call(path: string, label: string, json?: unknown) {
     if (!selected) return;
@@ -79,7 +99,7 @@ export function AlertsTab() {
         <TabsList>
           <TabsTrigger value="open">Open</TabsTrigger>
           <TabsTrigger value="reviewed">Reviewed</TabsTrigger>
-          <TabsTrigger value="closed">Closed</TabsTrigger>
+          <TabsTrigger value="resolved">Resolved</TabsTrigger>
           <TabsTrigger value="all">All</TabsTrigger>
         </TabsList>
       </Tabs>
@@ -106,7 +126,7 @@ export function AlertsTab() {
                   <AlertIcon type={a.alert_type} /> {TYPE_LABEL[a.alert_type]}
                 </span>
                 <Badge variant="outline" className={STATUS_STYLE[a.status]}>
-                  {a.status}
+                  {a.status === "closed" ? "resolved" : a.status}
                 </Badge>
               </div>
               <div className="text-xs text-muted-foreground">{detailText(a)}</div>
@@ -116,6 +136,11 @@ export function AlertsTab() {
                   score {a.anomaly_score.toFixed(2)} · {timeAgo(a.created_at)}
                 </span>
               </div>
+              {a.severity && (
+                <Badge variant="outline" className={a.severity === "high" ? STATUS_STYLE.open : STATUS_STYLE.reviewed}>
+                  {a.severity} severity
+                </Badge>
+              )}
             </button>
           ))}
         </div>
@@ -185,13 +210,32 @@ export function AlertsTab() {
                     <Sparkles className="size-3.5" /> AI summary
                   </span>
                   {!selected.summary && (
-                    <Button size="xs" variant="secondary" disabled={!!busy} onClick={() => call("summarize", "summary")}>
-                      {busy === "summary" && <Loader2 className="animate-spin" />} Summarize
+                    <Button size="xs" variant="secondary" disabled={!!busy || summarizingId === selected.id} onClick={() => call("summarize", "summary")}>
+                      {(busy === "summary" || summarizingId === selected.id) && <Loader2 className="animate-spin" />}
+                      {summarizingId === selected.id ? "Generating…" : "Summarize"}
                     </Button>
                   )}
                 </div>
                 <p className="text-sm text-pretty">{selected.summary ?? "Generate a short summary and recommended action for this alert."}</p>
               </div>
+
+              {selected.status === "closed" ? (
+                <div className="space-y-1 rounded-lg border p-3">
+                  <div className="text-xs font-medium text-muted-foreground">Resolution note</div>
+                  <p className="text-sm text-pretty">{selected.resolution_note || "No resolution note was recorded."}</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <label htmlFor="resolution-note" className="text-sm font-medium">Resolution note</label>
+                  <Textarea
+                    id="resolution-note"
+                    placeholder="Describe how this alert was resolved (required to resolve)"
+                    value={resolutionNote}
+                    onChange={(e) => setResolutionDraft({ alertId: selected.id, note: e.target.value })}
+                    maxLength={1000}
+                  />
+                </div>
+              )}
 
               <div className="flex flex-wrap gap-2">
                 {(["open", "reviewed", "closed"] as const).map((s) => (
@@ -199,10 +243,10 @@ export function AlertsTab() {
                     key={s}
                     size="sm"
                     variant={selected.status === s ? "default" : "outline"}
-                    disabled={!!busy || selected.status === s}
-                    onClick={() => call("status", s, { status: s })}
+                    disabled={!!busy || selected.status === s || (s === "closed" && !resolutionNote.trim())}
+                    onClick={() => call("status", s, { status: s, ...(s === "closed" ? { resolution_note: resolutionNote.trim() } : {}) })}
                   >
-                    Mark {s}
+                    Mark {s === "closed" ? "resolved" : s}
                   </Button>
                 ))}
               </div>

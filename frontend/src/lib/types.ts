@@ -209,6 +209,7 @@ export interface SafetyAlert {
   trip_id: string;
   alert_type: "route_deviation" | "long_stop" | "sos" | "report";
   anomaly_score: number;
+  severity: "moderate" | "high" | null;
   details: {
     vehicle_type?: VehicleType;
     progress_pct?: number;
@@ -221,6 +222,7 @@ export interface SafetyAlert {
     trip_status?: TripStatus;
   };
   summary: string | null;
+  resolution_note: string | null;
   status: "open" | "reviewed" | "closed";
   created_at: string;
   trip_status: TripStatus;

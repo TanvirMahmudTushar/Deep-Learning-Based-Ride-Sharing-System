@@ -92,10 +92,21 @@ def test_manual_rider_flow_with_deviation_alert(client, user_h, rider_h, admin_h
     alerts = client.get("/api/admin/alerts", headers=admin_h).json()
     alert = next(a for a in alerts if a["trip_id"] == trip["id"])
     assert alert["alert_type"] == "route_deviation" and alert["anomaly_score"] >= 1
+    assert alert["severity"] == "high"
 
     summary = client.post(f"/api/admin/alerts/{alert['id']}/summarize", headers=admin_h).json()["summary"]
-    assert "route" in summary.lower()
+    assert "route" in summary.lower() and "high" in summary.lower()
     assert client.post(f"/api/admin/alerts/{alert['id']}/status", headers=admin_h, json={"status": "reviewed"}).json()["status"] == "reviewed"
+    unresolved = client.post(f"/api/admin/alerts/{alert['id']}/status", headers=admin_h, json={"status": "closed"})
+    assert unresolved.status_code == 422
+    resolved = client.post(
+        f"/api/admin/alerts/{alert['id']}/status",
+        headers=admin_h,
+        json={"status": "closed", "resolution_note": "Confirmed safe route and contacted rider."},
+    ).json()
+    assert resolved["status"] == "closed"
+    assert resolved["resolution_note"] == "Confirmed safe route and contacted rider."
+    assert client.get("/api/admin/alerts", headers=admin_h, params={"status_filter": "resolved"}).json()[0]["id"] == alert["id"]
 
     done = client.post(f"/api/rider/trips/{trip['id']}/complete", headers=rider_h).json()
     assert done["status"] == "completed"
@@ -137,7 +148,7 @@ def test_no_riders_returns_409(client, user_h):
     assert "car" in resp.json()["detail"]
 
 
-def test_long_stop_alert(client, user_h, rider_h):
+def test_long_stop_alert(client, user_h, rider_h, admin_h):
     trip = client.post("/api/trips", headers=user_h, json={"pickup": GULSHAN, "drop": DHANMONDI, "vehicle_type": "bike"}).json()
     client.post(f"/api/rider/offers/{trip['id']}/accept", headers=rider_h)
     client.post(f"/api/rider/trips/{trip['id']}/start", headers=rider_h)
@@ -149,6 +160,8 @@ def test_long_stop_alert(client, user_h, rider_h):
     with SessionLocal() as db:
         types = set(db.scalars(select(SafetyAlert.alert_type).where(SafetyAlert.trip_id == trip["id"])))
     assert types == {"long_stop"}
+    alert = next(a for a in client.get("/api/admin/alerts", headers=admin_h).json() if a["trip_id"] == trip["id"])
+    assert alert["severity"] == "moderate"
     client.post(f"/api/rider/trips/{trip['id']}/complete", headers=rider_h)
 
 

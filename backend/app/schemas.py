@@ -335,6 +335,7 @@ class RiderMe(BaseModel):
 
 class AlertStatusIn(BaseModel):
     status: Literal["open", "reviewed", "closed"]
+    resolution_note: str | None = Field(default=None, max_length=1000)
 
 
 class PricingRuleIn(BaseModel):
