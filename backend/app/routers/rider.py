@@ -212,6 +212,13 @@ def active(db: DB, rider: CurrentRider):
     return trip_out(db, trip, for_rider=True) if trip else None
 
 
+@router.post("/trips/{trip_id}/arrived", response_model=TripOut)
+def arrived(trip_id: str, db: DB, rider: CurrentRider):
+    trip = trip_service.arrived(db, _assigned_trip(db, rider, trip_id), rider)
+    db.commit()
+    return trip_out(db, trip, for_rider=True)
+
+
 @router.post("/trips/{trip_id}/start", response_model=TripOut)
 def start(trip_id: str, db: DB, rider: CurrentRider):
     trip = trip_service.start(db, _assigned_trip(db, rider, trip_id))
