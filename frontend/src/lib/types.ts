@@ -258,8 +258,12 @@ export interface AdminAccountTripPage {
 }
 
 export interface LiveData {
-  trips: Trip[];
+  trips: LiveTrip[];
   riders: { id: string; lat: number; lng: number; vehicle_type: VehicleType | null; busy: boolean }[];
+}
+
+export interface LiveTrip extends Trip {
+  gps_trace: [number, number][];
 }
 
 export interface SafetyAlert {

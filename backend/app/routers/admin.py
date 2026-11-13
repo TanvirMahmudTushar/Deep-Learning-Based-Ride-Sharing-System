@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.db import local_day_start, local_time, utcnow
 from app.geo import haversine_km
-from app.models import ACTIVE_TRIP_STATUSES, VEHICLE_TYPES, DemandForecast, PricingRule, PricingRuleChange, Profile, Rider, SafetyAlert, Trip
+from app.models import ACTIVE_TRIP_STATUSES, VEHICLE_TYPES, DemandForecast, PricingRule, PricingRuleChange, Profile, Rider, SafetyAlert, Trip, TripLocation
 from app.schemas import (
     AdminAccountOut,
     AdminAccountPageOut,
@@ -399,11 +399,23 @@ def suspend_rider(rider_id: str, db: DB, admin: Admin):
 
 @router.get("/trips/live")
 def live_trips(db: DB, admin: Admin):
-    trips = db.scalars(select(Trip).where(Trip.status.in_(ACTIVE_TRIP_STATUSES)).order_by(Trip.requested_at.desc()))
+    trips = db.scalars(select(Trip).where(Trip.status.in_(ACTIVE_TRIP_STATUSES)).order_by(Trip.requested_at.desc())).all()
     busy = availability.busy_rider_ids(db)
     online = db.scalars(select(Rider).where(Rider.is_online.is_(True)).options(selectinload(Rider.vehicles)))
+    trace_by_trip: dict[str, list[list[float]]] = defaultdict(list)
+    if trips:
+        locations = db.execute(
+            select(TripLocation.trip_id, TripLocation.lat, TripLocation.lng)
+            .where(TripLocation.trip_id.in_([trip.id for trip in trips]))
+            .order_by(TripLocation.trip_id, TripLocation.recorded_at, TripLocation.id)
+        )
+        for trip_id, lat, lng in locations:
+            trace_by_trip[trip_id].append([lat, lng])
     return {
-        "trips": [trip_out(db, t).model_dump(mode="json") for t in trips],
+        "trips": [
+            {**trip_out(db, t).model_dump(mode="json"), "gps_trace": trace_by_trip[t.id]}
+            for t in trips
+        ],
         "riders": [
             {
                 "id": r.id,
