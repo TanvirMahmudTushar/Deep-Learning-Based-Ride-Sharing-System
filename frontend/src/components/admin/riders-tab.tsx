@@ -168,6 +168,7 @@ export function RidersTab() {
                 <div>
                   <p className="mb-1 text-xs text-muted-foreground">Rating</p>
                   <RatingText rating={r.rating} count={r.rating_count} />
+                  <BlockedBy n={r.blocked_by} />
                 </div>
               </div>
 
@@ -290,6 +291,7 @@ export function RidersTab() {
                 </TableCell>
                 <TableCell className="text-sm">
                   <RatingText rating={r.rating} count={r.rating_count} />
+                  <BlockedBy n={r.blocked_by} />
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
@@ -313,5 +315,15 @@ export function RidersTab() {
       </Card>
       <DocumentReviewDialog rider={reviewing} onOpenChange={(open) => !open && setReviewing(null)} onChanged={() => void mutate()} />
     </div>
+  );
+}
+
+/** Passengers who blocked this rider: a hint for spotting problem riders. */
+function BlockedBy({ n }: { n?: number }) {
+  if (!n) return null;
+  return (
+    <p className="mt-0.5 text-xs text-amber-300" title="Passengers who blocked this rider">
+      Blocked by {n} {n === 1 ? "passenger" : "passengers"}
+    </p>
   );
 }

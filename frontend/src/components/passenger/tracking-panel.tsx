@@ -5,6 +5,7 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { CancelDialog } from "@/components/passenger/cancel-dialog";
+import { RiderPreferenceControls } from "@/components/passenger/rider-preference";
 import { FareBreakdownView, PaymentStatus, RateForm } from "@/components/passenger/trip-parts";
 import { TripChat } from "@/components/trip-chat";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -335,6 +336,7 @@ export function FinishedPanel({ trip, onDone }: { trip: Trip; onDone: () => void
           )}
         </div>
       )}
+      {trip.rider && <RiderPreferenceControls riderId={trip.rider.id} riderName={trip.rider.full_name} canFavourite />}
       {trip.rating == null ? (
         <RateForm tripId={trip.id} riderName={trip.rider?.full_name} onDone={onDone} onSkip={onDone} />
       ) : (
