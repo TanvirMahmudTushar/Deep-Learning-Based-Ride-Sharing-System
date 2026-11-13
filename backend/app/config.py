@@ -58,6 +58,14 @@ class Settings(BaseSettings):
     offer_timeout_seconds: int = 30
     # Passengers may cancel free of charge for this long after a rider accepts.
     late_cancel_grace_seconds: int = 120
+    # Cancelling is also free once the rider is this many minutes later than the pickup time they were given.
+    rider_late_grace_minutes: float = 5.0
+    # Rides must start and end within this distance of the city centre (city_lat, city_lng).
+    service_radius_km: float = 40.0
+    # Pickup and drop-off closer than this are refused: nobody needs a ride for a few steps.
+    min_trip_km: float = 0.3
+    # Problem reports a passenger can file on one trip, so the support queue can't be flooded.
+    max_reports_per_trip: int = 3
     match_radius_km: float = 8.0
     # Riders whose app has not sent a location for this long are not offered trips.
     rider_stale_seconds: int = 120
