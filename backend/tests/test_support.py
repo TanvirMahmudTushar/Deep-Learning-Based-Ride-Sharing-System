@@ -15,8 +15,14 @@ def _h(token: str) -> dict:
 
 def _report(client, user_h, note="Left my umbrella behind") -> dict:
     """File a report on one of the demo passenger's finished trips and return its alert."""
-    trips = client.get("/api/trips", headers=user_h).json()
-    trip = next(t for t in trips if t["status"] in ("completed", "cancelled"))
+    trips = client.get("/api/trips?limit=100", headers=user_h).json()
+    # A trip with room for another report (each trip takes a few open reports at most).
+    trip = next(
+        t
+        for t in trips
+        if t["status"] in ("completed", "cancelled")
+        and sum(r["status"] != "closed" for r in client.get(f"/api/trips/{t['id']}/reports", headers=user_h).json()) < 2
+    )
     assert client.post(f"/api/trips/{trip['id']}/report", headers=user_h, json={"category": "other", "note": note}).status_code == 201
     alerts = client.get("/api/admin/alerts", headers=user_h)  # passengers can't list alerts
     assert alerts.status_code == 403

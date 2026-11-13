@@ -35,9 +35,18 @@ def free_cancel_until(trip: Trip) -> datetime | None:
     return trip.accepted_at + timedelta(seconds=settings.late_cancel_grace_seconds)
 
 
+def rider_is_late(trip: Trip, now: datetime | None = None) -> bool:
+    """The rider hasn't arrived and is well past the pickup time the passenger was given."""
+    if trip.status != "accepted" or trip.arrived_at is not None or trip.accepted_at is None or trip.pickup_eta_min is None:
+        return False
+    promised = trip.accepted_at + timedelta(minutes=trip.pickup_eta_min + settings.rider_late_grace_minutes)
+    return (now or utcnow()) > promised
+
+
 def fee_if_cancelled_now(db: Session, trip: Trip, now: datetime | None = None) -> float:
+    now = now or utcnow()
     until = free_cancel_until(trip)
-    if until is None or (now or utcnow()) < until:
+    if until is None or now < until or rider_is_late(trip, now):
         return 0.0
     return fee_for(db, trip.vehicle_type_requested)
 
