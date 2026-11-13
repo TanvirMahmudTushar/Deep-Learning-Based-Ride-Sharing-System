@@ -1,4 +1,4 @@
-"""Passenger dashboard: ride statistics, saved places, reviews and trip export."""
+"""Passenger dashboard: ride statistics, saved places, reviews, trip export and favourite or blocked riders."""
 
 import csv
 import io
@@ -10,10 +10,10 @@ from fastapi.responses import Response
 from sqlalchemy import func, select
 
 from app.db import local_month_start, local_time, utcnow
-from app.models import VEHICLE_TYPES, Rating, SavedPlace, Trip
-from app.schemas import SavedPlaceIn, SavedPlaceOut, iso_utc
+from app.models import VEHICLE_TYPES, Rating, Rider, RiderPreference, SavedPlace, Trip
+from app.schemas import RiderPreferenceIn, SavedPlaceIn, SavedPlaceOut, iso_utc, rider_rating
 from app.security import DB, Passenger
-from app.services import cancel_fees
+from app.services import cancel_fees, rider_prefs
 from app.services.zones import describe_point
 
 router = APIRouter(prefix="/api/passenger", tags=["passenger"])
@@ -181,4 +181,80 @@ def delete_place(place_id: str, db: DB, user: Passenger):
     if place is None or place.user_id != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Place not found")
     db.delete(place)
+    db.commit()
+
+
+# --- favourite and blocked riders (#47) ---------------------------------------------------
+
+
+def _pref_out(db: DB, user_id: str, pref: RiderPreference) -> dict:
+    rider = db.get(Rider, pref.rider_id)
+    trips, last = db.execute(
+        select(func.count(Trip.id), func.max(Trip.requested_at)).where(
+            Trip.user_id == user_id, Trip.rider_id == pref.rider_id, Trip.status == "completed"
+        )
+    ).one()
+    vehicle = rider.vehicle if rider else None
+    rating, _ = rider_rating(db, pref.rider_id)
+    return {
+        "rider_id": pref.rider_id,
+        # First name only: the passenger's list never shows phone numbers or full names.
+        "name": rider.profile.full_name.split(" ")[0] if rider else "Rider",
+        "vehicle_type": vehicle.vehicle_type if vehicle else None,
+        "vehicle_model": vehicle.model if vehicle else None,
+        "rating": rating,
+        "trips_together": int(trips or 0),
+        "last_trip_at": iso_utc(last) if last else None,
+        "kind": pref.kind,
+        "reason": pref.reason or None,
+        "since": iso_utc(pref.created_at),
+    }
+
+
+@router.get("/riders")
+def list_riders(db: DB, user: Passenger):
+    """The passenger's favourite and blocked riders, newest first."""
+    prefs = db.scalars(
+        select(RiderPreference).where(RiderPreference.user_id == user.id).order_by(RiderPreference.created_at.desc())
+    ).all()
+    out = [_pref_out(db, user.id, p) for p in prefs]
+    return {"favourites": [p for p in out if p["kind"] == "favourite"], "blocked": [p for p in out if p["kind"] == "blocked"]}
+
+
+@router.put("/riders/{rider_id}")
+def set_rider_preference(rider_id: str, body: RiderPreferenceIn, db: DB, user: Passenger):
+    """Favourite or block a rider you have ridden with. Blocking a favourite replaces the favourite."""
+    if db.get(Rider, rider_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Rider not found")
+    if not rider_prefs.rode_with(db, user.id, rider_id, completed_only=body.kind == "favourite"):
+        detail = (
+            "You can favourite a rider after finishing a trip with them"
+            if body.kind == "favourite"
+            else "You can only block riders who have taken one of your trips"
+        )
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail)
+    pref = rider_prefs.get(db, user.id, rider_id)
+    limit = rider_prefs.LIMITS[body.kind]
+    if (pref is None or pref.kind != body.kind) and rider_prefs.count(db, user.id, body.kind) >= limit:
+        noun = "favourite riders" if body.kind == "favourite" else "blocked riders"
+        raise HTTPException(status.HTTP_409_CONFLICT, f"You can have up to {limit} {noun}")
+    reason = body.reason.strip() if body.kind == "blocked" else ""
+    if pref is None:
+        pref = RiderPreference(user_id=user.id, rider_id=rider_id, kind=body.kind, reason=reason, created_at=utcnow())
+        db.add(pref)
+    elif pref.kind != body.kind:
+        pref.kind, pref.reason, pref.created_at = body.kind, reason, utcnow()
+    else:
+        pref.reason = reason
+    db.commit()
+    return _pref_out(db, user.id, pref)
+
+
+@router.delete("/riders/{rider_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_rider_preference(rider_id: str, db: DB, user: Passenger):
+    """Remove a favourite or unblock a rider."""
+    pref = rider_prefs.get(db, user.id, rider_id)
+    if pref is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "This rider is not in your list")
+    db.delete(pref)
     db.commit()

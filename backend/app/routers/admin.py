@@ -29,7 +29,7 @@ from app.models import (
 from app.schemas import AlertNoteIn, AlertStatusIn, PricingRuleIn, iso_utc, rider_rating, trip_out, vehicle_out
 from app.security import DB, Admin, Staff
 from app.realtime import ADMINS, emit, hub
-from app.services import availability, cancel_fees, demand, documents
+from app.services import availability, cancel_fees, demand, documents, rider_prefs
 from app.services import trips as trip_service
 from app.services.alerts import ensure_summary
 from app.services.predictors import demand_forecaster
@@ -99,6 +99,7 @@ def riders(db: DB, admin: Admin, status_filter: str | None = None):
         q = q.where(Rider.status == status_filter)
     busy = availability.busy_rider_ids(db)
     changing = pending_change_rider_ids(db)
+    blocked_by = rider_prefs.blocked_counts(db)
     out = []
     for r in db.scalars(q):
         rating, n = rider_rating(db, r.id)
@@ -120,6 +121,8 @@ def riders(db: DB, admin: Admin, status_filter: str | None = None):
                 "vehicle": vehicle_out(r.vehicle).model_dump() if r.vehicle else None,
                 "documents_ready": documents.verification_ready(db, r)[0],
                 "vehicle_change_pending": r.id in changing,
+                # How many passengers have blocked this rider (helps spot problem riders).
+                "blocked_by": blocked_by.get(r.id, 0),
                 "joined_at": iso_utc(r.profile.created_at),
             }
         )
