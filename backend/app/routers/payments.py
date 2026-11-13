@@ -78,7 +78,7 @@ def _daily_breakdown(db: DB, rider_id: str, days: int = 7) -> list[dict]:
         elif offset == 1:
             label = "Yesterday"
         else:
-            label = d.strftime("%a, %b %-d")
+            label = f"{d:%a, %b} {d.day}"  # "%-d" only works on Linux; this also runs on Windows
         out.append(
             {
                 "date": d.isoformat(),

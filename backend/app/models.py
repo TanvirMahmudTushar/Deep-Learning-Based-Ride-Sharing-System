@@ -4,7 +4,7 @@ import json
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base, utcnow
@@ -190,6 +190,20 @@ class SavedPlace(Base):
     lat: Mapped[float] = mapped_column(Float)
     lng: Mapped[float] = mapped_column(Float)
     address: Mapped[str] = mapped_column(String(160), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class RiderPreference(Base):
+    """A passenger's favourite or blocked rider. One row per passenger and rider; riders never see it."""
+
+    __tablename__ = "rider_preferences"
+    __table_args__ = (UniqueConstraint("user_id", "rider_id", name="uq_rider_preference"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("profiles.id"), index=True)
+    rider_id: Mapped[str] = mapped_column(ForeignKey("riders.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(10))  # favourite or blocked
+    reason: Mapped[str] = mapped_column(String(120), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 

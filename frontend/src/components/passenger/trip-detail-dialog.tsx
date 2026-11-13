@@ -6,6 +6,7 @@ import { useState } from "react";
 import useSWR, { useSWRConfig } from "swr";
 import { Flag, MessageSquareReply, Receipt, RotateCcw, ShieldAlert } from "lucide-react";
 import { RideMap } from "@/components/map/ride-map";
+import { RiderPreferenceControls } from "@/components/passenger/rider-preference";
 import { FareBreakdownView, PaymentStatus, RateForm, ReportForm } from "@/components/passenger/trip-parts";
 import { RatingText, TripStatusBadge, VehicleTag } from "@/components/ride-bits";
 import { Button } from "@/components/ui/button";
@@ -163,6 +164,9 @@ function Body({ trip, onChanged }: { trip: Trip; onChanged: () => void }) {
           </div>
           <RatingText rating={trip.rider.rating} count={trip.rider.rating_count} />
         </div>
+      )}
+      {trip.rider && (trip.status === "completed" || trip.status === "cancelled") && (
+        <RiderPreferenceControls riderId={trip.rider.id} riderName={trip.rider.full_name} canFavourite={trip.status === "completed"} />
       )}
 
       {trip.status === "completed" &&
