@@ -37,6 +37,7 @@ from app.models import (
     Rating,
     Rider,
     RiderDocument,
+    SavedReply,
     Trip,
     Vehicle,
     Zone,
@@ -111,6 +112,26 @@ def _profile(email: str, name: str, role: str, password_hash: str, rng: random.R
     return Profile(full_name=name, email=email, phone=f"+8801{rng.randint(3, 9)}{rng.randint(10000000, 99999999)}", password_hash=password_hash, role=role)
 
 
+# Team replies every support agent starts with. Placeholders are filled from the case in the browser.
+DEFAULT_REPLIES = [
+    ("Lost item: contacting the rider", "lost_item",
+     "Hi {passenger_first_name}, thanks for letting us know. We're contacting the rider of your {trip_date} trip "
+     "from {pickup} to {drop} about your item and will update you here as soon as we hear back."),
+    ("Fare: under review", "fare",
+     "Hi {passenger_first_name}, we're reviewing the fare for your {trip_date} trip from {pickup} to {drop}. "
+     "If you were charged too much, we'll correct it and let you know here."),
+    ("Safety: we're on it", "safety",
+     "Hi {passenger_first_name}, thank you for telling us. Your safety matters most to us. Our team is looking into "
+     "your {trip_date} trip now and will follow up here. If you are in danger, call 999."),
+    ("Driving or behaviour: rider warned", "rider_behaviour",
+     "Hi {passenger_first_name}, we're sorry about your experience on the {trip_date} trip. We've reviewed it and "
+     "spoken to the rider. Thank you for helping us keep Cholo safe."),
+    ("Closing: resolved", None,
+     "Hi {passenger_first_name}, we've finished looking into your report about the {trip_date} trip, so we're "
+     "closing it now. Thanks for your patience. Reply in a new report if you need anything else."),
+]
+
+
 def seed_reference(db: Session) -> None:
     """Zones and pricing rules: needed in every mode, added only if missing."""
     if not db.scalar(select(Zone.id).limit(1)):
@@ -128,6 +149,8 @@ def seed_reference(db: Session) -> None:
             for vt, items in BRTA_CLASS_CODES.items()
             for code, bn in items
         )
+    if not db.scalar(select(SavedReply.id).limit(1)):
+        db.add_all(SavedReply(owner_id=None, title=t, category=c, body=b, shared=True) for t, c, b in DEFAULT_REPLIES)
     db.commit()
 
 

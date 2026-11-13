@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { toast } from "sonner";
 import { Loader2, MapPinned, MessageSquareWarning, Phone, Siren, Sparkles, Timer, UserCheck } from "lucide-react";
 import { RideMap } from "@/components/map/ride-map";
+import { SavedRepliesMenu } from "@/components/support/saved-replies";
 import { TripStatusBadge, VehicleTag } from "@/components/ride-bits";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -150,6 +151,7 @@ function Notes({ alert, busy, onPost }: { alert: SafetyAlert; busy: boolean; onP
         rows={3}
       />
       <div className="flex flex-wrap gap-2">
+        {canReply && <SavedRepliesMenu alert={alert} onPick={setText} />}
         <Button size="sm" variant="secondary" disabled={busy || !text.trim()} onClick={() => void post(false)}>
           Add internal note
         </Button>
