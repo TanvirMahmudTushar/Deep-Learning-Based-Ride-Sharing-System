@@ -491,3 +491,8 @@ class ChatOut(BaseModel):
     reply: str
     booking: BookingSuggestion | None
     source: Literal["groq", "fallback"]
+
+
+class RiderPreferenceIn(BaseModel):
+    kind: Literal["favourite", "blocked"]
+    reason: str = Field(default="", max_length=120)

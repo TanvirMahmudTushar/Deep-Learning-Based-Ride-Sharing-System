@@ -231,6 +231,8 @@ export interface AdminRider {
   joined_at: string | null;
   documents_ready: boolean;
   vehicle_change_pending: boolean;
+  /** How many passengers have blocked this rider. */
+  blocked_by?: number;
 }
 
 export interface LiveData {
@@ -558,4 +560,24 @@ export interface VehicleChange {
   reviewed_at: string | null;
   documents: { doc_type: DocumentType; label: string; document: RiderDocument | null }[];
   documents_complete: boolean;
+}
+
+export type RiderPreferenceKind = "favourite" | "blocked";
+
+export interface PassengerRiderEntry {
+  rider_id: string;
+  name: string;
+  vehicle_type: VehicleType | null;
+  vehicle_model: string | null;
+  rating: number | null;
+  trips_together: number;
+  last_trip_at: string | null;
+  kind: RiderPreferenceKind;
+  reason: string | null;
+  since: string;
+}
+
+export interface PassengerRiders {
+  favourites: PassengerRiderEntry[];
+  blocked: PassengerRiderEntry[];
 }
