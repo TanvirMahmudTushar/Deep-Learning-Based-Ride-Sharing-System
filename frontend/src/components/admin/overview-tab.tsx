@@ -104,9 +104,17 @@ export function OverviewTab() {
             value={stats.open_alerts}
             hint={stats.pending_riders ? `${stats.pending_riders} rider${stats.pending_riders > 1 ? "s" : ""} awaiting verification` : "No riders awaiting verification"}
           />
-          <Stat label="Cancellation rate · 7 days" value={formatPercent(stats.cancel_rate_7d)} hint={`${formatPercent(stats.rider_cancel_rate_7d)} by riders`} />
-          <Stat label="Avg pickup wait · 7 days" value={formatMinutes(stats.avg_pickup_wait_min_7d)} />
-          <Stat label="ETA error (MAE) · 7 days" value={stats.eta_mae_min_7d == null ? "—" : `${stats.eta_mae_min_7d} min`} hint="Baseline model; DL target is lower" />
+          <Stat
+            label="Cancellation rate · 7 days"
+            value={formatPercent(stats.cancel_rate_7d)}
+            hint={`Rider ${formatPercent(stats.rider_cancel_rate_7d)} · Passenger ${formatPercent(stats.passenger_cancel_rate_7d)}`}
+          />
+          <Stat label="Avg pickup wait · 7 days" value={formatMinutes(stats.avg_pickup_wait_min_7d)} hint="Measured from request to rider arrival" />
+          <Stat
+            label="ETA error · 7 days"
+            value={stats.eta_mae_min_7d == null ? "—" : `${stats.eta_mae_min_7d} min MAE`}
+            hint={`RMSE ${stats.eta_rmse_min_7d == null ? "—" : `${stats.eta_rmse_min_7d} min`}`}
+          />
           <Stat
             label="Weather · Dhaka"
             value={
