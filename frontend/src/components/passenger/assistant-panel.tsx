@@ -2,6 +2,7 @@
 
 import { Loader2, SendHorizontal, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { ChatText } from "@/components/chat-text";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -60,11 +61,11 @@ export function AssistantPanel({ onUseBooking }: { onUseBooking: (b: BookingSugg
           <div key={i} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
             <div
               className={cn(
-                "max-w-[85%] space-y-2 rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap",
-                m.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted",
+                "max-w-[85%] space-y-2 rounded-2xl px-3.5 py-2 text-sm",
+                m.role === "user" ? "bg-primary text-primary-foreground whitespace-pre-wrap" : "bg-muted",
               )}
             >
-              <p>{m.content}</p>
+              {m.role === "user" ? <p>{m.content}</p> : <ChatText text={m.content} />}
               {m.booking && (
                 <div className="space-y-2 rounded-lg border border-border bg-background/60 p-2.5">
                   <div className="text-xs text-muted-foreground">Suggested booking</div>
