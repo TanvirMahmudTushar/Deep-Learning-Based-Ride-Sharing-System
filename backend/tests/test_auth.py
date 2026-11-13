@@ -90,6 +90,14 @@ def test_each_role_can_open_its_own_portal(client, user_h, rider_h, admin_h):
     assert client.get("/api/admin/stats", headers=admin_h).status_code == 200
 
 
+def test_rider_block_reasons_are_admin_only(client, user_h, rider_h, support_h, admin_h):
+    path = "/api/admin/riders/not-a-rider/blocks"
+    assert client.get(path).status_code == 401
+    for headers in (user_h, rider_h, support_h):
+        assert client.get(path, headers=headers).status_code == 403
+    assert client.get(path, headers=admin_h).status_code == 404
+
+
 def test_nobody_can_sign_up_as_admin(client):
     assert _register(client, "wannabe@example.com", role="admin").status_code == 422
 

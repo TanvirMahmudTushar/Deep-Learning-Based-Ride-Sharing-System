@@ -17,7 +17,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, fetcher } from "@/lib/api";
 import { formatDateTime, formatPercent, formatTaka, VEHICLE_LABEL } from "@/lib/format";
-import type { AdminAccount, AdminAccountPage, AdminAccountTripPage, AdminRider } from "@/lib/types";
+import type { AdminAccount, AdminAccountPage, AdminAccountTripPage, AdminRider, RiderBlock } from "@/lib/types";
 import { useLiveInterval } from "@/lib/realtime";
 
 const PAGE_SIZE = 50;
@@ -447,10 +447,17 @@ export function RidersTab() {
 
 function RiderVerificationDirectory() {
   const [filter, setFilter] = useState("all");
+  const [blockedOnly, setBlockedOnly] = useState(false);
+  const [sortBy, setSortBy] = useState<"default" | "most-blocked">("default");
   const key = filter === "all" ? "/api/admin/riders" : `/api/admin/riders?status_filter=${filter}`;
   const { data: riders, error, mutate } = useSWR<AdminRider[]>(key, fetcher, { refreshInterval: useLiveInterval(5000, 30000) });
   const [busy, setBusy] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState<AdminRider | null>(null);
+  const [blockDetailsRider, setBlockDetailsRider] = useState<AdminRider | null>(null);
+  const displayedRiders = (riders ?? []).filter((rider) => !blockedOnly || (rider.blocked_by ?? 0) > 0);
+  if (sortBy === "most-blocked") {
+    displayedRiders.sort((a, b) => (b.blocked_by ?? 0) - (a.blocked_by ?? 0));
+  }
 
   async function suspend(rider: AdminRider) {
     setBusy(rider.id);
@@ -473,20 +480,45 @@ function RiderVerificationDirectory() {
             <CardTitle>Rider verification</CardTitle>
             <CardDescription>Review documents, verification status, and rider availability.</CardDescription>
           </div>
-          <Tabs value={filter} onValueChange={setFilter}>
-            <TabsList>
-              <TabsTrigger value="all">All</TabsTrigger>
-              <TabsTrigger value="pending">Pending</TabsTrigger>
-              <TabsTrigger value="verified">Verified</TabsTrigger>
-              <TabsTrigger value="suspended">Suspended</TabsTrigger>
-            </TabsList>
-          </Tabs>
+          <div className="flex flex-wrap items-center gap-3">
+            <Tabs value={filter} onValueChange={setFilter}>
+              <TabsList>
+                <TabsTrigger value="all">All</TabsTrigger>
+                <TabsTrigger value="pending">Pending</TabsTrigger>
+                <TabsTrigger value="verified">Verified</TabsTrigger>
+                <TabsTrigger value="suspended">Suspended</TabsTrigger>
+              </TabsList>
+            </Tabs>
+            <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={blockedOnly}
+                onChange={(event) => setBlockedOnly(event.currentTarget.checked)}
+              />
+              Blocked riders only
+            </label>
+            <Select value={sortBy} onValueChange={(value) => {
+              if (value === "default" || value === "most-blocked") setSortBy(value);
+            }}>
+              <SelectTrigger aria-label="Sort riders" className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="default">Default order</SelectItem>
+                <SelectItem value="most-blocked">Most blocked</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
         {error && <p role="alert" className="p-4 text-sm text-destructive">Could not load riders: {error.message}</p>}
         <div className="space-y-3 p-4 md:hidden">
           {!riders && !error && Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-36" />)}
-          {riders?.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">No riders found for this status.</p>}
-          {riders?.map((rider) => (
+          {riders && displayedRiders.length === 0 && (
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              {blockedOnly ? "No blocked riders found for this status." : "No riders found for this status."}
+            </p>
+          )}
+          {displayedRiders.map((rider) => (
             <article key={rider.id} className="space-y-3 rounded-lg border bg-background p-3.5">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
@@ -517,7 +549,7 @@ function RiderVerificationDirectory() {
                 <div>
                   <p className="mb-1 text-xs text-muted-foreground">Rating</p>
                   <RatingText rating={rider.rating} count={rider.rating_count} />
-                  <BlockedBy n={rider.blocked_by} />
+                  <BlockedBy n={rider.blocked_by} onClick={() => setBlockDetailsRider(rider)} />
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -550,8 +582,14 @@ function RiderVerificationDirectory() {
             </TableHeader>
             <TableBody>
               {!riders && !error && <TableRow><TableCell colSpan={7}><Skeleton className="h-8" /></TableCell></TableRow>}
-              {riders?.length === 0 && <TableRow><TableCell colSpan={7} className="py-10 text-center text-muted-foreground">No riders found for this status.</TableCell></TableRow>}
-              {riders?.map((rider) => (
+              {riders && displayedRiders.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
+                    {blockedOnly ? "No blocked riders found for this status." : "No riders found for this status."}
+                  </TableCell>
+                </TableRow>
+              )}
+              {displayedRiders.map((rider) => (
                 <TableRow key={rider.id}>
                   <TableCell>
                     <div className="font-medium">{rider.full_name}</div>
@@ -566,7 +604,10 @@ function RiderVerificationDirectory() {
                     {rider.status === "pending" && <div className="mt-1 text-xs text-muted-foreground">{rider.documents_ready ? "Documents approved" : "Documents to review"}</div>}
                   </TableCell>
                   <TableCell>{rider.is_online ? (rider.busy ? "On a trip" : "Online") : "Offline"}</TableCell>
-                  <TableCell><RatingText rating={rider.rating} count={rider.rating_count} /><BlockedBy n={rider.blocked_by} /></TableCell>
+                  <TableCell>
+                    <RatingText rating={rider.rating} count={rider.rating_count} />
+                    <BlockedBy n={rider.blocked_by} onClick={() => setBlockDetailsRider(rider)} />
+                  </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-1">
                       {!rider.is_simulated && <Button size="sm" variant={rider.status === "verified" ? "ghost" : "default"} onClick={() => setReviewing(rider)}><FileSearch /> {rider.status === "verified" ? "Documents" : "Review"}</Button>}
@@ -580,16 +621,54 @@ function RiderVerificationDirectory() {
         </div>
       </Card>
       <DocumentReviewDialog rider={reviewing} onOpenChange={(open) => !open && setReviewing(null)} onChanged={() => void mutate()} />
+      <RiderBlocksDialog rider={blockDetailsRider} onOpenChange={(open) => !open && setBlockDetailsRider(null)} />
     </div>
   );
 }
 
-/** Passengers who blocked this rider: a hint for spotting problem riders. */
-function BlockedBy({ n }: { n?: number }) {
+function RiderBlocksDialog({ rider, onOpenChange }: { rider: AdminRider | null; onOpenChange: (open: boolean) => void }) {
+  const { data: blocks, error, isLoading } = useSWR<RiderBlock[]>(
+    rider ? `/api/admin/riders/${rider.id}/blocks` : null,
+    fetcher,
+  );
+
+  return (
+    <Dialog open={!!rider} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Passenger blocks · {rider?.full_name ?? "Rider"}</DialogTitle>
+          <DialogDescription>Reasons are shown newest first and are only visible to admins.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          {isLoading && Array.from({ length: 3 }, (_, index) => <Skeleton key={index} className="h-20" />)}
+          {error && <p role="alert" className="text-sm text-destructive">Could not load block details: {error.message}</p>}
+          {blocks?.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">No passenger blocks found.</p>}
+          {blocks?.map((block, index) => (
+            <article key={`${block.date}-${index}`} className="space-y-2 rounded-lg border p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-medium">{block.passenger_first_name}</span>
+                <time dateTime={block.date} className="text-xs text-muted-foreground">{formatDateTime(block.date)}</time>
+              </div>
+              <p className="text-sm text-muted-foreground">{block.reason?.trim() || "No reason provided"}</p>
+            </article>
+          ))}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function BlockedBy({ n, onClick }: { n?: number; onClick: () => void }) {
   if (!n) return null;
   return (
-    <p className="mt-0.5 text-xs text-amber-300" title="Passengers who blocked this rider">
+    <button
+      type="button"
+      className="mt-0.5 block text-left text-xs text-amber-300 underline underline-offset-2 hover:text-amber-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      title="Show passenger block reasons"
+      aria-label={`Show ${n} passenger block${n === 1 ? "" : "s"}`}
+      onClick={onClick}
+    >
       Blocked by {n} {n === 1 ? "passenger" : "passengers"}
-    </p>
+    </button>
   );
 }

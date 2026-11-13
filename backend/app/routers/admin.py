@@ -25,6 +25,7 @@ from app.models import (
     PricingRuleChange,
     Profile,
     Rider,
+    RiderPreference,
     SafetyAlert,
     Trip,
     TripLocation,
@@ -36,6 +37,7 @@ from app.schemas import (
     AdminAccountTripPageOut,
     AlertStatusIn,
     PricingRuleIn,
+    RiderBlockOut,
     iso_utc,
     rider_rating,
     trip_out,
@@ -290,6 +292,25 @@ def riders(db: DB, admin: Admin, status_filter: str | None = None):
             }
         )
     return out
+
+
+@router.get("/riders/{rider_id}/blocks", response_model=list[RiderBlockOut])
+def rider_blocks(rider_id: str, db: DB, admin: Admin):
+    rider = _rider_or_404(db, rider_id)
+    rows = db.execute(
+        select(RiderPreference, Profile.full_name)
+        .join(Profile, Profile.id == RiderPreference.user_id)
+        .where(RiderPreference.rider_id == rider.id, RiderPreference.kind == "blocked")
+        .order_by(RiderPreference.created_at.desc(), RiderPreference.id.desc())
+    ).all()
+    return [
+        RiderBlockOut(
+            date=preference.created_at,
+            passenger_first_name=(full_name.strip().split(maxsplit=1) or ["Passenger"])[0],
+            reason=preference.reason or None,
+        )
+        for preference, full_name in rows
+    ]
 
 
 def _account_trip_stats(db: DB, owner_column, owner_ids: list[str], cancellation_actor: str) -> dict[str, dict[str, int | float]]:
