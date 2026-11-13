@@ -8,9 +8,24 @@ from app.config import settings
 
 _is_sqlite = settings.database_url.startswith("sqlite")
 
+
+def engine_url(url: str) -> str:
+    """Hosts hand out plain postgres:// URLs; SQLAlchemy has to be told to use the psycopg driver."""
+    for prefix in ("postgresql://", "postgres://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url[len(prefix) :]
+    return url
+
+
 engine = create_engine(
-    settings.database_url,
-    connect_args={"check_same_thread": False, "timeout": 15} if _is_sqlite else {},
+    engine_url(settings.database_url),
+    **(
+        {"connect_args": {"check_same_thread": False, "timeout": 15}}
+        if _is_sqlite
+        # Hosted Postgres: drop dead connections, stay under the pooler's limit, and avoid
+        # prepared statements, which connection poolers may not support.
+        else {"connect_args": {"prepare_threshold": None}, "pool_pre_ping": True, "pool_size": 5, "max_overflow": 5, "pool_recycle": 300}
+    ),
 )
 
 if _is_sqlite:

@@ -7,7 +7,18 @@ import { formatDateTime, formatKm, formatTaka } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { Trip } from "@/lib/types";
 
-export function TripHistory({ trips, empty, onSelect }: { trips: Trip[] | undefined; empty: string; onSelect?: (trip: Trip) => void }) {
+export function TripHistory({
+  trips,
+  empty,
+  onSelect,
+  showPeople = false,
+}: {
+  trips: Trip[] | undefined;
+  empty: string;
+  onSelect?: (trip: Trip) => void;
+  /** Show the passenger and rider names, for staff. */
+  showPeople?: boolean;
+}) {
   if (!trips) {
     return (
       <div className="space-y-2">
@@ -37,6 +48,12 @@ export function TripHistory({ trips, empty, onSelect }: { trips: Trip[] | undefi
           <div className="truncate">
             {t.pickup_address} <span className="text-muted-foreground">→</span> {t.drop_address}
           </div>
+          {showPeople && (
+            <div className="truncate text-xs text-muted-foreground">
+              Passenger: {t.passenger_name}
+              {t.rider ? ` · Rider: ${t.rider.full_name}${t.rider.vehicle ? ` (${t.rider.vehicle.plate_no})` : ""}` : ""}
+            </div>
+          )}
           <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
             <span className="flex items-center gap-3">
               <VehicleTag type={t.vehicle_type} className="text-xs" />

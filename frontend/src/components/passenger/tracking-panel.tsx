@@ -2,37 +2,70 @@
 
 import { Check, Loader2, Phone, Radar, Share2, Siren, X } from "lucide-react";
 import { useState } from "react";
+import { motion } from "framer-motion";
 import { toast } from "sonner";
+import { CancelDialog } from "@/components/passenger/cancel-dialog";
+import { RiderPreferenceControls } from "@/components/passenger/rider-preference";
 import { FareBreakdownView, PaymentStatus, RateForm } from "@/components/passenger/trip-parts";
+import { TripChat } from "@/components/trip-chat";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { RatingText, TripStatusBadge, VehicleIcon, VehicleTag } from "@/components/ride-bits";
+import { SPRING_UI } from "@/components/ui/motion";
 import { api } from "@/lib/api";
 import { formatKm, formatMinutes, formatTaka, VEHICLE_LABEL } from "@/lib/format";
 import { haversineKm } from "@/lib/geo";
 import { cn } from "@/lib/utils";
 import type { Trip } from "@/lib/types";
 
-const STEPS = [
-  { key: "requested", label: "Matching" },
-  { key: "accepted", label: "Pickup" },
-  { key: "ongoing", label: "On trip" },
-  { key: "completed", label: "Arrived" },
-] as const;
-
 /** Bangladesh national emergency number. */
 const EMERGENCY_NUMBER = "999";
 
-function Steps({ status }: { status: Trip["status"] }) {
-  const current = STEPS.findIndex((s) => s.key === status);
+function Steps({ trip }: { trip: Trip }) {
+  const steps = [
+    { key: "requested", label: "Matching", active: trip.status === "requested", done: trip.status !== "requested" },
+    {
+      key: "accepted",
+      label: trip.arrived_at ? "Rider arrived" : "Pickup",
+      active: trip.status === "accepted",
+      done: trip.status === "ongoing" || trip.status === "completed",
+    },
+    { key: "ongoing", label: "On trip", active: trip.status === "ongoing", done: trip.status === "completed" },
+    { key: "completed", label: "Arrived", active: trip.status === "completed", done: false },
+  ];
+
   return (
     <ol className="grid grid-cols-4 gap-1.5" aria-label="Trip progress">
-      {STEPS.map((s, i) => (
+      {steps.map((s) => (
         <li key={s.key} className="space-y-1.5">
-          <div className={cn("h-1 rounded-full", i <= current ? "bg-foreground" : "bg-muted")} />
-          <div className={cn("text-[11px]", i === current ? "text-foreground" : "text-muted-foreground")}>{s.label}</div>
+          <div
+            className={cn(
+              "h-1 rounded-full transition-all duration-300",
+              s.active
+                ? s.key === "accepted" && trip.arrived_at
+                  ? "bg-emerald-400"
+                  : "bg-foreground"
+                : s.done
+                  ? "bg-foreground/70"
+                  : "bg-muted"
+            )}
+          />
+          <div
+            className={cn(
+              "text-[11px] truncate transition-colors",
+              s.active
+                ? s.key === "accepted" && trip.arrived_at
+                  ? "font-semibold text-emerald-400"
+                  : "font-semibold text-foreground"
+                : s.done
+                  ? "text-foreground/70"
+                  : "text-muted-foreground"
+            )}
+          >
+            {s.label}
+          </div>
         </li>
       ))}
     </ol>
@@ -40,6 +73,9 @@ function Steps({ status }: { status: Trip["status"] }) {
 }
 
 function TripSummary({ trip }: { trip: Trip }) {
+  // What the passenger hands over in cash: the fare plus any earlier fee (or minus a credit).
+  const adjustment = trip.status === "cancelled" ? 0 : (trip.fee_adjustment ?? 0);
+  const fare = trip.fare_final ?? trip.fare_estimate;
   return (
     <div className="space-y-2 text-sm">
       <div className="flex gap-3">
@@ -53,9 +89,16 @@ function TripSummary({ trip }: { trip: Trip }) {
       <div className="flex justify-between border-t pt-2">
         <VehicleTag type={trip.vehicle_type} />
         <span className="tabular-nums">
-          {formatKm(trip.distance_km)} · <span className="font-semibold">{formatTaka(trip.fare_final ?? trip.fare_estimate)}</span>
+          {formatKm(trip.distance_km)} · <span className="font-semibold">{formatTaka(Math.max(0, fare + adjustment))}</span>
         </span>
       </div>
+      {adjustment !== 0 && (
+        <p className="text-xs text-muted-foreground">
+          {adjustment > 0
+            ? `Includes a ${formatTaka(adjustment)} late-cancellation fee from an earlier ride.`
+            : `After your ${formatTaka(-adjustment)} credit.`}
+        </p>
+      )}
       {trip.price_reason && <p className="text-xs text-muted-foreground">{trip.price_reason}</p>}
     </div>
   );
@@ -119,12 +162,16 @@ function SafetyControls({ trip, onChanged }: { trip: Trip; onChanged: () => void
         </Alert>
       )}
       <div className="grid grid-cols-2 gap-2">
-        <Button variant="outline" onClick={share}>
-          <Share2 /> Share trip
-        </Button>
-        <Button variant="destructive" onClick={() => setOpen(true)} disabled={trip.sos_active}>
-          <Siren /> {trip.sos_active ? "Alert sent" : "Emergency"}
-        </Button>
+        <motion.div whileTap={{ scale: 0.97 }} transition={SPRING_UI}>
+          <Button variant="outline" className="w-full h-11 font-medium" onClick={share}>
+            <Share2 className="mr-1.5 size-4" /> Share trip
+          </Button>
+        </motion.div>
+        <motion.div whileTap={{ scale: 0.97 }} transition={SPRING_UI}>
+          <Button variant="destructive" className="w-full h-11 font-medium" onClick={() => setOpen(true)} disabled={trip.sos_active}>
+            <Siren className="mr-1.5 size-4" /> {trip.sos_active ? "Alert sent" : "Emergency"}
+          </Button>
+        </motion.div>
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
@@ -137,14 +184,18 @@ function SafetyControls({ trip, onChanged }: { trip: Trip; onChanged: () => void
           </DialogHeader>
           <Textarea placeholder="What's happening? (optional)" value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} />
           <DialogFooter className="gap-2 sm:justify-between">
-            <Button variant="outline" asChild>
-              <a href={`tel:${EMERGENCY_NUMBER}`}>
-                <Phone /> Call {EMERGENCY_NUMBER}
-              </a>
-            </Button>
-            <Button variant="destructive" onClick={sendSos} disabled={sending}>
-              {sending ? <Loader2 className="animate-spin" /> : <Siren />} Send alert
-            </Button>
+            <motion.div whileTap={{ scale: 0.97 }} transition={SPRING_UI}>
+              <Button variant="outline" className="h-11" asChild>
+                <a href={`tel:${EMERGENCY_NUMBER}`}>
+                  <Phone className="mr-1.5 size-4" /> Call {EMERGENCY_NUMBER}
+                </a>
+              </Button>
+            </motion.div>
+            <motion.div whileTap={{ scale: 0.97 }} transition={SPRING_UI}>
+              <Button variant="destructive" className="h-11 font-semibold" onClick={sendSos} disabled={sending}>
+                {sending ? <Loader2 className="animate-spin" /> : <Siren className="mr-1.5 size-4" />} Send alert
+              </Button>
+            </motion.div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -153,22 +204,10 @@ function SafetyControls({ trip, onChanged }: { trip: Trip; onChanged: () => void
 }
 
 export function TrackingPanel({ trip, onChanged }: { trip: Trip; onChanged: () => void }) {
-  const [cancelling, setCancelling] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
   const rider = trip.rider;
   const riderPos = rider?.lat != null && rider.lng != null ? { lat: rider.lat, lng: rider.lng } : null;
-
-  async function cancel() {
-    setCancelling(true);
-    try {
-      await api(`/api/trips/${trip.id}/cancel`, { method: "POST" });
-      toast("Ride cancelled");
-      onChanged();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not cancel");
-    } finally {
-      setCancelling(false);
-    }
-  }
+  const pickupEta = trip.live_eta_min ?? trip.pickup_eta_min;
 
   return (
     <div className="space-y-5">
@@ -176,7 +215,7 @@ export function TrackingPanel({ trip, onChanged }: { trip: Trip; onChanged: () =
         <TripStatusBadge status={trip.status} />
         <span className="text-xs text-muted-foreground">Trip ETA {formatMinutes(trip.predicted_eta_min)}</span>
       </div>
-      <Steps status={trip.status} />
+      <Steps trip={trip} />
 
       {trip.status === "requested" && (
         <div className="flex items-start gap-3 rounded-lg border p-4">
@@ -189,10 +228,12 @@ export function TrackingPanel({ trip, onChanged }: { trip: Trip; onChanged: () =
       )}
 
       {trip.status === "accepted" && trip.arrived_at && (
-        <Alert>
-          <Check />
-          <AlertTitle>Your rider has arrived</AlertTitle>
-          <AlertDescription>Look for {rider?.vehicle ? rider.vehicle.plate_no : "your rider"} at the pickup point.</AlertDescription>
+        <Alert className="border-emerald-500/40 bg-emerald-500/10">
+          <Check className="size-4 text-emerald-400" />
+          <AlertTitle className="text-emerald-400 font-semibold">Your rider has arrived</AlertTitle>
+          <AlertDescription className="text-foreground">
+            Look for {rider?.vehicle ? `${rider.vehicle.model} (${rider.vehicle.plate_no})` : "your rider"} at the pickup point.
+          </AlertDescription>
         </Alert>
       )}
 
@@ -222,13 +263,21 @@ export function TrackingPanel({ trip, onChanged }: { trip: Trip; onChanged: () =
           )}
           {riderPos && trip.status === "accepted" && !trip.arrived_at && (
             <p className="text-sm text-muted-foreground">
-              Rider is {formatKm(haversineKm(riderPos, trip.pickup))} away · estimated pickup {formatMinutes(trip.pickup_eta_min)}
+              Rider is {formatKm(haversineKm(riderPos, trip.pickup))} away · about {formatMinutes(pickupEta)} to pickup
+              {trip.rider_late && " · running late, so you can cancel for free"}
             </p>
           )}
           {riderPos && trip.status === "ongoing" && (
-            <p className="text-sm text-muted-foreground">{formatKm(haversineKm(riderPos, trip.drop))} to your destination</p>
+            <p className="text-sm text-muted-foreground">
+              {formatKm(haversineKm(riderPos, trip.drop))} to your destination
+              {trip.live_eta_min != null && ` · about ${formatMinutes(trip.live_eta_min)} to go`}
+            </p>
           )}
         </div>
+      )}
+
+      {rider && (trip.status === "accepted" || trip.status === "ongoing") && (
+        <TripChat basePath={`/api/trips/${trip.id}`} otherName={rider.full_name.split(" ")[0]} canSend />
       )}
 
       {(trip.status === "accepted" || trip.status === "ongoing") && <SafetyControls trip={trip} onChanged={onChanged} />}
@@ -236,10 +285,13 @@ export function TrackingPanel({ trip, onChanged }: { trip: Trip; onChanged: () =
       <TripSummary trip={trip} />
 
       {(trip.status === "requested" || trip.status === "accepted") && (
-        <Button variant="ghost" className="w-full text-destructive hover:text-destructive" onClick={cancel} disabled={cancelling}>
-          {cancelling ? <Loader2 className="animate-spin" /> : <X />} Cancel ride
-        </Button>
+        <motion.div whileTap={{ scale: 0.97 }} transition={SPRING_UI}>
+          <Button variant="ghost" className="w-full h-11 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setCancelOpen(true)}>
+            <X className="mr-1.5 size-4" /> Cancel ride
+          </Button>
+        </motion.div>
       )}
+      <CancelDialog trip={trip} open={cancelOpen} onOpenChange={setCancelOpen} onCancelled={onChanged} />
     </div>
   );
 }
@@ -250,6 +302,13 @@ export function FinishedPanel({ trip, onDone }: { trip: Trip; onDone: () => void
       <div className="space-y-4">
         <TripStatusBadge status="cancelled" />
         <p className="text-sm text-muted-foreground">{trip.cancel_reason ?? "This ride was cancelled."}</p>
+        {trip.cancel_fee != null && (
+          <Alert>
+            <AlertDescription>
+              You cancelled after your rider was on the way, so {formatTaka(trip.cancel_fee)} will be added to your next ride.
+            </AlertDescription>
+          </Alert>
+        )}
         <TripSummary trip={trip} />
         <Button className="w-full" onClick={onDone}>
           Book another ride
@@ -277,8 +336,18 @@ export function FinishedPanel({ trip, onDone }: { trip: Trip; onDone: () => void
         <div className="rounded-lg bg-muted/50 p-3">
           <div className="mb-2 text-xs font-medium text-muted-foreground">Receipt</div>
           <FareBreakdownView breakdown={trip.fare_breakdown} />
+          {!!trip.fee_adjustment && (
+            <div className="mt-1.5 flex justify-between gap-3 text-sm">
+              <span className="text-muted-foreground">{trip.fee_adjustment > 0 ? "Late-cancellation fee from an earlier ride" : "Credit from an earlier ride"}</span>
+              <span className="tabular-nums">
+                {trip.fee_adjustment > 0 ? "+" : "−"}
+                {formatTaka(Math.abs(trip.fee_adjustment))}
+              </span>
+            </div>
+          )}
         </div>
       )}
+      {trip.rider && <RiderPreferenceControls riderId={trip.rider.id} riderName={trip.rider.full_name} canFavourite />}
       {trip.rating == null ? (
         <RateForm tripId={trip.id} riderName={trip.rider?.full_name} onDone={onDone} onSkip={onDone} />
       ) : (

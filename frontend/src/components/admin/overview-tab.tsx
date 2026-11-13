@@ -22,8 +22,8 @@ export function OverviewTab() {
   const trips = live?.trips ?? [];
   const selectedTrip = trips.find((trip) => trip.id === selectedTripId);
   const selectedEta = selectedTrip?.status === "accepted"
-    ? selectedTrip.pickup_eta_min ?? selectedTrip.predicted_eta_min
-    : selectedTrip?.predicted_eta_min;
+    ? selectedTrip.live_eta_min ?? selectedTrip.pickup_eta_min ?? selectedTrip.predicted_eta_min
+    : selectedTrip?.live_eta_min ?? selectedTrip?.predicted_eta_min;
 
   const markers: MapMarker[] = (live?.riders ?? []).map((r) => ({
     id: r.id,
@@ -86,7 +86,6 @@ export function OverviewTab() {
         ...trips.flatMap((trip) => [...trip.route, ...trip.approach, toTuple(trip.pickup), toTuple(trip.drop)]),
         ...(live?.riders ?? []).map((rider) => [rider.lat, rider.lng] as [number, number]),
       ];
-
   return (
     <div className="space-y-4">
       {!stats ? (

@@ -1,7 +1,9 @@
-from pydantic import field_validator
+import secrets
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-DEFAULT_JWT_SECRET = "dev-only-secret-change-me-in-production-0000"
+# The old built-in default. It is public in the repo's history, so tokens signed with it could be forged.
+_PUBLISHED_JWT_SECRET = "dev-only-secret-change-me-in-production-0000"
 
 
 class Settings(BaseSettings):
@@ -9,8 +11,12 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=("../.env", ".env"), extra="ignore")
 
     database_url: str = "sqlite:///./ridesharing.db"
-    jwt_secret: str = DEFAULT_JWT_SECRET
+    jwt_secret: str = ""
+    jwt_secret_generated: bool = False
     jwt_expire_minutes: int = 60 * 24
+    # Failed logins for one email from one address before it is locked out for a while.
+    login_max_failures: int = 5
+    login_lockout_minutes: int = 15
     cors_origins: list[str] = []
     # Any localhost port by default, so the frontend works whichever port `next dev` picks.
     cors_origin_regex: str | None = r"http://(localhost|127\.0\.0\.1)(:\d+)?"
@@ -50,6 +56,16 @@ class Settings(BaseSettings):
     simulator_accept_delay_seconds: float = 3.0
 
     offer_timeout_seconds: int = 30
+    # Passengers may cancel free of charge for this long after a rider accepts.
+    late_cancel_grace_seconds: int = 120
+    # Cancelling is also free once the rider is this many minutes later than the pickup time they were given.
+    rider_late_grace_minutes: float = 5.0
+    # Rides must start and end within this distance of the city centre (city_lat, city_lng).
+    service_radius_km: float = 40.0
+    # Pickup and drop-off closer than this are refused: nobody needs a ride for a few steps.
+    min_trip_km: float = 0.3
+    # Problem reports a passenger can file on one trip, so the support queue can't be flooded.
+    max_reports_per_trip: int = 3
     match_radius_km: float = 8.0
     # Riders whose app has not sent a location for this long are not offered trips.
     rider_stale_seconds: int = 120
@@ -65,11 +81,15 @@ class Settings(BaseSettings):
     upload_dir: str = "./uploads"
     max_upload_mb: float = 5.0
 
-    @field_validator("jwt_secret", mode="before")
-    @classmethod
-    def _blank_jwt_secret(cls, v: str | None) -> str:
-        # A blank JWT_SECRET= (as in .env.example) means "not set".
-        return v or DEFAULT_JWT_SECRET
+    # TEMPORARY TESTING OTP: replace with a real SMS/OTP provider before production.
+    default_test_otp: str = "000000"
+
+    def model_post_init(self, _context: object) -> None:
+        # Without a real secret, sign with a random one: everyone is logged out on restart, but
+        # nobody can forge a token. A blank JWT_SECRET= (as in .env.example) means "not set".
+        self.jwt_secret_generated = self.jwt_secret in ("", _PUBLISHED_JWT_SECRET)
+        if self.jwt_secret_generated:
+            self.jwt_secret = secrets.token_urlsafe(48)
 
     @property
     def simulator_enabled(self) -> bool:

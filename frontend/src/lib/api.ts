@@ -47,7 +47,8 @@ export async function api<T>(path: string, init: RequestInit & { json?: unknown;
   if (raw && resp.ok) return (await resp.blob()) as T;
   const body = resp.status === 204 ? null : await resp.json().catch(() => null);
   if (!resp.ok) {
-    if (resp.status === 401 && token) clearSession();
+    // Only if that token is still the current one: a reply sent just before a password change must not log the user out.
+    if (resp.status === 401 && token && getToken() === token) clearSession();
     throw new ApiError(resp.status, detailMessage(body, `Request failed (${resp.status})`));
   }
   return body as T;

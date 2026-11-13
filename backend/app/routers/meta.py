@@ -1,6 +1,9 @@
 from fastapi import APIRouter
+from sqlalchemy import select
 
+from app.brta import BRTA_CLASS_CODES, BRTA_REGIONS
 from app.config import settings
+from app.models import BRTAClassCode, BRTARegion
 from app.security import DB
 from app.services.groq_client import groq_client
 from app.services.predictors import registry
@@ -31,3 +34,19 @@ def zones(db: DB):
 def models():
     """Which prediction model currently backs each component (baselines until DL models are trained)."""
     return [{"component": k, "name": m.name, "kind": m.kind, "description": m.description} for k, m in registry.items()]
+
+
+@router.get("/brta")
+def brta_specs(db: DB):
+    regions = db.execute(select(BRTARegion.code, BRTARegion.bengali_text).order_by(BRTARegion.id)).all()
+    class_codes = db.execute(
+        select(BRTAClassCode.code, BRTAClassCode.bengali_text, BRTAClassCode.vehicle_type).order_by(BRTAClassCode.id)
+    ).all()
+    if not regions:
+        regions = BRTA_REGIONS
+    if not class_codes:
+        class_codes = [(c, bn, vt) for vt, items in BRTA_CLASS_CODES.items() for c, bn in items]
+    return {
+        "regions": [{"code": r[0], "bengali": r[1]} for r in regions],
+        "class_codes": [{"code": c[0], "bengali": c[1], "vehicle_type": c[2]} for c in class_codes],
+    }
