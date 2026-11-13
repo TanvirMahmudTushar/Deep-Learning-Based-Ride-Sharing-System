@@ -57,11 +57,13 @@ function PassengerPortal() {
 
   const estimateKey = !active && pickup && drop ? (["/api/trips/estimate", pickup, drop] as const) : null;
   const {
-    data: estimate,
+    data: lastEstimate,
     error: estimateError,
     isLoading: estimateLoading,
     isValidating,
   } = useSWR(estimateKey, estimateFetcher, { keepPreviousData: true, refreshInterval: 30000, revalidateOnFocus: false });
+  // The previous route's fares stay up while a new estimate loads, but never next to an error for the new route.
+  const estimate = estimateError ? undefined : lastEstimate;
 
   function pick(which: "pickup" | "drop", p: PlacePoint) {
     if (which === "pickup") {

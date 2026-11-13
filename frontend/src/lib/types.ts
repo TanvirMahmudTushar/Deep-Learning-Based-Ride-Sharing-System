@@ -152,6 +152,8 @@ export interface Trip {
   /** For an accepted trip: when free cancellation ends, and the fee after that. */
   free_cancel_until?: string | null;
   late_cancel_fee?: number | null;
+  /** The rider is well past their pickup time, so cancelling is free. */
+  rider_late?: boolean;
   /** Minutes to the next stop from the rider's latest position. */
   live_eta_min?: number | null;
 }

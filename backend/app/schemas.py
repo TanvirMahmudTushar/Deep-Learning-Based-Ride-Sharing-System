@@ -226,6 +226,8 @@ class TripOut(BaseModel):
     # For an accepted trip: when free cancellation ends, and the fee after that. Hidden from riders.
     free_cancel_until: UTCDateTime | None = None
     late_cancel_fee: float | None = None
+    # The rider is well past their pickup time, so the passenger can cancel for free.
+    rider_late: bool = False
     # Minutes to the next stop (pickup, then drop-off) from the rider's latest position.
     live_eta_min: float | None = None
 
@@ -337,6 +339,7 @@ def trip_out(db: Session, trip: Trip, include_route: bool = True, for_rider: boo
         free_cancel_until=None if for_rider else cancel_fees.free_cancel_until(trip),
         late_cancel_fee=None if for_rider or trip.status != "accepted" else cancel_fees.fee_for(db, trip.vehicle_type_requested),
         live_eta_min=live_eta_min(trip),
+        rider_late=not for_rider and cancel_fees.rider_is_late(trip),
     )
 
 

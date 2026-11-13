@@ -44,6 +44,7 @@ export function CancelPolicy({ trip }: { trip: Trip }) {
   const now = useNow(until != null);
   if (trip.status === "requested") return <p className="text-sm text-muted-foreground">No rider has accepted yet, so cancelling is free.</p>;
   if (until == null || trip.late_cancel_fee == null) return null;
+  if (trip.rider_late) return <p className="text-sm text-muted-foreground">Your rider is running late, so you can cancel for free.</p>;
   if (now < until) {
     return (
       <p className="text-sm text-muted-foreground">

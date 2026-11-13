@@ -60,6 +60,16 @@ def active_trip_for_rider(db: Session, rider_id: str) -> Trip | None:
     )
 
 
+def check_points(pickup: Point, drop: Point) -> None:
+    """Refuse rides outside the service area, and pickup and drop-off at (almost) the same spot."""
+    city = (settings.city_lat, settings.city_lng)
+    for point, name in ((pickup, "pickup"), (drop, "drop-off")):
+        if haversine_km(city, point) > settings.service_radius_km:
+            raise TripError(422, f"Cholo only operates in and around Dhaka. Choose a {name} inside the city.")
+    if haversine_km(pickup, drop) < settings.min_trip_km:
+        raise TripError(422, f"Pickup and drop-off are too close together. Choose a drop-off at least {settings.min_trip_km * 1000:.0f} m away.")
+
+
 def create_trip(
     db: Session,
     user: Profile,
@@ -71,6 +81,7 @@ def create_trip(
 ) -> Trip:
     if active_trip_for_user(db, user.id):
         raise TripError(409, "You already have an active trip")
+    check_points(pickup, drop)
 
     route = get_route(pickup, drop)
     q = pricing.quote(db, pickup, route, vehicle_type)

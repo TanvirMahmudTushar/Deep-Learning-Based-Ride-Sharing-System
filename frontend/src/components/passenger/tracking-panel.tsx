@@ -73,6 +73,9 @@ function Steps({ trip }: { trip: Trip }) {
 }
 
 function TripSummary({ trip }: { trip: Trip }) {
+  // What the passenger hands over in cash: the fare plus any earlier fee (or minus a credit).
+  const adjustment = trip.status === "cancelled" ? 0 : (trip.fee_adjustment ?? 0);
+  const fare = trip.fare_final ?? trip.fare_estimate;
   return (
     <div className="space-y-2 text-sm">
       <div className="flex gap-3">
@@ -86,9 +89,16 @@ function TripSummary({ trip }: { trip: Trip }) {
       <div className="flex justify-between border-t pt-2">
         <VehicleTag type={trip.vehicle_type} />
         <span className="tabular-nums">
-          {formatKm(trip.distance_km)} · <span className="font-semibold">{formatTaka(trip.fare_final ?? trip.fare_estimate)}</span>
+          {formatKm(trip.distance_km)} · <span className="font-semibold">{formatTaka(Math.max(0, fare + adjustment))}</span>
         </span>
       </div>
+      {adjustment !== 0 && (
+        <p className="text-xs text-muted-foreground">
+          {adjustment > 0
+            ? `Includes a ${formatTaka(adjustment)} late-cancellation fee from an earlier ride.`
+            : `After your ${formatTaka(-adjustment)} credit.`}
+        </p>
+      )}
       {trip.price_reason && <p className="text-xs text-muted-foreground">{trip.price_reason}</p>}
     </div>
   );
@@ -254,6 +264,7 @@ export function TrackingPanel({ trip, onChanged }: { trip: Trip; onChanged: () =
           {riderPos && trip.status === "accepted" && !trip.arrived_at && (
             <p className="text-sm text-muted-foreground">
               Rider is {formatKm(haversineKm(riderPos, trip.pickup))} away · about {formatMinutes(pickupEta)} to pickup
+              {trip.rider_late && " · running late, so you can cancel for free"}
             </p>
           )}
           {riderPos && trip.status === "ongoing" && (
