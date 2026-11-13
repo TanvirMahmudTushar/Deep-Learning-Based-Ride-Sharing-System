@@ -57,11 +57,13 @@ function PassengerPortal() {
 
   const estimateKey = !active && pickup && drop ? (["/api/trips/estimate", pickup, drop] as const) : null;
   const {
-    data: estimate,
+    data: lastEstimate,
     error: estimateError,
     isLoading: estimateLoading,
     isValidating,
   } = useSWR(estimateKey, estimateFetcher, { keepPreviousData: true, refreshInterval: 30000, revalidateOnFocus: false });
+  // The previous route's fares stay up while a new estimate loads, but never next to an error for the new route.
+  const estimate = estimateError ? undefined : lastEstimate;
 
   function pick(which: "pickup" | "drop", p: PlacePoint) {
     if (which === "pickup") {
@@ -136,14 +138,24 @@ function PassengerPortal() {
   if (shown) {
     markers.push({ id: "pickup", kind: "pickup", position: toTuple(shown.pickup), label: shown.pickup_address });
     markers.push({ id: "drop", kind: "drop", position: toTuple(shown.drop), label: shown.drop_address });
-    lines.push({ id: "route", points: shown.route, color: ROUTE_COLOR });
-    if (shown.status === "accepted") lines.push({ id: "approach", points: shown.approach, color: VEHICLE_COLOR[shown.vehicle_type], dashed: true, weight: 3 });
+
+    if (shown.status === "accepted") {
+      if (shown.approach && shown.approach.length > 0) {
+        lines.push({ id: "approach", points: shown.approach, color: VEHICLE_COLOR[shown.vehicle_type] ?? "#38bdf8", weight: 4 });
+      }
+      lines.push({ id: "route", points: shown.route, color: "#9ca3af", dashed: true, weight: 3 });
+    } else if (shown.status === "ongoing") {
+      lines.push({ id: "route", points: shown.route, color: VEHICLE_COLOR[shown.vehicle_type] ?? ROUTE_COLOR, weight: 4 });
+    } else {
+      lines.push({ id: "route", points: shown.route, color: ROUTE_COLOR });
+    }
+
     const r = shown.rider;
     if (r?.lat != null && r.lng != null && shown.status !== "completed" && shown.status !== "cancelled") {
       markers.push({ id: "rider", kind: "rider", position: [r.lat, r.lng], vehicleType: r.vehicle?.vehicle_type, live: true, label: r.full_name });
     }
     fitTo = [toTuple(shown.pickup), toTuple(shown.drop), ...(shown.status === "accepted" ? shown.approach.slice(0, 1) : [])];
-    fitKey = `${shown.id}-${shown.status === "accepted" ? "a" : "t"}`;
+    fitKey = `${shown.id}-${shown.status}-${shown.arrived_at ? "arrived" : "enroute"}`;
   } else {
     if (pickup) markers.push({ id: "pickup", kind: "pickup", position: toTuple(pickup), label: pickup.label });
     if (drop) markers.push({ id: "drop", kind: "drop", position: toTuple(drop), label: drop.label });

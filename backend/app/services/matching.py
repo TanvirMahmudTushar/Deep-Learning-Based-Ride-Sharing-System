@@ -3,6 +3,10 @@
 score = pickup ETA (min) + CANCEL_PENALTY_MIN * P(cancel). Lower is better, so a rider who is
 two minutes further away but much less likely to cancel can outrank the nearest rider. The
 proposal's system-level baseline (nearest available driver) is CANCEL_PENALTY_MIN = 0.
+
+Passenger preferences (#47) sit on top: riders the passenger blocked are never candidates, and the
+passenger's favourites among the candidates are ranked first (each group still ordered by score).
+The stored score is left as computed, so model evaluation is not affected.
 """
 
 from sqlalchemy import case, func, select
@@ -12,7 +16,7 @@ from app.config import settings
 from app.db import utcnow
 from app.models import MatchScore, Rider, Trip
 from app.realtime import emit
-from app.services import availability
+from app.services import availability, rider_prefs
 from app.services.predictors import cancellation_predictor, eta_predictor, is_peak
 from app.services.routing import DETOUR_FACTOR
 
@@ -22,7 +26,7 @@ CANCEL_PENALTY_MIN = 20.0
 def rider_cancel_rates(db: Session, rider_ids: list[str]) -> dict[str, float]:
     if not rider_ids:
         return {}
-    rows = db.execute(
+    trip_rows = db.execute(
         select(
             Trip.rider_id,
             func.count(),
@@ -31,14 +35,26 @@ def rider_cancel_rates(db: Session, rider_ids: list[str]) -> dict[str, float]:
         .where(Trip.rider_id.in_(rider_ids))
         .group_by(Trip.rider_id)
     ).all()
+    decline_rows = db.execute(
+        select(MatchScore.rider_id, func.count())
+        .where(MatchScore.rider_id.in_(rider_ids), MatchScore.status == "declined")
+        .group_by(MatchScore.rider_id)
+    ).all()
+    totals: dict[str, list[int]] = {rid: [int(total), int(cancelled or 0)] for rid, total, cancelled in trip_rows}
+    for rid, declined in decline_rows:
+        bucket = totals.setdefault(rid, [0, 0])
+        bucket[0] += int(declined)
+        bucket[1] += int(declined)
     # Laplace smoothing so a rider with no history gets a modest prior instead of 0.
-    return {rid: (cancelled + 0.5) / (total + 10) for rid, total, cancelled in rows}
+    return {rid: (bad + 0.5) / (total + 10) for rid, (total, bad) in totals.items()}
 
 
 def rank_candidates(db: Session, trip: Trip) -> list[MatchScore]:
     tried = set(db.scalars(select(MatchScore.rider_id).where(MatchScore.trip_id == trip.id)))
     pickup = (trip.pickup_lat, trip.pickup_lng)
-    riders = availability.free_riders_near(db, pickup, trip.vehicle_type_requested, settings.match_radius_km, exclude=tried)
+    blocked = rider_prefs.blocked_ids(db, trip.user_id)
+    favourites = rider_prefs.favourite_ids(db, trip.user_id)
+    riders = availability.free_riders_near(db, pickup, trip.vehicle_type_requested, settings.match_radius_km, exclude=tried | blocked)
     rates = rider_cancel_rates(db, [r.id for r in riders])
     now = utcnow()
 
@@ -50,7 +66,7 @@ def rank_candidates(db: Session, trip: Trip) -> list[MatchScore]:
             pickup_km=pickup_km, trip_km=trip.distance_km, rider_cancel_rate=rates.get(r.id, 0.05), peak=is_peak(now)
         )
         scored.append((eta + CANCEL_PENALTY_MIN * p_cancel, eta, p_cancel, r))
-    scored.sort(key=lambda s: s[0])
+    scored.sort(key=lambda s: (s[3].id not in favourites, s[0]))
 
     start_rank = len(tried) + 1
     rows = [
@@ -64,7 +80,8 @@ def rank_candidates(db: Session, trip: Trip) -> list[MatchScore]:
 
 def offer_next(db: Session, trip: Trip) -> bool:
     """Offer the trip to the best remaining candidate. Returns False when nobody is left."""
-    busy = availability.busy_rider_ids(db) - {trip.offered_rider_id}
+    # A rider blocked after the ranking was made (from another trip) is skipped too.
+    busy = (availability.busy_rider_ids(db) - {trip.offered_rider_id}) | rider_prefs.blocked_ids(db, trip.user_id)
     for attempt in range(2):
         candidates = db.scalars(
             select(MatchScore).where(MatchScore.trip_id == trip.id, MatchScore.status == "candidate").order_by(MatchScore.rank)

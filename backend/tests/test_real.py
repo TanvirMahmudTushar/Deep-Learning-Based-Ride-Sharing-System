@@ -138,13 +138,13 @@ def test_document_upload_review_and_access(client, admin_h, rider_h):
     reg = client.post(
         "/api/auth/register",
         json={
-            "full_name": "Doc Rider", "email": "doc.rider@example.com", "phone": "+8801733333333", "password": "secret1",
+            "full_name": "Doc Rider", "email": "doc.rider@example.com", "phone": "+8801733333333", "password": "secret123",
             "role": "rider", "license_no": "DK-77", "vehicle_type": "bike", "plate_no": "DHAKA METRO-HA 11-2222", "vehicle_model": "Yamaha FZ",
         },
     ).json()
     h = {"Authorization": f"Bearer {reg['token']}"}
     overview = client.get("/api/rider/documents", headers=h).json()
-    assert not overview["ready"] and len(overview["missing"]) == 3
+    assert not overview["ready"] and len(overview["missing"]) == 4
 
     png = placeholder_png("licence")
     bad = client.post("/api/rider/documents", headers=h, data={"doc_type": "license"}, files={"file": ("fake.png", b"not an image", "image/png")})
@@ -153,7 +153,7 @@ def test_document_upload_review_and_access(client, admin_h, rider_h):
     assert wrong_type.status_code == 422
 
     ids = {}
-    for doc_type in ("license", "registration", "photo"):
+    for doc_type in ("license", "insurance", "registration", "photo"):
         r = client.post("/api/rider/documents", headers=h, data={"doc_type": doc_type}, files={"file": (f"{doc_type}.png", png, "image/png")})
         assert r.status_code == 201, r.text
         ids[doc_type] = r.json()["id"]
@@ -170,7 +170,7 @@ def test_document_upload_review_and_access(client, admin_h, rider_h):
 
     # Re-upload replaces the rejected version.
     new = client.post("/api/rider/documents", headers=h, data={"doc_type": "photo"}, files={"file": ("p2.png", png, "image/png")}).json()
-    for doc_id in (ids["license"], ids["registration"], new["id"]):
+    for doc_id in (ids["license"], ids["insurance"], ids["registration"], new["id"]):
         client.post(f"/api/admin/documents/{doc_id}/review", headers=admin_h, json={"status": "approved"})
     assert client.get("/api/rider/me", headers=h).json()["documents_ready"] is True
 
@@ -242,3 +242,17 @@ def test_pending_payment_survives_reload(client, user_h, rider_h):
     client.post(f"/api/rider/trips/{trip['id']}/collect", headers=rider_h)
     following = client.get("/api/rider/pending-payment", headers=rider_h).json()
     assert following is None or following["id"] != trip["id"]  # older uncollected trips may remain
+
+
+def test_rider_earnings_daily_and_demand_hints(client, rider_h):
+    earnings = client.get("/api/rider/earnings", headers=rider_h).json()
+    assert len(earnings["daily"]) == 7
+    assert earnings["daily"][0]["label"] == "Today"
+    assert sum(d["trips"] for d in earnings["daily"]) >= earnings["today"]["trips"]
+
+    hints = client.get("/api/rider/demand-hints", headers=rider_h, params=GULSHAN).json()
+    assert hints["vehicle_type"] == "bike"
+    assert len(hints["zones"]) == 12
+    assert hints["zones"][0]["expected_requests"] >= hints["zones"][-1]["expected_requests"]
+    assert all(z["distance_km"] is not None for z in hints["zones"])
+    assert all(z["demand_level"] in ("low", "normal", "high", "very high") for z in hints["zones"])

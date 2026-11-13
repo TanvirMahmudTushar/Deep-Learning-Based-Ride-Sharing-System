@@ -4,7 +4,7 @@ import json
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base, utcnow
@@ -25,8 +25,12 @@ class Profile(Base):
     phone: Mapped[str] = mapped_column(String(32))
     email: Mapped[str] = mapped_column(String(160), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(100))
-    role: Mapped[str] = mapped_column(String(10))  # user, rider, admin
+    role: Mapped[str] = mapped_column(String(10))  # user, rider, admin, support
     account_status: Mapped[str | None] = mapped_column(String(10), default="active")
+    # Support agents only: pending until an admin approves, revoked if access is removed.
+    approval_status: Mapped[str | None] = mapped_column(String(10))  # pending, approved, revoked
+    phone_verified: Mapped[bool | None] = mapped_column(Boolean, default=False)
+    avatar_doc_id: Mapped[str | None] = mapped_column(String(36))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     rider: Mapped["Rider | None"] = relationship(back_populates="profile", uselist=False)
@@ -50,7 +54,8 @@ class Rider(Base):
 
     @property
     def vehicle(self) -> "Vehicle | None":
-        return self.vehicles[0] if self.vehicles else None
+        """The vehicle the rider drives now; replaced vehicles keep their row (old trips point to them) but are retired."""
+        return next((v for v in self.vehicles if v.retired_at is None), None)
 
 
 class Vehicle(Base):
@@ -61,7 +66,11 @@ class Vehicle(Base):
     vehicle_type: Mapped[str] = mapped_column(String(8))  # bike, cng, car
     plate_no: Mapped[str] = mapped_column(String(32))
     model: Mapped[str] = mapped_column(String(60))
+    color: Mapped[str | None] = mapped_column(String(32))
+    registration_no: Mapped[str | None] = mapped_column(String(64))
     verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Set when an approved vehicle change replaces this vehicle.
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     rider: Mapped[Rider] = relationship(back_populates="vehicles")
 
@@ -73,6 +82,23 @@ class Zone(Base):
     name: Mapped[str] = mapped_column(String(60))
     center_lat: Mapped[float] = mapped_column(Float)
     center_lng: Mapped[float] = mapped_column(Float)
+
+
+class BRTARegion(Base):
+    __tablename__ = "brta_regions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    bengali_text: Mapped[str] = mapped_column(String(80))
+
+
+class BRTAClassCode(Base):
+    __tablename__ = "brta_class_codes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(10), index=True)
+    bengali_text: Mapped[str] = mapped_column(String(40))
+    vehicle_type: Mapped[str] = mapped_column(String(8), index=True)  # bike, cng, car
 
 
 class Trip(Base):
@@ -103,6 +129,12 @@ class Trip(Base):
     actual_duration_min: Mapped[float | None] = mapped_column(Float)
     cancelled_by: Mapped[str | None] = mapped_column(String(10))  # user, rider, system
     cancel_reason: Mapped[str | None] = mapped_column(String(160))
+    # Late-cancellation fee charged for this trip, and what happened to it (see services/cancel_fees.py).
+    cancel_fee: Mapped[float | None] = mapped_column(Float)
+    cancel_fee_status: Mapped[str | None] = mapped_column(String(12))  # owed, paid, waived, credited, credit_used
+    fee_settled_by: Mapped[str | None] = mapped_column(String(36))  # the later ride carrying this fee
+    # On a later ride: earlier fees (positive) or credits (negative) added to what the passenger pays.
+    fee_adjustment: Mapped[float | None] = mapped_column(Float)
 
     # Matching state: the rider currently being offered this trip.
     offered_rider_id: Mapped[str | None] = mapped_column(ForeignKey("riders.id"))
@@ -159,6 +191,20 @@ class SavedPlace(Base):
     lat: Mapped[float] = mapped_column(Float)
     lng: Mapped[float] = mapped_column(Float)
     address: Mapped[str] = mapped_column(String(160), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class RiderPreference(Base):
+    """A passenger's favourite or blocked rider. One row per passenger and rider; riders never see it."""
+
+    __tablename__ = "rider_preferences"
+    __table_args__ = (UniqueConstraint("user_id", "rider_id", name="uq_rider_preference"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("profiles.id"), index=True)
+    rider_id: Mapped[str] = mapped_column(ForeignKey("riders.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(10))  # favourite or blocked
+    reason: Mapped[str] = mapped_column(String(120), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
@@ -225,8 +271,11 @@ class SafetyAlert(Base):
     resolution_note: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(10), default="open")  # open, reviewed, closed
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    # The admin or support agent handling this alert, so two people don't work on the same one.
+    assigned_to: Mapped[str | None] = mapped_column(ForeignKey("profiles.id"))
 
     trip: Mapped[Trip] = relationship()
+    notes: Mapped[list["AlertNote"]] = relationship(back_populates="alert", order_by="AlertNote.created_at")
 
     @property
     def details(self) -> dict:
@@ -243,6 +292,8 @@ class PricingRule(Base):
     per_min: Mapped[float] = mapped_column(Float)
     min_fare: Mapped[float] = mapped_column(Float)
     max_multiplier: Mapped[float] = mapped_column(Float)
+    # Late-cancellation fee; None falls back to the default in services/cancel_fees.py.
+    cancel_fee: Mapped[float | None] = mapped_column(Float)
     # Platform share of each fare, in percent; None falls back to settings.default_commission_pct.
     commission_pct: Mapped[float | None] = mapped_column(Float)
 
@@ -266,6 +317,36 @@ class WeatherHourly(Base):
     temperature_c: Mapped[float] = mapped_column(Float)
     precipitation_mm: Mapped[float] = mapped_column(Float)
     source: Mapped[str] = mapped_column(String(20), default="open-meteo")
+
+
+class TripMessage(Base):
+    """Chat between a passenger and their rider during a trip."""
+
+    __tablename__ = "trip_messages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    trip_id: Mapped[str] = mapped_column(ForeignKey("trips.id"), index=True)
+    sender_id: Mapped[str] = mapped_column(ForeignKey("profiles.id"))
+    sender_role: Mapped[str] = mapped_column(String(10))  # user (passenger) or rider
+    body: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class AlertNote(Base):
+    """A note on a safety alert. Notes are internal unless `for_passenger` is set, which makes them a
+    reply the passenger can read on their own report. Never shown to the rider."""
+
+    __tablename__ = "alert_notes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    alert_id: Mapped[str] = mapped_column(ForeignKey("safety_alerts.id"), index=True)
+    author_id: Mapped[str] = mapped_column(ForeignKey("profiles.id"))
+    body: Mapped[str] = mapped_column(Text)
+    for_passenger: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    alert: Mapped[SafetyAlert] = relationship(back_populates="notes")
+    author: Mapped[Profile] = relationship()
 
 
 class Payment(Base):
@@ -301,7 +382,7 @@ class Settlement(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
-DOCUMENT_TYPES = ("license", "registration", "photo")
+DOCUMENT_TYPES = ("license", "insurance", "registration", "photo")
 
 
 class RiderDocument(Base):
@@ -318,4 +399,27 @@ class RiderDocument(Base):
     review_note: Mapped[str | None] = mapped_column(String(300))
     reviewed_by: Mapped[str | None] = mapped_column(ForeignKey("profiles.id"))
     uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # Set for documents that belong to a vehicle change request rather than the rider's own verification.
+    vehicle_change_id: Mapped[str | None] = mapped_column(ForeignKey("vehicle_changes.id"), index=True)
+
+
+VEHICLE_CHANGE_DOC_TYPES = ("registration", "vehicle_photo")
+
+
+class VehicleChange(Base):
+    """A rider's request to switch to a different vehicle. The current vehicle keeps operating until an
+    admin approves the new one, which needs its own registration and photo."""
+
+    __tablename__ = "vehicle_changes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    rider_id: Mapped[str] = mapped_column(ForeignKey("riders.id"), index=True)
+    vehicle_type: Mapped[str] = mapped_column(String(8))
+    plate_no: Mapped[str] = mapped_column(String(32))
+    model: Mapped[str] = mapped_column(String(60))
+    status: Mapped[str] = mapped_column(String(10), default="pending")  # pending, approved, rejected, cancelled
+    review_note: Mapped[str | None] = mapped_column(String(300))
+    reviewed_by: Mapped[str | None] = mapped_column(ForeignKey("profiles.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime)

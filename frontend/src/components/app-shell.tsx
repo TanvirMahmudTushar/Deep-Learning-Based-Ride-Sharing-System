@@ -2,12 +2,16 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import useSWR from "swr";
 import { LottieSvg } from "lottie-react";
-import { Bell, BellOff, BellRing, LogOut } from "lucide-react";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Bell, BellOff, BellRing, KeyRound, LogOut } from "lucide-react";
+import { OPEN_PROFILE_EVENT, RiderProfile } from "@/components/rider/rider-profile";
+import { ChangePasswordForm } from "@/components/change-password-form";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,13 +23,16 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import logoAnimation from "@/assets/cholo-logo.json";
+import { fetcher } from "@/lib/api";
 import { useNotificationPermission } from "@/lib/notifications";
+import { useAuthFileUrl } from "@/lib/server";
+import type { RiderMe } from "@/lib/types";
 import { useRealtime } from "@/lib/realtime";
 import { clearSession, homeFor, useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
 import type { Profile, Role } from "@/lib/types";
 
-const PORTAL_NAME: Record<Role, string> = { user: "Passenger", rider: "Rider", admin: "Admin" };
+const PORTAL_NAME: Record<Role, string> = { user: "Passenger", rider: "Rider", admin: "Admin", support: "Support agent" };
 
 export function Logo({ className }: { className?: string }) {
   return (
@@ -35,11 +42,24 @@ export function Logo({ className }: { className?: string }) {
   );
 }
 
+export function Wordmark({ className }: { className?: string }) {
+  return (
+    <span role="img" aria-label="Cholo" className={cn("wordmark", className)}>
+      <span aria-hidden className="wordmark-part" data-text="Chol">
+        Chol
+      </span>
+      <span aria-hidden className="wordmark-part wordmark-pin" data-text="o">
+        o
+      </span>
+    </span>
+  );
+}
+
 export function Brand() {
   return (
-    <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight">
+    <Link href="/" className="flex items-center gap-2">
       <Logo className="h-9 w-16" />
-      Cholo
+      <Wordmark className="text-2xl" />
     </Link>
   );
 }
@@ -54,32 +74,83 @@ function initials(name: string) {
 
 function UserMenu({ profile }: { profile: Profile }) {
   const router = useRouter();
+  const [changingPassword, setChangingPassword] = useState(false);
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" className="h-9 gap-2 px-2">
-          <Avatar className="size-7">
-            <AvatarFallback className="text-xs">{initials(profile.full_name)}</AvatarFallback>
-          </Avatar>
-          <span className="hidden text-sm sm:inline">{profile.full_name}</span>
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuLabel className="flex flex-col gap-0.5">
-          <span>{profile.full_name}</span>
-          <span className="text-xs font-normal text-muted-foreground">{profile.email}</span>
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onSelect={() => {
-            clearSession();
-            router.replace("/login");
-          }}
-        >
-          <LogOut /> Log out
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" className="h-9 gap-2 px-2">
+            <Avatar className="size-7">
+              <AvatarFallback className="text-xs">{initials(profile.full_name)}</AvatarFallback>
+            </Avatar>
+            <span className="hidden text-sm sm:inline">{profile.full_name}</span>
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuLabel className="flex flex-col gap-0.5">
+            <span>{profile.full_name}</span>
+            <span className="text-xs font-normal text-muted-foreground">{profile.email}</span>
+          </DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => setChangingPassword(true)}>
+            <KeyRound /> Change password
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={() => {
+              clearSession();
+              router.replace("/login");
+            }}
+          >
+            <LogOut /> Log out
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <Dialog open={changingPassword} onOpenChange={setChangingPassword}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Change password</DialogTitle>
+            <DialogDescription>Changing it logs you out on your other devices.</DialogDescription>
+          </DialogHeader>
+          <ChangePasswordForm onDone={() => setChangingPassword(false)} />
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+/** Rider: the avatar opens the full profile page instead of a menu. */
+function RiderProfileButton({ profile }: { profile: Profile }) {
+  const [open, setOpen] = useState(false);
+  const [section, setSection] = useState<string | undefined>();
+  const { data: riderMe } = useSWR<RiderMe>("/api/rider/me", fetcher);
+  const avatarUrl = useAuthFileUrl(riderMe?.avatar_url ?? profile.avatar_url);
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      setSection((e as CustomEvent<string | undefined>).detail);
+      setOpen(true);
+    };
+    window.addEventListener(OPEN_PROFILE_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_PROFILE_EVENT, onOpen);
+  }, []);
+  return (
+    <>
+      <Button
+        variant="ghost"
+        className="h-9 gap-2 px-2"
+        aria-label="Open profile"
+        onClick={() => {
+          setSection(undefined);
+          setOpen(true);
+        }}
+      >
+        <Avatar className="size-8">
+          {avatarUrl && <AvatarImage src={avatarUrl} alt={profile.full_name} />}
+          <AvatarFallback className="text-xs">{initials(profile.full_name)}</AvatarFallback>
+        </Avatar>
+        <span className="hidden text-sm sm:inline">{profile.full_name}</span>
+      </Button>
+      {open && <RiderProfile initialSection={section} onClose={() => setOpen(false)} />}
+    </>
   );
 }
 
@@ -156,10 +227,11 @@ export function PortalShell({
 }) {
   const session = useSession();
   const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
-    if (session.status === "anonymous") router.replace("/login");
-  }, [session.status, router]);
+    if (session.status === "anonymous") router.replace(`/login?next=${encodeURIComponent(pathname)}`);
+  }, [session.status, router, pathname]);
 
   if (session.status !== "authenticated") {
     return (
@@ -178,7 +250,7 @@ export function PortalShell({
   const { profile } = session;
   return (
     <div className="flex h-dvh flex-col">
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b bg-background/80 px-4 backdrop-blur">
+      <header className="flex h-14 shrink-0 items-center gap-3 border-b bg-background/80 px-4 backdrop-blur print:hidden">
         <Brand />
         <Badge variant="secondary" className="hidden sm:inline-flex">
           {PORTAL_NAME[role]} portal
@@ -186,9 +258,13 @@ export function PortalShell({
         {nav && <PortalNav items={nav} />}
         <div className="ml-auto flex items-center gap-2">
           {actions}
-          <LiveIndicator />
-          <NotificationButton />
-          <UserMenu profile={profile} />
+          {(role !== "support" || profile.approval_status === "approved") && (
+            <>
+              <LiveIndicator />
+              <NotificationButton />
+            </>
+          )}
+          {role === "rider" ? <RiderProfileButton profile={profile} /> : <UserMenu profile={profile} />}
         </div>
       </header>
       {profile.role === role ? (
@@ -197,7 +273,7 @@ export function PortalShell({
         <div className="grid flex-1 place-items-center p-6 text-center">
           <div className="space-y-3">
             <p className="text-muted-foreground">
-              You are signed in as a {PORTAL_NAME[profile.role].toLowerCase()}. This page is the {PORTAL_NAME[role].toLowerCase()} portal.
+              You are signed in as {profile.role === "admin" ? "an" : "a"} {PORTAL_NAME[profile.role].toLowerCase()}. This page is the {PORTAL_NAME[role].toLowerCase()} portal.
             </p>
             <Button asChild>
               <Link href={homeFor(profile.role)}>Go to the {PORTAL_NAME[profile.role].toLowerCase()} portal</Link>

@@ -243,11 +243,21 @@ export function BookingPanel(props: Props) {
             </div>
           )}
 
+          {!!estimate.outstanding_fee && (
+            <Alert>
+              <AlertDescription>
+                {estimate.outstanding_fee > 0
+                  ? `A ${formatTaka(estimate.outstanding_fee)} late-cancellation fee from an earlier ride will be added to this fare.`
+                  : `Your ${formatTaka(-estimate.outstanding_fee)} credit will be taken off this fare.`}
+              </AlertDescription>
+            </Alert>
+          )}
+
           <Button size="lg" className="w-full" onClick={props.onBook} disabled={props.booking || !selected || selected.nearest_pickup_eta_min == null}>
             {props.booking && <Loader2 className="animate-spin" />}
             {selected?.nearest_pickup_eta_min == null
               ? `No ${selected ? VEHICLE_LABEL[selected.vehicle_type] : ""} riders available`
-              : `Book ${VEHICLE_LABEL[vehicleType]} · ${formatTaka(selected.fare)}`}
+              : `Book ${VEHICLE_LABEL[vehicleType]} · ${formatTaka(Math.max(0, selected.fare + (estimate.outstanding_fee ?? 0)))}`}
           </Button>
         </>
       )}

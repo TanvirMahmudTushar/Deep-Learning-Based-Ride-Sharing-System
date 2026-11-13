@@ -16,7 +16,7 @@ from app.db import utcnow
 from app.geo import Point, haversine_km
 from app.models import ACTIVE_TRIP_STATUSES, Profile, Rider, Trip, TripLocation
 from app.realtime import ADMINS, emit
-from app.services import alerts, matching, payments, pricing
+from app.services import alerts, cancel_fees, matching, payments, pricing
 from app.services.predictors import eta_predictor
 from app.services.routing import get_route
 from app.services.zones import describe_point, nearest_zone
@@ -60,6 +60,16 @@ def active_trip_for_rider(db: Session, rider_id: str) -> Trip | None:
     )
 
 
+def check_points(pickup: Point, drop: Point) -> None:
+    """Refuse rides outside the service area, and pickup and drop-off at (almost) the same spot."""
+    city = (settings.city_lat, settings.city_lng)
+    for point, name in ((pickup, "pickup"), (drop, "drop-off")):
+        if haversine_km(city, point) > settings.service_radius_km:
+            raise TripError(422, f"Cholo only operates in and around Dhaka. Choose a {name} inside the city.")
+    if haversine_km(pickup, drop) < settings.min_trip_km:
+        raise TripError(422, f"Pickup and drop-off are too close together. Choose a drop-off at least {settings.min_trip_km * 1000:.0f} m away.")
+
+
 def create_trip(
     db: Session,
     user: Profile,
@@ -71,6 +81,7 @@ def create_trip(
 ) -> Trip:
     if active_trip_for_user(db, user.id):
         raise TripError(409, "You already have an active trip")
+    check_points(pickup, drop)
 
     route = get_route(pickup, drop)
     q = pricing.quote(db, pickup, route, vehicle_type)
@@ -100,6 +111,7 @@ def create_trip(
     if not matching.offer_next(db, trip):
         db.rollback()
         raise TripError(409, f"No {vehicle_type} riders are available nearby right now. Try another vehicle type.")
+    cancel_fees.reserve_for(db, trip)
     emit(db, ADMINS, "live.changed", coalesce="admin-live")
     return trip
 
@@ -125,6 +137,8 @@ def expire_stale_offers(db: Session) -> int:
 def accept(db: Session, trip: Trip, rider: Rider) -> Trip:
     if trip.status != "requested" or trip.offered_rider_id != rider.id:
         raise TripError(409, "This trip is no longer offered to you")
+    if not rider.vehicle or rider.vehicle.vehicle_type != trip.vehicle_type_requested:
+        raise TripError(409, "This trip does not match your vehicle type")
     now = utcnow()
     trip.status = "accepted"
     trip.rider_id = rider.id
@@ -134,7 +148,12 @@ def accept(db: Session, trip: Trip, rider: Rider) -> Trip:
     trip.sim_progress_km = 0.0
     matching.set_offer_status(db, trip, rider.id, "accepted")
 
-    approach = get_route((rider.current_lat, rider.current_lng), (trip.pickup_lat, trip.pickup_lng))
+    rider_point = (
+        (rider.current_lat, rider.current_lng)
+        if rider.current_lat is not None and rider.current_lng is not None
+        else (trip.pickup_lat, trip.pickup_lng)
+    )
+    approach = get_route(rider_point, (trip.pickup_lat, trip.pickup_lng))
     trip.approach = approach.points
     trip.pickup_eta_min = eta_predictor.predict_eta(approach.distance_km, trip.vehicle_type_requested, now)
     db.flush()
@@ -149,6 +168,19 @@ def decline(db: Session, trip: Trip, rider: Rider) -> None:
         raise TripError(409, "This trip is no longer offered to you")
     matching.set_offer_status(db, trip, rider.id, "declined")
     advance_offer(db, trip)
+
+
+def arrived(db: Session, trip: Trip, rider: Rider | None = None) -> Trip:
+    if trip.status != "accepted":
+        raise TripError(409, "Only an accepted trip can be marked as arrived")
+    if rider and trip.rider_id != rider.id:
+        raise TripError(403, "You are not assigned to this trip")
+    if trip.arrived_at is None:
+        trip.arrived_at = utcnow()
+        db.flush()
+        plate = trip.vehicle.plate_no if trip.vehicle else "your rider"
+        _trip_event(db, trip, notify_passenger=("Your rider has arrived", f"Look for {plate} at the pickup point."))
+    return trip
 
 
 def start(db: Session, trip: Trip) -> Trip:
@@ -175,6 +207,7 @@ def complete(db: Session, trip: Trip) -> Trip:
         trip.rider.current_lat, trip.rider.current_lng = trip.drop_lat, trip.drop_lng
     db.flush()
     payment = payments.create_for_trip(db, trip)
+    cancel_fees.settle(db, trip)
     if trip.rider and trip.rider.is_simulated:
         payments.mark_collected(payment)  # simulated riders "collect" instantly
     _trip_event(db, trip, notify_passenger=("You have arrived", f"Please pay ৳{payment.amount:.0f} in cash to your rider."))
@@ -185,6 +218,10 @@ def cancel(db: Session, trip: Trip, by: str, reason: str | None = None) -> Trip:
     if trip.status not in ("requested", "accepted"):
         raise TripError(409, "This trip can no longer be cancelled")
     offered = trip.offered_rider_id if trip.status == "requested" else None
+    # Work out a late fee before the status changes; earlier fees this ride carried wait for the next one.
+    if by == "user":
+        cancel_fees.charge(db, trip)
+    cancel_fees.release(db, trip)
     if offered:
         matching.set_offer_status(db, trip, offered, "expired")
     trip.status = "cancelled"

@@ -264,7 +264,7 @@ def test_registered_deep_learning_demand_model_is_used(client, admin_h, monkeypa
 
 def test_register_rider_needs_verification(client):
     body = {
-        "full_name": "New Rider", "email": "new.rider@example.com", "phone": "+8801700000000", "password": "secret1",
+        "full_name": "New Rider", "email": "new.rider@example.com", "phone": "+8801700000000", "password": "secret123",
         "role": "rider", "license_no": "DK-1", "vehicle_type": "cng", "plate_no": "dhaka metro-tha 11-1111", "vehicle_model": "Bajaj RE",
     }
     resp = client.post("/api/auth/register", json=body)
@@ -283,3 +283,150 @@ def test_assistant_fallback_suggests_booking(client, user_h):
     assert body["booking"]["pickup_zone"] == "Banani"
     assert body["booking"]["drop_zone"] == "Motijheel"
     assert body["booking"]["vehicle_type"] == "car"
+
+
+def test_offer_details_decline_feeds_cancel_rate_and_vehicle_guard(client, user_h, rider_h):
+    client.post("/api/rider/online", headers=rider_h, json={"is_online": True, "lat": 23.7810, "lng": 90.4150})
+    before_rate = client.get("/api/rider/me", headers=rider_h).json()["cancel_rate"]
+
+    trip = client.post("/api/trips", headers=user_h, json={"pickup": GULSHAN, "drop": DHANMONDI, "vehicle_type": "bike"}).json()
+    offer = client.get("/api/rider/offer", headers=rider_h).json()
+    assert offer is not None
+    assert offer["trip"]["id"] == trip["id"]
+    assert offer["trip"]["passenger_name"]
+    assert offer["trip"]["pickup_eta_min"] is not None
+    assert offer["pickup_distance_km"] >= 0
+
+    assert client.post(f"/api/rider/offers/{trip['id']}/decline", headers=rider_h).status_code == 200
+    after_rate = client.get("/api/rider/me", headers=rider_h).json()["cancel_rate"]
+    assert after_rate > before_rate
+
+    mismatched = client.post("/api/trips", headers=user_h, json={"pickup": GULSHAN, "drop": DHANMONDI, "vehicle_type": "bike"}).json()
+    with SessionLocal() as db:
+        db.execute(update(Trip).where(Trip.id == mismatched["id"]).values(vehicle_type_requested="car"))
+        db.commit()
+
+    bad_accept = client.post(f"/api/rider/offers/{mismatched['id']}/accept", headers=rider_h)
+    assert bad_accept.status_code == 409 and "vehicle type" in bad_accept.json()["detail"].lower()
+    assert client.get("/api/rider/offer", headers=rider_h).json() is None
+
+
+def test_rider_otp_signup_and_onboarding_vehicle(client):
+    req = client.post("/api/auth/otp/request", json={"email": "otp.rider@example.com", "phone": "+8801799999999"})
+    assert req.status_code == 200
+    assert client.post("/api/auth/otp/verify", json={"phone": "+8801799999999", "otp": "123456"}).status_code == 400
+    assert client.post("/api/auth/otp/verify", json={"phone": "+8801799999999", "otp": "000000"}).status_code == 200
+
+    reg = client.post(
+        "/api/auth/register",
+        json={
+            "full_name": "OTP Rider",
+            "email": "otp.rider@example.com",
+            "phone": "+8801799999999",
+            "password": "secret123",
+            "role": "rider",
+            "otp": "000000",
+        },
+    )
+    assert reg.status_code == 201, reg.text
+    data = reg.json()
+    assert data["profile"]["phone_verified"] is True
+    h = {"Authorization": f"Bearer {data['token']}"}
+
+    me_before = client.get("/api/rider/me", headers=h).json()
+    assert me_before["status"] == "pending" and me_before["vehicle"] is None
+
+    saved = client.post(
+        "/api/rider/onboarding/vehicle",
+        headers=h,
+        json={
+            "vehicle_type": "car",
+            "model": "Toyota Axio",
+            "plate_no": "dhaka metro-ga 22-3344",
+            "color": "Pearl White",
+            "registration_no": "reg-998877",
+            "license_no": "DK-9988",
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    v = saved.json()["vehicle"]
+    assert v["vehicle_type"] == "car"
+    assert v["plate_no"] == "DHAKA METRO GA-22-3344"
+    assert v["color"] == "Pearl White"
+    assert v["registration_no"] == "REG-998877"
+    assert v["verified"] is False
+    assert saved.json()["license_no"] == "DK-9988"
+    assert saved.json()["earnings_today"] == 0 and saved.json()["trips_completed"] == 0
+
+    from app.services.documents import placeholder_png
+
+    selfie = client.post(
+        "/api/rider/documents",
+        headers=h,
+        data={"doc_type": "photo", "use_as_profile_photo": "true"},
+        files={"file": ("selfie.png", placeholder_png("selfie"), "image/png")},
+    )
+    assert selfie.status_code == 201, selfie.text
+    assert client.get("/api/rider/me", headers=h).json()["avatar_url"] == f"/api/documents/{selfie.json()['id']}/file"
+
+
+def test_brta_dataset_and_plate_format(client):
+    res = client.get("/api/brta")
+    assert res.status_code == 200
+    data = res.json()
+    assert len(data["regions"]) == 69
+    assert any(r["code"] == "DHAKA METRO" and r["bengali"] == "ঢাকা মেট্রো" for r in data["regions"])
+    assert any(r["code"] == "SHERPUR" and r["bengali"] == "শেরপুর" for r in data["regions"])
+    assert any(c["code"] == "HA" and c["bengali"] == "হ" and c["vehicle_type"] == "bike" for c in data["class_codes"])
+    assert any(c["code"] == "KA" and c["bengali"] == "ক" and c["vehicle_type"] == "car" for c in data["class_codes"])
+    assert any(c["code"] == "THA" and c["bengali"] == "থ" and c["vehicle_type"] == "cng" for c in data["class_codes"])
+
+
+def test_trip_navigation_status_steps_and_tracking(client, user_h, rider_h):
+    with SessionLocal() as db:
+        db.execute(update(Rider).where(Rider.is_simulated.is_(True)).values(is_online=False))
+        db.commit()
+
+    online = client.post("/api/rider/online", headers=rider_h, json={"is_online": True, "lat": 23.7815, "lng": 90.4140})
+    assert online.status_code == 200
+
+    trip = client.post("/api/trips", headers=user_h, json={"pickup": GULSHAN, "drop": DHANMONDI, "vehicle_type": "bike"}).json()
+    trip_id = trip["id"]
+
+    # 1. Accept trip: approach route is generated
+    accepted = client.post(f"/api/rider/offers/{trip_id}/accept", headers=rider_h).json()
+    assert accepted["status"] == "accepted"
+    assert accepted["arrived_at"] is None
+    assert len(accepted["approach"]) >= 2
+    assert len(accepted["route"]) >= 2
+
+    # 2. Live tracking while heading to pickup: GPS ping updates rider location and tracks
+    ping = client.post("/api/rider/location", headers=rider_h, json={"lat": 23.7850, "lng": 90.4150, "speed_kmh": 25.0, "accuracy_m": 5})
+    assert ping.status_code == 200
+
+    # 3. Arrived step: Rider explicitly marks arrived
+    arrived = client.post(f"/api/rider/trips/{trip_id}/arrived", headers=rider_h).json()
+    assert arrived["status"] == "accepted"
+    assert arrived["arrived_at"] is not None
+
+    # Idempotent arrival
+    arrived_again = client.post(f"/api/rider/trips/{trip_id}/arrived", headers=rider_h).json()
+    assert arrived_again["arrived_at"] == arrived["arrived_at"]
+
+    # 4. Start trip: status becomes ongoing
+    started = client.post(f"/api/rider/trips/{trip_id}/start", headers=rider_h).json()
+    assert started["status"] == "ongoing"
+    assert started["started_at"] is not None
+
+    # Calling arrived on ongoing trip returns 409
+    assert client.post(f"/api/rider/trips/{trip_id}/arrived", headers=rider_h).status_code == 409
+
+    # 5. Live tracking during trip
+    ping2 = client.post("/api/rider/location", headers=rider_h, json={"lat": 23.7700, "lng": 90.3900, "speed_kmh": 30.0, "accuracy_m": 8})
+    assert ping2.status_code == 200
+
+    # 6. Complete trip
+    completed = client.post(f"/api/rider/trips/{trip_id}/complete", headers=rider_h).json()
+    assert completed["status"] == "completed"
+    assert completed["completed_at"] is not None
+

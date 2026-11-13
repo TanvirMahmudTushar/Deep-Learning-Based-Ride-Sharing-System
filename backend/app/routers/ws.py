@@ -17,7 +17,14 @@ AUTH_TIMEOUT_SECONDS = 10
 def _authenticate(token: str | None) -> tuple[str, str] | None:
     with SessionLocal() as db:
         profile = profile_from_token(db, token)
-        return (profile.id, profile.role) if profile and not account_is_suspended(profile) else None
+        if profile is None:
+            return None
+        if account_is_suspended(profile):
+            return None
+        # A support agent gets live events only once an admin has approved them.
+        if profile.role == "support" and profile.approval_status != "approved":
+            return None
+        return profile.id, profile.role
 
 
 @router.websocket("/ws")

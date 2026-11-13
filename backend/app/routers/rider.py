@@ -1,20 +1,23 @@
 """Rider portal endpoints: availability, offers and the trip lifecycle from the driver's side."""
 
+from collections import defaultdict
 from datetime import timedelta
 
 from fastapi import APIRouter, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
+from app.brta import normalize_plate
 from app.config import settings
 from app.db import local_day_start, utcnow
 from app.geo import haversine_km
-from app.models import Payment, Rider, Trip
-from app.schemas import AutoDriveIn, LocationIn, OfferOut, OnlineIn, RiderMe, TripOut, rider_rating, trip_out, vehicle_out
-from app.security import DB, CurrentRider
+from app.models import DemandForecast, Payment, Profile, Rider, Trip, Vehicle
+from app.schemas import RiderContactIn, RiderOnboardingVehicleIn, AutoDriveIn, LocationIn, MessageIn, OfferOut, OnlineIn, RiderMe, TripOut, iso_utc, rider_rating, trip_out, vehicle_out
+from app.security import DB, CurrentRider, verify_password
 from app.realtime import ADMINS, emit
-from app.services import documents, payments
+from app.services import availability, demand, documents, messages, payments, pricing, weather
 from app.services import trips as trip_service
 from app.services.matching import rider_cancel_rates
+from app.services.zones import all_zones
 
 router = APIRouter(prefix="/api/rider", tags=["rider"])
 
@@ -35,12 +38,26 @@ def _offered_trip(db: DB, rider: Rider, trip_id: str) -> Trip:
 
 @router.get("/me", response_model=RiderMe)
 def me(db: DB, rider: CurrentRider):
-    rating, count = rider_rating(db, rider.id)
-    completed = db.scalar(select(func.count()).where(Trip.rider_id == rider.id, Trip.status == "completed")) or 0
-    earnings = db.scalar(
-        select(func.sum(Payment.rider_earning)).where(
-            Payment.rider_id == rider.id, Payment.status != "disputed", Payment.created_at >= local_day_start()
+    is_verified = rider.status == "verified"
+    rating, count = rider_rating(db, rider.id) if is_verified else (None, 0)
+    completed = (
+        db.scalar(select(func.count()).where(Trip.rider_id == rider.id, Trip.status == "completed")) or 0
+        if is_verified
+        else 0
+    )
+    earnings = (
+        db.scalar(
+            select(func.sum(Payment.rider_earning)).where(
+                Payment.rider_id == rider.id, Payment.status != "disputed", Payment.created_at >= local_day_start()
+            )
         )
+        if is_verified
+        else 0
+    )
+    trips_today = (
+        db.scalar(select(func.count()).where(Trip.rider_id == rider.id, Trip.status == "completed", Trip.completed_at >= local_day_start())) or 0
+        if is_verified
+        else 0
     )
     ready, missing = documents.verification_ready(db, rider)
     return RiderMe(
@@ -53,17 +70,68 @@ def me(db: DB, rider: CurrentRider):
         is_online=rider.is_online,
         lat=rider.current_lat,
         lng=rider.current_lng,
-        vehicle=vehicle_out(rider.vehicle),
+        vehicle=vehicle_out(rider.vehicle, rider_verified=is_verified),
         rating=rating,
         rating_count=count,
         trips_completed=completed,
+        trips_today=trips_today,
         earnings_today=float(earnings or 0),
-        cancel_rate=round(rider_cancel_rates(db, [rider.id]).get(rider.id, 0.05), 3),
+        cancel_rate=round(rider_cancel_rates(db, [rider.id]).get(rider.id, 0.05), 3) if is_verified else 0.0,
         is_simulated=rider.is_simulated,
         documents_ready=ready,
         missing_documents=missing,
-        commission_due=payments.rider_balance(db, rider.id)["commission_due"],
+        commission_due=payments.rider_balance(db, rider.id)["commission_due"] if is_verified else 0.0,
+        avatar_url=f"/api/documents/{rider.profile.avatar_doc_id}/file" if rider.profile.avatar_doc_id else None,
     )
+
+
+@router.patch("/contact", response_model=RiderMe)
+def update_contact(body: RiderContactIn, db: DB, rider: CurrentRider):
+    profile = rider.profile
+    email = body.email.strip().lower()
+    if email != profile.email:
+        if not body.current_password or not verify_password(body.current_password, profile.password_hash):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Enter your current password to change your email")
+        if db.scalar(select(Profile.id).where(Profile.email == email, Profile.id != profile.id)):
+            raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email already exists")
+        profile.email = email
+    profile.phone = body.phone.strip()
+    db.commit()
+    return me(db, rider)
+
+
+@router.post("/onboarding/vehicle", response_model=RiderMe)
+def save_onboarding_vehicle(body: RiderOnboardingVehicleIn, db: DB, rider: CurrentRider):
+    if rider.status == "verified":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Verified riders must submit a vehicle change request")
+    plate = normalize_plate(body.plate_no, body.vehicle_type)
+    taken = db.scalar(
+        select(Vehicle.id).where(Vehicle.plate_no == plate, Vehicle.retired_at.is_(None), Vehicle.rider_id != rider.id)
+    )
+    if taken:
+        raise HTTPException(status.HTTP_409_CONFLICT, "A vehicle with this plate number is already registered")
+    rider.license_no = body.license_no.strip()
+    v = rider.vehicle
+    if v is None:
+        v = Vehicle(
+            rider_id=rider.id,
+            vehicle_type=body.vehicle_type,
+            plate_no=plate,
+            model=body.model.strip(),
+            color=body.color.strip(),
+            registration_no=body.registration_no.strip().upper(),
+        )
+        db.add(v)
+    else:
+        v.vehicle_type = body.vehicle_type
+        v.plate_no = plate
+        v.model = body.model.strip()
+        v.color = body.color.strip()
+        v.registration_no = body.registration_no.strip().upper()
+    emit(db, ADMINS, "riders.changed")
+    db.commit()
+    db.refresh(rider)
+    return me(db, rider)
 
 
 @router.post("/online", response_model=RiderMe)
@@ -108,10 +176,19 @@ def current_offer(db: DB, rider: CurrentRider):
     trip = db.scalar(select(Trip).where(Trip.status == "requested", Trip.offered_rider_id == rider.id))
     if trip is None:
         return None
+    if not rider.vehicle or rider.vehicle.vehicle_type != trip.vehicle_type_requested:
+        trip_service.decline(db, trip, rider)
+        db.commit()
+        return None
+    pickup_dist = (
+        round(haversine_km((rider.current_lat, rider.current_lng), (trip.pickup_lat, trip.pickup_lng)), 2)
+        if rider.current_lat is not None and rider.current_lng is not None
+        else 0.0
+    )
     return OfferOut(
         trip=trip_out(db, trip, for_rider=True),
         expires_at=trip.offered_at + timedelta(seconds=settings.offer_timeout_seconds),
-        pickup_distance_km=round(haversine_km((rider.current_lat, rider.current_lng), (trip.pickup_lat, trip.pickup_lng)), 2),
+        pickup_distance_km=pickup_dist,
     )
 
 
@@ -135,6 +212,13 @@ def active(db: DB, rider: CurrentRider):
     return trip_out(db, trip, for_rider=True) if trip else None
 
 
+@router.post("/trips/{trip_id}/arrived", response_model=TripOut)
+def arrived(trip_id: str, db: DB, rider: CurrentRider):
+    trip = trip_service.arrived(db, _assigned_trip(db, rider, trip_id), rider)
+    db.commit()
+    return trip_out(db, trip, for_rider=True)
+
+
 @router.post("/trips/{trip_id}/start", response_model=TripOut)
 def start(trip_id: str, db: DB, rider: CurrentRider):
     trip = trip_service.start(db, _assigned_trip(db, rider, trip_id))
@@ -147,6 +231,19 @@ def complete(trip_id: str, db: DB, rider: CurrentRider):
     trip = trip_service.complete(db, _assigned_trip(db, rider, trip_id))
     db.commit()
     return trip_out(db, trip, for_rider=True)
+
+
+@router.get("/trips/{trip_id}/messages")
+def trip_messages(trip_id: str, db: DB, rider: CurrentRider):
+    trip = _assigned_trip(db, rider, trip_id)
+    return [messages.message_out(m, "rider") for m in messages.list_for(db, trip)]
+
+
+@router.post("/trips/{trip_id}/messages", status_code=status.HTTP_201_CREATED)
+def send_message(trip_id: str, body: MessageIn, db: DB, rider: CurrentRider):
+    message = messages.post(db, _assigned_trip(db, rider, trip_id), "rider", rider.profile_id, body.body)
+    db.commit()
+    return messages.message_out(message, "rider")
 
 
 @router.post("/trips/{trip_id}/cancel", response_model=TripOut)
@@ -172,3 +269,72 @@ def auto_drive(trip_id: str, body: AutoDriveIn, db: DB, rider: CurrentRider):
 def history(db: DB, rider: CurrentRider, limit: int = 20):
     trips = db.scalars(select(Trip).where(Trip.rider_id == rider.id).order_by(Trip.requested_at.desc()).limit(min(limit, 100)))
     return [trip_out(db, t, include_route=False, for_rider=True) for t in trips]
+
+
+@router.get("/demand-hints")
+def demand_hints(db: DB, rider: CurrentRider, lat: float | None = None, lng: float | None = None):
+    """Next-hour expected request density and supply per zone for this rider's vehicle type."""
+    demand.ensure_fresh(db)
+    vt = rider.vehicle.vehicle_type if rider.vehicle else "bike"
+    zones = all_zones(db)
+    rows = db.scalars(select(DemandForecast).where(DemandForecast.vehicle_type == vt)).all()
+
+    expected_by_zone: dict[int, float] = defaultdict(float)
+    for f in rows:
+        expected_by_zone[f.zone_id] += f.predicted_requests
+
+    busy = availability.busy_rider_ids(db)
+    supply: dict[int, int] = defaultdict(int)
+    zone_points = [(z.id, (z.center_lat, z.center_lng)) for z in zones]
+    if zone_points:
+        free_riders = db.scalars(
+            select(Rider)
+            .join(Vehicle, Vehicle.rider_id == Rider.id)
+            .where(
+                Rider.is_online.is_(True),
+                Rider.status == "verified",
+                Rider.current_lat.is_not(None),
+                or_(Rider.is_simulated.is_(True), Rider.last_seen >= utcnow() - timedelta(seconds=settings.rider_stale_seconds)),
+                Vehicle.vehicle_type == vt,
+                Vehicle.verified.is_(True),
+                Vehicle.retired_at.is_(None),
+            )
+        ).unique()
+        for r in free_riders:
+            if r.id in busy:
+                continue
+            zid = min(zone_points, key=lambda zp: haversine_km(zp[1], (r.current_lat, r.current_lng)))[0]
+            supply[zid] += 1
+
+    rule = pricing.rule_for(db, vt)
+    origin = (lat, lng) if lat is not None and lng is not None else (
+        (rider.current_lat, rider.current_lng) if rider.current_lat is not None and rider.current_lng is not None else None
+    )
+
+    out = []
+    for z in zones:
+        expected = round(expected_by_zone[z.id], 1)
+        free = supply.get(z.id, 0)
+        ratio = expected / max(1, free)
+        dist = round(haversine_km(origin, (z.center_lat, z.center_lng)), 1) if origin else None
+        out.append(
+            {
+                "zone_id": z.id,
+                "zone": z.name,
+                "lat": z.center_lat,
+                "lng": z.center_lng,
+                "expected_requests": expected,
+                "free_riders": free,
+                "demand_level": pricing.demand_level(ratio),
+                "estimated_multiplier": pricing.smooth_multiplier(ratio, rule.max_multiplier),
+                "distance_km": dist,
+            }
+        )
+
+    out.sort(key=lambda z: (-z["expected_requests"], z["distance_km"] if z["distance_km"] is not None else 9999.0))
+    return {
+        "vehicle_type": vt,
+        "generated_at": iso_utc(demand.last_refresh()),
+        "raining": weather.is_raining(db),
+        "zones": out,
+    }

@@ -74,7 +74,7 @@ export default function RideMapInner({ markers = [], lines = [], circles = [], f
       zoom={12}
       className={className}
       style={{ height: "100%", width: "100%" }}
-      zoomControl
+      zoomControl={false}
       attributionControl
     >
       {/* Standard OSM tiles (no API key), darkened in CSS via .map-tiles-dark. */}

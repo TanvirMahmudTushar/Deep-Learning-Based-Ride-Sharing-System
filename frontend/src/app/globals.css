@@ -1,15 +1,39 @@
+@import url('https://fonts.maateen.me/solaiman-lipi/font.css');
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "shadcn/tailwind.css";
+
+@font-face {
+  font-family: 'SolaimanLipi';
+  font-display: swap;
+  font-style: normal;
+  font-weight: 700;
+  src: url('/fonts/solaimanlipi-bold-v1.0.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'SolaimanLipi';
+  font-display: swap;
+  font-style: normal;
+  font-weight: 400;
+  src: url('/fonts/solaimanlipi-normal-v1.0.woff2') format('woff2');
+}
+
+.font-solaiman-lipi {
+  font-family: var(--font-solaiman-lipi), 'SolaimanLipi', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+}
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+  /* From the logo: the route line and the destination pin. */
+  --color-route: #e26d5a;
+  --color-pin: #05a7e3;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-sans);
   --font-mono: var(--font-geist-mono);
   --font-heading: var(--font-sans);
+  --font-solaiman: var(--font-solaiman-lipi);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -131,10 +155,54 @@
     @apply font-sans;
   }
 }
+/*
+ * The 3D "Cholo" lettering, in the logo's colours: "Chol" is the coral route, the last "o" the blue pin.
+ * The letters themselves draw the solid side of the extrusion; ::after lays the lit face over them.
+ * Everything is in em, so the depth scales with the font size.
+ */
+.wordmark {
+  display: inline-flex;
+  font-family: var(--font-wordmark), var(--font-sans);
+  font-weight: 800;
+  line-height: 1.25;
+  letter-spacing: -0.015em;
+}
+.wordmark-part {
+  --face-top: #ffd3c9;
+  --face-bottom: #e26d5a;
+  --side: #8f3a2b;
+  position: relative;
+  color: var(--side);
+  text-shadow:
+    0.012em 0.012em 0,
+    0.024em 0.024em 0,
+    0.036em 0.036em 0,
+    0.048em 0.048em 0,
+    0.06em 0.06em 0,
+    0.072em 0.072em 0,
+    0.1em 0.16em 0.2em rgb(0 0 0 / 0.7);
+}
+.wordmark-pin {
+  --face-top: #b5ebff;
+  --face-bottom: #05a7e3;
+  --side: #035f82;
+}
+.wordmark-part::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  color: transparent;
+  background: linear-gradient(180deg, var(--face-top) 20%, var(--face-bottom) 78%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  text-shadow: none;
+}
 /* Map: dark tiles sit on the page background; markers are plain divIcons styled here. */
 .leaflet-container {
   background: var(--background);
   font-family: var(--font-sans);
+  /* Leaflet's layers use z-index up to 1000; keep them inside the map, under menus and dialogs. */
+  isolation: isolate;
 }
 .map-tiles-dark {
   filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.85) saturate(0.6);
@@ -195,4 +263,76 @@
 @keyframes map-pulse {
   from { transform: scale(0.6); opacity: 0.9; }
   to { transform: scale(1.5); opacity: 0; }
+}
+
+/* Receipts print on white paper, whatever the screen theme. */
+@media print {
+  html,
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+}
+
+/* Rider profile: right-to-left wipe */
+@keyframes profile-wipe-in {
+  from {
+    transform: translateX(100%);
+    clip-path: inset(0 0 0 100%);
+  }
+  to {
+    transform: translateX(0);
+    clip-path: inset(0 0 0 0);
+  }
+}
+@keyframes profile-wipe-out {
+  from {
+    transform: translateX(0);
+    clip-path: inset(0 0 0 0);
+  }
+  to {
+    transform: translateX(100%);
+    clip-path: inset(0 0 0 100%);
+  }
+}
+.profile-wipe-in {
+  animation: profile-wipe-in 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.profile-wipe-out {
+  animation: profile-wipe-out 260ms cubic-bezier(0.64, 0, 0.78, 0) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .profile-wipe-in,
+  .profile-wipe-out {
+    animation-duration: 1ms;
+  }
+}
+
+@keyframes subpage-wipe-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes subpage-wipe-out {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+.subpage-wipe-in {
+  animation: subpage-wipe-in 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.subpage-wipe-out {
+  animation: subpage-wipe-out 220ms cubic-bezier(0.64, 0, 0.78, 0) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .subpage-wipe-in,
+  .subpage-wipe-out {
+    animation-duration: 1ms;
+  }
 }

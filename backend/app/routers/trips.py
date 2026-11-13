@@ -1,12 +1,14 @@
 """Passenger endpoints: estimate, book, track, cancel, rate, emergency alerts and problem reports."""
 
 from fastapi import APIRouter, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from app.models import VEHICLE_TYPES, Rating, Trip
-from app.schemas import EstimateIn, EstimateOut, QuoteOut, RateIn, ReportIn, SosIn, TripCreate, TripOut, trip_out
+from app.config import settings
+
+from app.models import VEHICLE_TYPES, Rating, SafetyAlert, Trip
+from app.schemas import CancelIn, EstimateIn, EstimateOut, MessageIn, QuoteOut, RateIn, ReportIn, SosIn, TripCreate, TripOut, iso_utc, trip_out
 from app.security import DB, Passenger
-from app.services import alerts, pricing
+from app.services import alerts, cancel_fees, messages, pricing
 from app.services import trips as trip_service
 from app.services.routing import get_route
 from app.services.zones import describe_point
@@ -24,6 +26,7 @@ def _own_trip(db: DB, user: Passenger, trip_id: str) -> Trip:
 @router.post("/estimate", response_model=EstimateOut)
 def estimate(body: EstimateIn, db: DB, user: Passenger):
     pickup, drop = (body.pickup.lat, body.pickup.lng), (body.drop.lat, body.drop.lng)
+    trip_service.check_points(pickup, drop)
     route = get_route(pickup, drop)
     quotes = [QuoteOut(**pricing.quote(db, pickup, route, vt).__dict__) for vt in VEHICLE_TYPES]
     return EstimateOut(
@@ -33,6 +36,7 @@ def estimate(body: EstimateIn, db: DB, user: Passenger):
         route=[list(p) for p in route.points],
         route_source=route.source,
         quotes=quotes,
+        outstanding_fee=cancel_fees.outstanding(db, user.id),
     )
 
 
@@ -73,9 +77,24 @@ def get_trip(trip_id: str, db: DB, user: Passenger):
     return trip_out(db, _own_trip(db, user, trip_id))
 
 
+CANCEL_REASON_LABEL = {
+    "changed_plans": "Plans changed",
+    "wait_too_long": "Waiting too long",
+    "rider_not_moving": "Rider isn't moving",
+    "wrong_pickup": "Wrong pickup location",
+    "found_other_ride": "Found another ride",
+    "price_too_high": "Price too high",
+    "other": "Other reason",
+}
+
+
 @router.post("/{trip_id}/cancel", response_model=TripOut)
-def cancel(trip_id: str, db: DB, user: Passenger):
-    trip = trip_service.cancel(db, _own_trip(db, user, trip_id), "user", "Cancelled by passenger")
+def cancel(trip_id: str, db: DB, user: Passenger, body: CancelIn | None = None):
+    body = body or CancelIn()
+    reason = f"Cancelled by passenger: {CANCEL_REASON_LABEL[body.reason]}"
+    if body.note.strip():
+        reason = f"{reason} ({body.note.strip()})"
+    trip = trip_service.cancel(db, _own_trip(db, user, trip_id), "user", reason[:160])
     db.commit()
     return trip_out(db, trip)
 
@@ -95,11 +114,60 @@ def report(trip_id: str, body: ReportIn, db: DB, user: Passenger):
     trip = _own_trip(db, user, trip_id)
     if trip.status not in ("completed", "cancelled"):
         raise HTTPException(status.HTTP_409_CONFLICT, "Report a problem after the trip ends; use the emergency button during a trip")
+    # Reports support has closed don't count, so a passenger can report something new later.
+    open_reports = db.scalar(
+        select(func.count(SafetyAlert.id)).where(
+            SafetyAlert.trip_id == trip.id, SafetyAlert.alert_type == "report", SafetyAlert.status != "closed"
+        )
+    ) or 0
+    if open_reports >= settings.max_reports_per_trip:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"You already have {open_reports} open reports on this trip. Our team will reply in the trip details.",
+        )
     alerts.file_report(db, trip, body.category, body.note)
     if body.category == "fare" and trip.payment and trip.payment.status != "collected":
         trip.payment.status = "disputed"
     db.commit()
     return {"ok": True}
+
+
+# How a report's status reads to the passenger who filed it.
+REPORT_STATUS = {"open": "received", "reviewed": "in_review", "closed": "closed"}
+
+
+@router.get("/{trip_id}/reports")
+def my_reports(trip_id: str, db: DB, user: Passenger):
+    """The passenger's own reports on this trip, with their status and support's replies.
+    Internal notes and who wrote each reply are never included."""
+    trip = _own_trip(db, user, trip_id)
+    reports = db.scalars(
+        select(SafetyAlert).where(SafetyAlert.trip_id == trip.id, SafetyAlert.alert_type == "report").order_by(SafetyAlert.created_at)
+    ).all()
+    return [
+        {
+            "id": a.id,
+            "category": a.details.get("category"),
+            "note": a.details.get("note", ""),
+            "status": REPORT_STATUS.get(a.status, "received"),
+            "created_at": iso_utc(a.created_at),
+            "replies": [{"id": n.id, "body": n.body, "created_at": iso_utc(n.created_at)} for n in a.notes if n.for_passenger],
+        }
+        for a in reports
+    ]
+
+
+@router.get("/{trip_id}/messages")
+def trip_messages(trip_id: str, db: DB, user: Passenger):
+    trip = _own_trip(db, user, trip_id)
+    return [messages.message_out(m, "user") for m in messages.list_for(db, trip)]
+
+
+@router.post("/{trip_id}/messages", status_code=status.HTTP_201_CREATED)
+def send_message(trip_id: str, body: MessageIn, db: DB, user: Passenger):
+    message = messages.post(db, _own_trip(db, user, trip_id), "user", user.id, body.body)
+    db.commit()
+    return messages.message_out(message, "user")
 
 
 @router.post("/{trip_id}/rate", response_model=TripOut)

@@ -7,10 +7,10 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.config import DEFAULT_JWT_SECRET, settings
+from app.config import settings
 from app.db import SessionLocal, create_schema
 from app.realtime import hub
-from app.routers import admin, assistant, auth, documents, geo, meta, passenger, payments, rider, trips, ws
+from app.routers import admin, assistant, auth, documents, geo, meta, passenger, payments, rider, trips, vehicle_changes, ws
 from app.seed import ensure_admin, seed_demo, seed_reference
 from app.services import demand, simulator, weather
 from app.services.documents import DocumentError
@@ -23,8 +23,8 @@ log = logging.getLogger("app")
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     hub.bind_loop(asyncio.get_running_loop())
-    if settings.jwt_secret == DEFAULT_JWT_SECRET:
-        log.warning("JWT_SECRET is the development default. Set a long random JWT_SECRET before deploying.")
+    if settings.jwt_secret_generated:
+        log.warning("JWT_SECRET is not set, so a random one is in use: everyone is logged out on restart. Set a long random JWT_SECRET.")
     create_schema()
     with SessionLocal() as db:
         seed_reference(db)
@@ -65,5 +65,5 @@ def document_error_handler(_: Request, exc: DocumentError):
     return JSONResponse(status_code=422, content={"detail": str(exc)})
 
 
-for r in (meta, auth, geo, trips, passenger, rider, documents, payments, admin, assistant, ws):
+for r in (meta, auth, geo, trips, passenger, rider, documents, vehicle_changes, payments, admin, assistant, ws):
     app.include_router(r.router)

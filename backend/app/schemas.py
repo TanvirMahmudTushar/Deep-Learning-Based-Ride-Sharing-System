@@ -1,11 +1,17 @@
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, PlainSerializer
+from pydantic import AfterValidator, BaseModel, Field, PlainSerializer
+from pydantic_core import PydanticCustomError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.db import utcnow
+from app.geo import haversine_km
 from app.models import Rating, Rider, SafetyAlert, Trip, Vehicle
+from app.services import cancel_fees
+from app.services.predictors import eta_predictor
+from app.services.routing import DETOUR_FACTOR
 
 def iso_utc(d: datetime | None) -> str | None:
     """Stored datetimes are naive UTC; send them with an explicit offset so browsers parse them correctly."""
@@ -25,16 +31,42 @@ class LatLng(BaseModel):
 # --- auth ---------------------------------------------------------------------------------
 
 
+def _fits_bcrypt(password: str) -> str:
+    # bcrypt's limit is in bytes, so a 72-character password in Bangla, say, can still be too long.
+    if len(password.encode()) > 72:
+        raise PydanticCustomError("password_too_long", "Password is too long. Use fewer characters.")
+    return password
+
+
+NewPassword = Annotated[str, Field(min_length=8, max_length=72), AfterValidator(_fits_bcrypt)]
+
+
 class RegisterIn(BaseModel):
     full_name: str = Field(min_length=2, max_length=120)
     email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=160)
     phone: str = Field(min_length=6, max_length=32)
-    password: str = Field(min_length=6, max_length=72)
-    role: Literal["user", "rider"] = "user"
+    password: NewPassword
+    role: Literal["user", "rider", "support"] = "user"
+    otp: str | None = Field(default=None, min_length=4, max_length=10)
     license_no: str | None = Field(default=None, max_length=40)
     vehicle_type: VehicleType | None = None
     plate_no: str | None = Field(default=None, max_length=32)
     vehicle_model: str | None = Field(default=None, max_length=60)
+
+
+class OtpRequestIn(BaseModel):
+    email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=160)
+    phone: str = Field(min_length=6, max_length=32)
+
+
+class OtpRequestOut(BaseModel):
+    ok: bool
+    message: str
+
+
+class OtpVerifyIn(BaseModel):
+    phone: str = Field(min_length=6, max_length=32)
+    otp: str = Field(min_length=4, max_length=10)
 
 
 class LoginIn(BaseModel):
@@ -48,6 +80,9 @@ class ProfileOut(BaseModel):
     email: str
     phone: str
     role: str
+    approval_status: str | None = None
+    phone_verified: bool = False
+    avatar_url: str | None = None
 
 
 class AuthOut(BaseModel):
@@ -63,6 +98,8 @@ class VehicleOut(BaseModel):
     vehicle_type: str
     plate_no: str
     model: str
+    color: str | None = None
+    registration_no: str | None = None
     verified: bool
 
 
@@ -124,6 +161,15 @@ class AdminAccountTripPageOut(BaseModel):
     has_more: bool
 
 
+class RiderOnboardingVehicleIn(BaseModel):
+    vehicle_type: VehicleType
+    model: str = Field(min_length=2, max_length=60)
+    plate_no: str = Field(min_length=3, max_length=32)
+    color: str = Field(min_length=2, max_length=32)
+    registration_no: str = Field(min_length=3, max_length=64)
+    license_no: str = Field(min_length=2, max_length=40)
+
+
 class RiderPublic(BaseModel):
     id: str
     full_name: str
@@ -160,6 +206,8 @@ class QuoteOut(BaseModel):
 
 
 class EstimateOut(BaseModel):
+    # Late-cancellation fees owed (positive) or credits (negative) that the next ride will include.
+    outstanding_fee: float = 0
     pickup_address: str
     drop_address: str
     distance_km: float
@@ -215,6 +263,9 @@ class TripOut(BaseModel):
     rider: RiderPublic | None
     passenger_name: str
     passenger_phone: str | None
+    passenger_photo: str | None = None
+    passenger_rating: float | None = None
+    passenger_rating_count: int = 0
     payment: PaymentOut | None
     rating: int | None
     rating_comment: str | None
@@ -225,12 +276,32 @@ class TripOut(BaseModel):
     arrived_at: UTCDateTime | None
     started_at: UTCDateTime | None
     completed_at: UTCDateTime | None
+    # Earlier late-cancellation fees (positive) or credits (negative) on this ride.
+    fee_adjustment: float | None = None
+    # This trip's own late-cancellation fee, if the passenger cancelled late. Hidden from riders.
+    cancel_fee: float | None = None
+    cancel_fee_status: str | None = None
+    # For an accepted trip: when free cancellation ends, and the fee after that. Hidden from riders.
+    free_cancel_until: UTCDateTime | None = None
+    late_cancel_fee: float | None = None
+    # The rider is well past their pickup time, so the passenger can cancel for free.
+    rider_late: bool = False
+    # Minutes to the next stop (pickup, then drop-off) from the rider's latest position.
+    live_eta_min: float | None = None
 
 
-def vehicle_out(v: Vehicle | None) -> VehicleOut | None:
+def vehicle_out(v: Vehicle | None, *, rider_verified: bool = True) -> VehicleOut | None:
     if v is None:
         return None
-    return VehicleOut(id=v.id, vehicle_type=v.vehicle_type, plate_no=v.plate_no, model=v.model, verified=v.verified)
+    return VehicleOut(
+        id=v.id,
+        vehicle_type=v.vehicle_type,
+        plate_no=v.plate_no,
+        model=v.model,
+        color=v.color,
+        registration_no=v.registration_no,
+        verified=bool(v.verified and rider_verified),
+    )
 
 
 def rider_rating(db: Session, rider_id: str) -> tuple[float | None, int]:
@@ -252,6 +323,22 @@ def rider_public(db: Session, rider: Rider, vehicle: Vehicle | None = None) -> R
         lat=rider.current_lat,
         lng=rider.current_lng,
     )
+
+
+def live_eta_min(trip: Trip) -> float | None:
+    """Minutes from the rider's latest position to the next stop. Worked out on each request, so it
+    updates as the rider moves; the stored ETAs stay as they were for measuring model accuracy."""
+    rider = trip.rider
+    if rider is None or rider.current_lat is None:
+        return None
+    if trip.status == "accepted" and trip.arrived_at is None:
+        target = (trip.pickup_lat, trip.pickup_lng)
+    elif trip.status == "ongoing":
+        target = (trip.drop_lat, trip.drop_lng)
+    else:
+        return None
+    km = haversine_km((rider.current_lat, rider.current_lng), target) * DETOUR_FACTOR
+    return round(eta_predictor.predict_eta(km, trip.vehicle_type_requested, utcnow()), 1)
 
 
 def trip_out(db: Session, trip: Trip, include_route: bool = True, for_rider: bool = False) -> TripOut:
@@ -304,11 +391,30 @@ def trip_out(db: Session, trip: Trip, include_route: bool = True, for_rider: boo
         arrived_at=trip.arrived_at,
         started_at=trip.started_at,
         completed_at=trip.completed_at,
+        fee_adjustment=trip.fee_adjustment,
+        cancel_fee=None if for_rider else trip.cancel_fee,
+        cancel_fee_status=None if for_rider else trip.cancel_fee_status,
+        free_cancel_until=None if for_rider else cancel_fees.free_cancel_until(trip),
+        late_cancel_fee=None if for_rider or trip.status != "accepted" else cancel_fees.fee_for(db, trip.vehicle_type_requested),
+        live_eta_min=live_eta_min(trip),
+        rider_late=not for_rider and cancel_fees.rider_is_late(trip),
     )
 
 
 class SosIn(BaseModel):
     note: str = Field(default="", max_length=300)
+
+
+CancelReason = Literal["changed_plans", "wait_too_long", "rider_not_moving", "wrong_pickup", "found_other_ride", "price_too_high", "other"]
+
+
+class CancelIn(BaseModel):
+    reason: CancelReason = "other"
+    note: str = Field(default="", max_length=120)
+
+
+class MessageIn(BaseModel):
+    body: str = Field(min_length=1, max_length=500)
 
 
 class ReportIn(BaseModel):
@@ -336,9 +442,18 @@ class ProfileUpdateIn(BaseModel):
     phone: str = Field(min_length=6, max_length=32)
 
 
+class RiderContactIn(BaseModel):
+    """What a rider may change themselves. Name and licence are tied to verified documents, so they can't."""
+
+    email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=160)
+    phone: str = Field(min_length=6, max_length=32)
+    # Required only when the email (the login) changes.
+    current_password: str | None = None
+
+
 class PasswordChangeIn(BaseModel):
     current_password: str
-    new_password: str = Field(min_length=6, max_length=72)
+    new_password: NewPassword
 
 
 # --- rider portal ---------------------------------------------------------------------------
@@ -380,12 +495,14 @@ class RiderMe(BaseModel):
     rating: float | None
     rating_count: int
     trips_completed: int
+    trips_today: int
     earnings_today: float
     cancel_rate: float
     is_simulated: bool
     documents_ready: bool
     missing_documents: list[str]
     commission_due: float
+    avatar_url: str | None = None
 
 
 # --- admin ----------------------------------------------------------------------------------
@@ -396,6 +513,12 @@ class AlertStatusIn(BaseModel):
     resolution_note: str | None = Field(default=None, max_length=1000)
 
 
+class AlertNoteIn(BaseModel):
+    body: str = Field(min_length=1, max_length=2000)
+    # True sends it to the passenger as a reply (reports only); false keeps it internal.
+    for_passenger: bool = False
+
+
 class PricingRuleIn(BaseModel):
     base_fare: float = Field(ge=0)
     per_km: float = Field(ge=0)
@@ -403,6 +526,7 @@ class PricingRuleIn(BaseModel):
     min_fare: float = Field(ge=0)
     max_multiplier: float = Field(ge=1, le=3)
     commission_pct: float = Field(default=15, ge=0, le=50)
+    cancel_fee: float | None = Field(default=None, ge=0, le=1000)
 
 
 # --- assistant ------------------------------------------------------------------------------
@@ -429,3 +553,8 @@ class ChatOut(BaseModel):
     reply: str
     booking: BookingSuggestion | None
     source: Literal["groq", "fallback"]
+
+
+class RiderPreferenceIn(BaseModel):
+    kind: Literal["favourite", "blocked"]
+    reason: str = Field(default="", max_length=120)

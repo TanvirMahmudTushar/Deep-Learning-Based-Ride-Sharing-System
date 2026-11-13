@@ -33,6 +33,7 @@ def free_riders_near(db: Session, p: Point, vehicle_type: str, radius_km: float,
             or_(Rider.is_simulated.is_(True), Rider.last_seen >= utcnow() - timedelta(seconds=settings.rider_stale_seconds)),
             Vehicle.vehicle_type == vehicle_type,
             Vehicle.verified.is_(True),
+            Vehicle.retired_at.is_(None),
         )
         .options(selectinload(Rider.vehicles), selectinload(Rider.profile))
     ).unique()

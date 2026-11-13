@@ -12,16 +12,18 @@ import { fetchFileUrl, useServerHealth } from "@/lib/server";
 import { cn } from "@/lib/utils";
 import type { DocumentType, DocumentsOverview, RiderDocument } from "@/lib/types";
 
-const STATUS: Record<RiderDocument["status"], { label: string; icon: typeof Clock; className: string }> = {
+export const STATUS: Record<RiderDocument["status"], { label: string; icon: typeof Clock; className: string }> = {
   pending: { label: "In review", icon: Clock, className: "border-amber-400/30 bg-amber-400/10 text-amber-200" },
   approved: { label: "Approved", icon: CheckCircle2, className: "border-emerald-400/30 bg-emerald-400/10 text-emerald-200" },
   rejected: { label: "Rejected", icon: XCircle, className: "border-red-400/30 bg-red-400/10 text-red-200" },
 };
 
-const HINT: Record<DocumentType, string> = {
+export const HINT: Record<DocumentType, string> = {
   license: "Both sides readable, not expired",
+  insurance: "Valid vehicle insurance policy certificate",
   registration: "Vehicle registration certificate (blue book / smart card)",
-  photo: "A clear photo of your face, no sunglasses",
+  photo: "Mandatory: clear photo or selfie of your face, no sunglasses",
+  vehicle_photo: "The whole vehicle with the number plate readable",
 };
 
 export async function openDocument(doc: RiderDocument) {
@@ -34,7 +36,19 @@ export async function openDocument(doc: RiderDocument) {
   }
 }
 
-function UploadButton({ docType, replacing, onUploaded }: { docType: DocumentType; replacing: boolean; onUploaded: () => void }) {
+export function UploadButton({
+  docType,
+  replacing,
+  onUploaded,
+  endpoint = "/api/rider/documents",
+  useAsProfilePhoto = false,
+}: {
+  docType: DocumentType;
+  replacing: boolean;
+  onUploaded: () => void;
+  endpoint?: string;
+  useAsProfilePhoto?: boolean;
+}) {
   const input = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const { data: health } = useServerHealth();
@@ -47,10 +61,13 @@ function UploadButton({ docType, replacing, onUploaded }: { docType: DocumentTyp
     }
     const form = new FormData();
     form.append("doc_type", docType);
+    if (docType === "photo" && useAsProfilePhoto) {
+      form.append("use_as_profile_photo", "true");
+    }
     form.append("file", file);
     setBusy(true);
     try {
-      await api("/api/rider/documents", { method: "POST", body: form });
+      await api(endpoint, { method: "POST", body: form });
       toast.success("Uploaded. An admin will review it shortly.");
       onUploaded();
     } catch (e) {
@@ -86,7 +103,7 @@ export function DocumentsPanel() {
       <p className="text-sm text-muted-foreground">
         {data.ready
           ? "All documents are approved."
-          : "Upload all three documents. An admin reviews them before you can go online. JPG, PNG, WebP or PDF."}
+          : "Upload all four documents. An admin reviews them before you can go online. JPG, PNG, WebP or PDF."}
       </p>
       {data.required.map(({ doc_type, label, document: doc }) => {
         const st = doc ? STATUS[doc.status] : null;

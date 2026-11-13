@@ -61,6 +61,9 @@ def _create(db: Session, trip: Trip, alert_type: str, score: float, details: dic
     if alert_type == "sos":
         notify = ("Passenger SOS", f"Emergency on a {trip.vehicle_type_requested} trip from {trip.pickup_address}.")
     emit(db, ADMINS, "alert.new", notify=notify, alert_id=alert.id, alert_type=alert_type)
+    emit(db, trip.user_id, "trip.updated", trip_id=trip.id, status=trip.status)
+    if trip.rider:
+        emit(db, trip.rider.profile_id, "trip.updated", trip_id=trip.id, status=trip.status)
     return alert
 
 
