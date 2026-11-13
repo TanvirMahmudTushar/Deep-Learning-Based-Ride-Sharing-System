@@ -558,3 +558,9 @@ class ChatOut(BaseModel):
 class RiderPreferenceIn(BaseModel):
     kind: Literal["favourite", "blocked"]
     reason: str = Field(default="", max_length=120)
+
+
+class RiderBlockOut(BaseModel):
+    date: UTCDateTime
+    passenger_first_name: str
+    reason: str | None
