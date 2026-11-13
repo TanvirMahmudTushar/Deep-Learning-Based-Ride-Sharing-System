@@ -52,7 +52,7 @@ Everyone uses the same login page. The role is stored on the account, and the ba
 
 Support agents help people with problems, so they can see other people's trips. That's why sign-up alone gives them no access.
 
-- **Can:** see live and recent trips (with names, addresses and rider phone numbers, but not passenger phone numbers), read safety alerts and passenger reports, get an AI summary of an alert, and mark alerts as open, reviewed or closed.
+- **Can:** see live and recent trips (with names, addresses and rider phone numbers, but not passenger phone numbers), read safety alerts and passenger reports, get an AI summary of an alert, mark alerts as open, reviewed or closed, and keep their own saved replies (admins manage the team replies everyone shares).
 - **Can't:** see revenue, stats, pricing, payments, demand forecasts, the rider list or rider documents, or verify or suspend riders.
 - **Approval:** an admin approves agents in the **Support** tab of `/admin`, and can remove access there at any time. Access is checked on every request, so removal works immediately.
 
