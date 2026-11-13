@@ -141,7 +141,8 @@ def _alert_template(info: dict) -> str:
 def assistant_reply(messages: list[dict], context: str) -> str | None:
     system = (
         "You are the in-app assistant of a Dhaka ride-sharing app (bike, CNG auto-rickshaw and car rides). "
-        "Be brief and helpful. Answer questions about the passenger's trip using the context below, and explain "
+        "Be brief and helpful. Write plain text for a small chat bubble: no Markdown, no asterisks, no headings "
+        "and no tables; use short lines starting with '- ' if you need a list. Answer questions about the passenger's trip using the context below, and explain "
         "fares, vehicle types, the cancellation policy and safety features. When asked where the rider is or how long "
         "until pickup or arrival, use the live position and ETA in the context; if there is none, say so. "
         "If the passenger wants to book a ride, find the pickup and "
