@@ -9,6 +9,7 @@ from app.db import utcnow
 from app.geo import Point, distance_to_polyline_km, haversine_km
 from app.models import SafetyAlert, Trip, TripLocation
 from app.realtime import ADMINS, emit
+from app.services.alert_severity import anomaly_severity
 from app.services.groq_client import summarize_alert
 from app.services.predictors import anomaly_detector
 
@@ -91,6 +92,9 @@ def file_report(db: Session, trip: Trip, category: str, note: str) -> SafetyAler
 
 def ensure_summary(db: Session, alert: SafetyAlert) -> str:
     if not alert.summary:
-        alert.summary = summarize_alert({"alert_type": alert.alert_type, "anomaly_score": alert.anomaly_score, **alert.details})
+        info = {"alert_type": alert.alert_type, "anomaly_score": alert.anomaly_score, **alert.details}
+        if alert.alert_type in {"route_deviation", "long_stop"}:
+            info["severity"] = anomaly_severity(alert.anomaly_score)
+        alert.summary = summarize_alert(info)
         db.commit()
     return alert.summary

@@ -55,6 +55,12 @@ def profile_from_token(db: Session, token: str | None) -> Profile | None:
     return profile
 
 
+def account_is_suspended(profile: Profile) -> bool:
+    return profile.account_status == "suspended" or (
+        profile.role == "rider" and profile.rider is not None and profile.rider.status == "suspended"
+    )
+
+
 def current_user(
     creds: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
     db: Annotated[Session, Depends(get_db)],
@@ -64,6 +70,8 @@ def current_user(
     profile = profile_from_token(db, creds.credentials)
     if profile is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token")
+    if account_is_suspended(profile):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Account suspended. Contact support.")
     return profile
 
 

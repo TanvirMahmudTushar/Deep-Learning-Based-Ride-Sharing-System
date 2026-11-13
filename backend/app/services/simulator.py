@@ -37,6 +37,15 @@ class _Plan:
 _plans: dict[str, _Plan] = {}
 
 
+def update_controls(speedup: float, anomaly_rate: float) -> None:
+    if not 1 <= speedup <= 10:
+        raise ValueError("Simulation speed-up must be between 1x and 10x")
+    if not 0 <= anomaly_rate <= 0.5:
+        raise ValueError("Anomaly rate must be between 0% and 50%")
+    settings.simulator_speedup = speedup
+    settings.simulator_anomaly_rate = anomaly_rate
+
+
 def _speed_kmh(trip: Trip) -> float:
     speed = EtaPredictor.SPEED_KMH[trip.vehicle_type_requested]
     if is_peak(utcnow()):

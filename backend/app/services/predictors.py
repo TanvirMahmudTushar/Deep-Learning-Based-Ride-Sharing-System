@@ -131,13 +131,24 @@ class AnomalyDetector:
 
 
 eta_predictor = EtaPredictor()
-demand_forecaster = DemandForecaster()
+demand_baseline_forecaster = DemandForecaster()
+# Kept as a compatibility alias for callers that referenced the original baseline instance.
+demand_forecaster = demand_baseline_forecaster
 cancellation_predictor = CancellationPredictor()
 anomaly_detector = AnomalyDetector()
 
 registry: dict[str, PredictionModel] = {
-    "demand": demand_forecaster,
+    "demand": demand_baseline_forecaster,
     "eta": eta_predictor,
     "cancellation": cancellation_predictor,
     "anomaly": anomaly_detector,
 }
+
+
+def active_demand_model() -> PredictionModel:
+    return registry["demand"]
+
+
+def predict_demand(model: PredictionModel, zone_id: int, vehicle_type: str, when: datetime, raining: bool = False) -> float:
+    prediction = model.predict({"zone_id": zone_id, "vehicle_type": vehicle_type, "when": when, "raining": raining})
+    return max(0.0, float(prediction))

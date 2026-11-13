@@ -11,6 +11,7 @@ import threading
 from groq import Groq
 
 from app.config import settings
+from app.services.alert_severity import anomaly_severity
 
 log = logging.getLogger(__name__)
 
@@ -131,7 +132,7 @@ def _alert_template(info: dict) -> str:
         what = f"The {info.get('vehicle_type')} trip left the planned route by {info.get('deviation_km')} km"
     else:
         what = f"The {info.get('vehicle_type')} trip stopped for about {info.get('stop_minutes')} minutes"
-    severity = "high" if float(info.get("anomaly_score", 0)) >= 2 else "moderate"
+    severity = info.get("severity") or anomaly_severity(float(info.get("anomaly_score", 0)))
     return (
         f"{what} at {info.get('progress_pct')}% of the journey (anomaly score {info.get('anomaly_score')}). "
         f"Severity looks {severity}. Recommended action: check the live trip and contact the rider if it continues."

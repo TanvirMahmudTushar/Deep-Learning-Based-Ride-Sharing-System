@@ -7,7 +7,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.db import SessionLocal
 from app.realtime import hub
-from app.security import profile_from_token
+from app.security import account_is_suspended, profile_from_token
 
 router = APIRouter()
 
@@ -18,6 +18,8 @@ def _authenticate(token: str | None) -> tuple[str, str] | None:
     with SessionLocal() as db:
         profile = profile_from_token(db, token)
         if profile is None:
+            return None
+        if account_is_suspended(profile):
             return None
         # A support agent gets live events only once an admin has approved them.
         if profile.role == "support" and profile.approval_status != "approved":
