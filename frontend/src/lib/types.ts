@@ -266,6 +266,12 @@ export interface AdminRider {
   blocked_by?: number;
 }
 
+export interface RiderBlock {
+  date: string;
+  passenger_first_name: string;
+  reason: string | null;
+}
+
 export interface AdminAccountStats {
   trips_total: number;
   trips_completed: number;
