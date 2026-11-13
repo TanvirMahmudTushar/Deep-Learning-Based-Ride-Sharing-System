@@ -9,11 +9,15 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, fetcher } from "@/lib/api";
-import { formatTaka, VEHICLE_COLOR, VEHICLE_LABEL } from "@/lib/format";
-import type { PricingRule } from "@/lib/types";
+import { formatDateTime, formatTaka, VEHICLE_COLOR, VEHICLE_LABEL } from "@/lib/format";
+import type { HistoryPage, MultiplierHistoryEntry, PricingRule, PricingRuleChange, PricingRuleValues } from "@/lib/types";
 
-const FIELDS: { key: keyof Omit<PricingRule, "id" | "vehicle_type">; label: string; step: string }[] = [
+const HISTORY_PAGE_SIZE = 50;
+
+const FIELDS: { key: keyof PricingRuleValues; label: string; step: string }[] = [
   { key: "base_fare", label: "Base fare (৳)", step: "1" },
   { key: "per_km", label: "Per km (৳)", step: "0.5" },
   { key: "per_min", label: "Per minute (৳)", step: "0.5" },
@@ -22,6 +26,40 @@ const FIELDS: { key: keyof Omit<PricingRule, "id" | "vehicle_type">; label: stri
   { key: "commission_pct", label: "Platform commission (%)", step: "0.5" },
   { key: "cancel_fee", label: "Late-cancellation fee (৳)", step: "1" },
 ];
+
+function formatRuleValue(key: keyof PricingRuleValues, value: number): string {
+  if (key === "max_multiplier") return `${value.toFixed(1)}x`;
+  if (key === "commission_pct") return `${value}%`;
+  return formatTaka(value);
+}
+
+function HistoryPager({
+  offset,
+  count,
+  hasMore,
+  onOffsetChange,
+}: {
+  offset: number;
+  count: number;
+  hasMore: boolean;
+  onOffsetChange: (offset: number) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between border-t px-4 py-3 text-xs text-muted-foreground">
+      <span>
+        Showing {offset + 1}–{offset + count}
+      </span>
+      <div className="flex gap-2">
+        <Button size="sm" variant="outline" disabled={offset === 0} onClick={() => onOffsetChange(Math.max(0, offset - HISTORY_PAGE_SIZE))}>
+          Previous
+        </Button>
+        <Button size="sm" variant="outline" disabled={!hasMore} onClick={() => onOffsetChange(offset + HISTORY_PAGE_SIZE)}>
+          Next
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 function RuleCard({ rule, onSaved }: { rule: PricingRule; onSaved: () => void }) {
   const [values, setValues] = useState(rule);
@@ -50,7 +88,9 @@ function RuleCard({ rule, onSaved }: { rule: PricingRule; onSaved: () => void })
           <VehicleIcon type={rule.vehicle_type} className="size-5" style={{ color: VEHICLE_COLOR[rule.vehicle_type] }} />
           {VEHICLE_LABEL[rule.vehicle_type]}
         </CardTitle>
-        <CardDescription>8 km, 25 min trip: {formatTaka(sample)} at 1.0x, up to {formatTaka(sample * values.max_multiplier)}</CardDescription>
+        <CardDescription>
+          8 km, 25 min trip: {formatTaka(sample)} at 1.0x, up to {formatTaka(sample * values.max_multiplier)}
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <form onSubmit={save} className="space-y-3">
@@ -81,8 +121,162 @@ function RuleCard({ rule, onSaved }: { rule: PricingRule; onSaved: () => void })
   );
 }
 
+function RuleChangeHistory({ data, error, mutate, offset, setOffset }: {
+  data: HistoryPage<PricingRuleChange> | undefined;
+  error: Error | undefined;
+  mutate: () => void;
+  offset: number;
+  setOffset: (offset: number) => void;
+}) {
+  return (
+    <Card className="py-0">
+      <CardHeader className="px-4 pt-4">
+        <CardTitle>Pricing rule changes</CardTitle>
+        <CardDescription>Fare rates, minimum fares, surge caps, and commission changes by admin.</CardDescription>
+      </CardHeader>
+      {error && <p role="alert" className="px-4 pb-3 text-sm text-destructive">Could not load rule history: {error.message}</p>}
+      {!data && !error ? (
+        <Skeleton className="m-4 h-40 w-auto" />
+      ) : !data ? (
+        <div className="px-4 pb-4">
+          <Button variant="outline" onClick={mutate}>Retry</Button>
+        </div>
+      ) : (
+        <>
+          <div className="overflow-x-auto">
+            <Table className="min-w-[760px]">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Changed</TableHead>
+                  <TableHead>Vehicle</TableHead>
+                  <TableHead>Admin</TableHead>
+                  <TableHead>Changes</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.items.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
+                      No pricing rule changes recorded.
+                    </TableCell>
+                  </TableRow>
+                ) : data.items.map((change) => (
+                  <TableRow key={change.id}>
+                    <TableCell className="whitespace-nowrap">{formatDateTime(change.changed_at)}</TableCell>
+                    <TableCell>{VEHICLE_LABEL[change.vehicle_type]}</TableCell>
+                    <TableCell>
+                      <div>{change.changed_by}</div>
+                      <div className="text-xs text-muted-foreground">{change.changed_by_email}</div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="space-y-1">
+                        {FIELDS.filter((field) => change.previous_values[field.key] !== change.current_values[field.key]).map((field) => (
+                          <div key={field.key} className="text-xs">
+                            <span className="text-muted-foreground">{field.label.replace(/ \([^)]*\)$/, "")}: </span>
+                            <span className="tabular-nums">
+                              {formatRuleValue(field.key, change.previous_values[field.key])} → {formatRuleValue(field.key, change.current_values[field.key])}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          {data.items.length > 0 && (
+            <HistoryPager offset={offset} count={data.items.length} hasMore={data.has_more} onOffsetChange={setOffset} />
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
+function MultiplierHistory({ data, error, mutate, offset, setOffset }: {
+  data: HistoryPage<MultiplierHistoryEntry> | undefined;
+  error: Error | undefined;
+  mutate: () => void;
+  offset: number;
+  setOffset: (offset: number) => void;
+}) {
+  return (
+    <Card className="py-0">
+      <CardHeader className="px-4 pt-4">
+        <CardTitle>Applied multiplier history</CardTitle>
+        <CardDescription>Demand multipliers recorded on trips, newest first. Showing up to 50 entries per page.</CardDescription>
+      </CardHeader>
+      {error && <p role="alert" className="px-4 pb-3 text-sm text-destructive">Could not load multiplier history: {error.message}</p>}
+      {!data && !error ? (
+        <Skeleton className="m-4 h-40 w-auto" />
+      ) : !data ? (
+        <div className="px-4 pb-4">
+          <Button variant="outline" onClick={mutate}>Retry</Button>
+        </div>
+      ) : (
+        <>
+          <div className="overflow-x-auto">
+            <Table className="min-w-[760px]">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Requested</TableHead>
+                  <TableHead>Vehicle</TableHead>
+                  <TableHead>Trip</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Multiplier</TableHead>
+                  <TableHead className="text-right">Fare</TableHead>
+                  <TableHead>Pricing reason</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.items.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
+                      No trip multipliers recorded.
+                    </TableCell>
+                  </TableRow>
+                ) : data.items.map((entry) => (
+                  <TableRow key={entry.trip_id}>
+                    <TableCell className="whitespace-nowrap">{formatDateTime(entry.requested_at)}</TableCell>
+                    <TableCell>{VEHICLE_LABEL[entry.vehicle_type]}</TableCell>
+                    <TableCell className="font-mono text-xs">{entry.trip_id.slice(0, 8)}</TableCell>
+                    <TableCell className="capitalize">{entry.status}</TableCell>
+                    <TableCell className="text-right font-medium tabular-nums">{entry.multiplier.toFixed(1)}x</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatTaka(entry.fare_final ?? entry.fare_estimate)}</TableCell>
+                    <TableCell className="max-w-64 truncate text-xs text-muted-foreground" title={entry.price_reason}>
+                      {entry.price_reason || "—"}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          {data.items.length > 0 && (
+            <HistoryPager offset={offset} count={data.items.length} hasMore={data.has_more} onOffsetChange={setOffset} />
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
 export function PricingTab() {
-  const { data: rules, mutate } = useSWR<PricingRule[]>("/api/admin/pricing", fetcher);
+  const [ruleHistoryOffset, setRuleHistoryOffset] = useState(0);
+  const [multiplierHistoryOffset, setMultiplierHistoryOffset] = useState(0);
+  const { data: rules, error: rulesError, mutate } = useSWR<PricingRule[]>("/api/admin/pricing", fetcher);
+  const ruleHistoryKey = `/api/admin/pricing/rule-history?limit=${HISTORY_PAGE_SIZE}&offset=${ruleHistoryOffset}`;
+  const multiplierHistoryKey = `/api/admin/pricing/multiplier-history?limit=${HISTORY_PAGE_SIZE}&offset=${multiplierHistoryOffset}`;
+  const { data: ruleHistory, error: ruleHistoryError, mutate: mutateRuleHistory } = useSWR<HistoryPage<PricingRuleChange>>(ruleHistoryKey, fetcher);
+  const { data: multiplierHistory, error: multiplierHistoryError, mutate: mutateMultiplierHistory } =
+    useSWR<HistoryPage<MultiplierHistoryEntry>>(multiplierHistoryKey, fetcher);
+
+  function onSaved() {
+    void mutate();
+    setRuleHistoryOffset(0);
+    void mutateRuleHistory();
+  }
+
   return (
     <div className="space-y-4">
       <p className="max-w-3xl text-sm text-muted-foreground">
@@ -90,7 +284,39 @@ export function PricingTab() {
         requests exceed 1.2× the free riders nearby, and never passes the cap set here. Passengers pay riders in cash; the commission is the
         platform&apos;s share, which riders settle with an admin (Payments tab).
       </p>
-      <div className="grid gap-4 md:grid-cols-3">{rules?.map((r) => <RuleCard key={r.id} rule={r} onSaved={() => void mutate()} />)}</div>
+      {rulesError && <p role="alert" className="text-sm text-destructive">Could not load pricing rules: {rulesError.message}</p>}
+      {!rules && !rulesError ? (
+        <div className="grid gap-4 md:grid-cols-3">
+          {Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-96" />)}
+        </div>
+      ) : !rules ? (
+        <Card>
+          <CardContent className="flex items-center justify-between gap-4 py-5">
+            <span className="text-sm text-muted-foreground">Pricing rules are unavailable.</span>
+            <Button variant="outline" onClick={() => void mutate()}>Retry</Button>
+          </CardContent>
+        </Card>
+      ) : rules.length === 0 ? (
+        <Card>
+          <CardContent className="py-8 text-center text-sm text-muted-foreground">No pricing rules are configured.</CardContent>
+        </Card>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-3">{rules.map((r) => <RuleCard key={r.id} rule={r} onSaved={onSaved} />)}</div>
+      )}
+      <RuleChangeHistory
+        data={ruleHistory}
+        error={ruleHistoryError}
+        mutate={() => void mutateRuleHistory()}
+        offset={ruleHistoryOffset}
+        setOffset={setRuleHistoryOffset}
+      />
+      <MultiplierHistory
+        data={multiplierHistory}
+        error={multiplierHistoryError}
+        mutate={() => void mutateMultiplierHistory()}
+        offset={multiplierHistoryOffset}
+        setOffset={setMultiplierHistoryOffset}
+      />
     </div>
   );
 }

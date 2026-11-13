@@ -5,7 +5,7 @@ import { useSWRConfig } from "swr";
 import { toast } from "sonner";
 import { API_URL } from "@/lib/api";
 import { chime, showSystemNotification } from "@/lib/notifications";
-import { getToken, useSession } from "@/lib/session";
+import { clearSession, getToken, useSession } from "@/lib/session";
 
 /**
  * One WebSocket per signed-in browser tab. Server events are "refresh these" signals: each event
@@ -26,7 +26,7 @@ const EVENT_KEYS: Record<string, string[]> = {
   "offer.closed": ["/api/rider/offer"],
   "live.changed": ["/api/admin/trips/live", "/api/admin/stats", "/api/admin/forecasts"],
   "alert.new": ["/api/admin/alerts", "/api/admin/stats"],
-  "riders.changed": ["/api/admin/riders", "/api/admin/stats"],
+  "riders.changed": ["/api/admin/riders", "/api/admin/accounts", "/api/admin/stats"],
   "profile.updated": ["/api/rider/me", "/api/rider/documents"],
   "earnings.updated": ["/api/rider/earnings", "/api/rider/me"],
   "payments.changed": ["/api/admin/payments", "/api/admin/stats"],
@@ -76,6 +76,11 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
       mutate((key) => typeof key === "string" && prefixes.some((p) => key.startsWith(p)));
 
     const handle = (event: ServerEvent) => {
+      if (event.type === "account.suspended") {
+        if (event.notify) toast(event.notify.title, { description: event.notify.body });
+        clearSession();
+        return;
+      }
       const prefixes = EVENT_KEYS[event.type];
       if (prefixes) void revalidate(prefixes);
       if (event.notify) {

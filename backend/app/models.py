@@ -26,6 +26,7 @@ class Profile(Base):
     email: Mapped[str] = mapped_column(String(160), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(100))
     role: Mapped[str] = mapped_column(String(10))  # user, rider, admin, support
+    account_status: Mapped[str | None] = mapped_column(String(10), default="active")
     # Support agents only: pending until an admin approves, revoked if access is removed.
     approval_status: Mapped[str | None] = mapped_column(String(10))  # pending, approved, revoked
     phone_verified: Mapped[bool | None] = mapped_column(Boolean, default=False)
@@ -267,6 +268,7 @@ class SafetyAlert(Base):
     anomaly_score: Mapped[float] = mapped_column(Float)
     details_json: Mapped[str] = mapped_column(Text, default="{}")
     summary: Mapped[str | None] = mapped_column(Text)
+    resolution_note: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(10), default="open")  # open, reviewed, closed
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     # The admin or support agent handling this alert, so two people don't work on the same one.
@@ -294,6 +296,17 @@ class PricingRule(Base):
     cancel_fee: Mapped[float | None] = mapped_column(Float)
     # Platform share of each fare, in percent; None falls back to settings.default_commission_pct.
     commission_pct: Mapped[float | None] = mapped_column(Float)
+
+
+class PricingRuleChange(Base):
+    __tablename__ = "pricing_rule_changes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    vehicle_type: Mapped[str] = mapped_column(String(8), index=True)
+    changed_by_id: Mapped[str] = mapped_column(ForeignKey("profiles.id"), index=True)
+    previous_values_json: Mapped[str] = mapped_column(Text)
+    current_values_json: Mapped[str] = mapped_column(Text)
+    changed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
 
 class WeatherHourly(Base):

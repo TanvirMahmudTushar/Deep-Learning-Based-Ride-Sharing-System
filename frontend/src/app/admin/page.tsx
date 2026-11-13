@@ -28,7 +28,7 @@ function AdminDashboard() {
           <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="riders">
-              Riders <CountBadge n={stats?.pending_riders} />
+              Accounts <CountBadge n={stats?.pending_riders} />
             </TabsTrigger>
             <TabsTrigger value="alerts">
               Safety <CountBadge n={stats?.open_alerts} />

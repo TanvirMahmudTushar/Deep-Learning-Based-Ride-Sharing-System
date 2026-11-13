@@ -6,7 +6,7 @@ from app.config import settings
 from app.models import Profile, Rider, Vehicle
 from app.realtime import ADMINS, emit
 from app.schemas import AuthOut, LoginIn, OtpRequestIn, OtpRequestOut, OtpVerifyIn, PasswordChangeIn, ProfileOut, ProfileUpdateIn, RegisterIn
-from app.security import DB, CurrentUser, create_token, hash_password, verify_password
+from app.security import DB, CurrentUser, account_is_suspended, create_token, hash_password, verify_password
 from app.services import login_throttle
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -101,6 +101,8 @@ def login(body: LoginIn, request: Request, db: DB):
     if profile is None or not verify_password(body.password, profile.password_hash):
         login_throttle.record_failure(email, ip)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong email or password")
+    if account_is_suspended(profile):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Account suspended. Contact support.")
     login_throttle.clear(email, ip)
     return AuthOut(token=create_token(profile), profile=profile_out(profile))
 

@@ -205,14 +205,43 @@ export interface AdminStats {
   revenue_today: number;
   cancel_rate_7d: number;
   rider_cancel_rate_7d: number;
+  passenger_cancel_rate_7d: number;
   avg_pickup_wait_min_7d: number | null;
   eta_mae_min_7d: number | null;
+  eta_rmse_min_7d: number | null;
+  daily_trips: {
+    date: string;
+    trips: number;
+    completed: number;
+    cancelled: number;
+    completion_rate: number;
+  }[];
   online_riders: number;
   busy_riders: number;
   online_by_type: Record<VehicleType, number>;
   pending_riders: number;
   open_alerts: number;
   weather: { temperature_c: number; precipitation_mm: number; raining: boolean } | null;
+}
+
+export interface ModelEvaluation {
+  generated_at: string;
+  window_days: number;
+  eta: {
+    baseline_name: string;
+    recorded_model_name: string;
+    recorded_model_kind: string;
+    baseline: { mae_min: number | null; rmse_min: number | null; samples: number };
+    recorded: { mae_min: number | null; rmse_min: number | null; samples: number };
+  };
+  baseline_only_models: { component: string; name: string; kind: string }[];
+}
+
+export interface SimulatorStatus {
+  running: boolean;
+  speedup: number;
+  anomaly_rate: number;
+  active_simulated_trips: number;
 }
 
 export interface AdminRider {
@@ -237,9 +266,71 @@ export interface AdminRider {
   blocked_by?: number;
 }
 
+export interface AdminAccountStats {
+  trips_total: number;
+  trips_completed: number;
+  trips_cancelled: number;
+  account_cancellations: number;
+  cancellation_rate: number;
+}
+
+export interface AdminAccount {
+  id: string;
+  role: "user" | "rider";
+  full_name: string;
+  email: string;
+  phone: string;
+  status: "active" | "pending" | "verified" | "suspended";
+  account_status: "active" | "suspended";
+  rider_verification_status: "pending" | "verified" | null;
+  rider_id: string | null;
+  license_no: string | null;
+  is_simulated: boolean;
+  is_online: boolean;
+  busy: boolean;
+  lat: number | null;
+  lng: number | null;
+  rating: number | null;
+  rating_count: number;
+  vehicle: Vehicle | null;
+  documents_ready: boolean;
+  joined_at: string | null;
+  stats: AdminAccountStats;
+}
+
+export interface AdminAccountPage {
+  items: AdminAccount[];
+  total: number;
+}
+
+export interface AdminAccountTrip {
+  id: string;
+  status: TripStatus;
+  vehicle_type: VehicleType;
+  pickup_address: string;
+  drop_address: string;
+  distance_km: number;
+  fare_estimate: number;
+  fare_final: number | null;
+  requested_at: string;
+  completed_at: string | null;
+  cancelled_by: "user" | "rider" | "system" | null;
+  cancel_reason: string | null;
+}
+
+export interface AdminAccountTripPage {
+  items: AdminAccountTrip[];
+  total: number;
+  has_more: boolean;
+}
+
 export interface LiveData {
-  trips: Trip[];
+  trips: LiveTrip[];
   riders: { id: string; lat: number; lng: number; vehicle_type: VehicleType | null; busy: boolean }[];
+}
+
+export interface LiveTrip extends Trip {
+  gps_trace: [number, number][];
 }
 
 export interface SafetyAlert {
@@ -247,6 +338,7 @@ export interface SafetyAlert {
   trip_id: string;
   alert_type: "route_deviation" | "long_stop" | "sos" | "report";
   anomaly_score: number;
+  severity: "moderate" | "high" | null;
   details: {
     vehicle_type?: VehicleType;
     progress_pct?: number;
@@ -259,6 +351,7 @@ export interface SafetyAlert {
     trip_status?: TripStatus;
   };
   summary: string | null;
+  resolution_note: string | null;
   status: "open" | "reviewed" | "closed";
   created_at: string;
   trip_status: TripStatus;
@@ -322,14 +415,45 @@ export interface ZoneForecast {
   car: number;
   total: number;
   free_riders: number;
+  free_riders_by_type: Record<VehicleType, number>;
+}
+
+export interface ForecastMetrics {
+  mae: number | null;
+  rmse: number | null;
+  evaluated_hours: number;
+}
+
+export interface DemandModelMetrics {
+  all: ForecastMetrics;
+  by_vehicle: Record<VehicleType, ForecastMetrics>;
+}
+
+export interface DemandModelComparisonEntry {
+  name: string | null;
+  kind: "baseline" | "deep-learning";
+  status: "active" | "comparison" | "pending";
+  predictions_by_vehicle: Record<VehicleType, number> | null;
+  metrics: DemandModelMetrics | null;
 }
 
 export interface Forecasts {
   model: string;
   generated_at: string | null;
   raining: boolean;
+  horizon_minutes: 15 | 30 | 60;
   zones: ZoneForecast[];
-  hourly: { hour: number; forecast: number; actual: number | null }[];
+  hourly: {
+    hour: number;
+    forecast: number;
+    forecast_by_vehicle: Record<VehicleType, number>;
+    actual: number | null;
+    actual_by_vehicle: Record<VehicleType, number> | null;
+  }[];
+  model_comparison: {
+    baseline: DemandModelComparisonEntry;
+    deep_learning: DemandModelComparisonEntry;
+  };
 }
 
 export interface PricingRule {
@@ -342,6 +466,34 @@ export interface PricingRule {
   max_multiplier: number;
   commission_pct: number;
   cancel_fee: number;
+}
+
+export type PricingRuleValues = Omit<PricingRule, "id" | "vehicle_type">;
+
+export interface PricingRuleChange {
+  id: number;
+  vehicle_type: VehicleType;
+  previous_values: PricingRuleValues;
+  current_values: PricingRuleValues;
+  changed_by: string;
+  changed_by_email: string;
+  changed_at: string;
+}
+
+export interface HistoryPage<T> {
+  items: T[];
+  has_more: boolean;
+}
+
+export interface MultiplierHistoryEntry {
+  trip_id: string;
+  vehicle_type: VehicleType;
+  multiplier: number;
+  price_reason: string;
+  fare_estimate: number;
+  fare_final: number | null;
+  status: TripStatus;
+  requested_at: string;
 }
 
 export interface ModelInfo {

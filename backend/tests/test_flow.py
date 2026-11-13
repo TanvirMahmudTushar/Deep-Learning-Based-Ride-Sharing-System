@@ -6,6 +6,7 @@ from app.config import settings
 from app.db import SessionLocal
 from app.models import Rider, SafetyAlert, Trip
 from app.services import simulator
+from app.services import predictors
 
 GULSHAN = {"lat": 23.7810, "lng": 90.4150}
 DHANMONDI = {"lat": 23.7465, "lng": 90.3745}
@@ -92,10 +93,21 @@ def test_manual_rider_flow_with_deviation_alert(client, user_h, rider_h, admin_h
     alerts = client.get("/api/admin/alerts", headers=admin_h).json()
     alert = next(a for a in alerts if a["trip_id"] == trip["id"])
     assert alert["alert_type"] == "route_deviation" and alert["anomaly_score"] >= 1
+    assert alert["severity"] == "high"
 
     summary = client.post(f"/api/admin/alerts/{alert['id']}/summarize", headers=admin_h).json()["summary"]
-    assert "route" in summary.lower()
+    assert "route" in summary.lower() and "high" in summary.lower()
     assert client.post(f"/api/admin/alerts/{alert['id']}/status", headers=admin_h, json={"status": "reviewed"}).json()["status"] == "reviewed"
+    unresolved = client.post(f"/api/admin/alerts/{alert['id']}/status", headers=admin_h, json={"status": "closed"})
+    assert unresolved.status_code == 422
+    resolved = client.post(
+        f"/api/admin/alerts/{alert['id']}/status",
+        headers=admin_h,
+        json={"status": "closed", "resolution_note": "Confirmed safe route and contacted rider."},
+    ).json()
+    assert resolved["status"] == "closed"
+    assert resolved["resolution_note"] == "Confirmed safe route and contacted rider."
+    assert client.get("/api/admin/alerts", headers=admin_h, params={"status_filter": "resolved"}).json()[0]["id"] == alert["id"]
 
     done = client.post(f"/api/rider/trips/{trip['id']}/complete", headers=rider_h).json()
     assert done["status"] == "completed"
@@ -137,7 +149,7 @@ def test_no_riders_returns_409(client, user_h):
     assert "car" in resp.json()["detail"]
 
 
-def test_long_stop_alert(client, user_h, rider_h):
+def test_long_stop_alert(client, user_h, rider_h, admin_h):
     trip = client.post("/api/trips", headers=user_h, json={"pickup": GULSHAN, "drop": DHANMONDI, "vehicle_type": "bike"}).json()
     client.post(f"/api/rider/offers/{trip['id']}/accept", headers=rider_h)
     client.post(f"/api/rider/trips/{trip['id']}/start", headers=rider_h)
@@ -149,10 +161,12 @@ def test_long_stop_alert(client, user_h, rider_h):
     with SessionLocal() as db:
         types = set(db.scalars(select(SafetyAlert.alert_type).where(SafetyAlert.trip_id == trip["id"])))
     assert types == {"long_stop"}
+    alert = next(a for a in client.get("/api/admin/alerts", headers=admin_h).json() if a["trip_id"] == trip["id"])
+    assert alert["severity"] == "moderate"
     client.post(f"/api/rider/trips/{trip['id']}/complete", headers=rider_h)
 
 
-def test_admin_dashboard_endpoints(client, admin_h):
+def test_admin_dashboard_endpoints(client, admin_h, user_h):
     stats = client.get("/api/admin/stats", headers=admin_h).json()
     assert stats["pending_riders"] == 1
     assert stats["eta_mae_min_7d"] is not None
@@ -160,6 +174,9 @@ def test_admin_dashboard_endpoints(client, admin_h):
     forecasts = client.get("/api/admin/forecasts", headers=admin_h).json()
     assert len(forecasts["zones"]) == 12 and len(forecasts["hourly"]) == 24
     assert sum(z["total"] for z in forecasts["zones"]) > 0
+    assert forecasts["horizon_minutes"] == 60
+    assert forecasts["model_comparison"]["baseline"]["status"] == "active"
+    assert forecasts["model_comparison"]["deep_learning"]["status"] == "pending"
 
     riders = client.get("/api/admin/riders", headers=admin_h, params={"status_filter": "pending"}).json()
     assert len(riders) == 1
@@ -170,15 +187,79 @@ def test_admin_dashboard_endpoints(client, admin_h):
     docs = client.get(f"/api/admin/riders/{rider_id}/documents", headers=admin_h).json()["required"]
     for d in docs:
         assert client.post(f"/api/admin/documents/{d['document']['id']}/review", headers=admin_h, json={"status": "approved"}).status_code == 200
+
     assert client.post(f"/api/admin/riders/{rider_id}/verify", headers=admin_h).json()["status"] == "verified"
 
     rules = client.get("/api/admin/pricing", headers=admin_h).json()
     bike = next(r for r in rules if r["vehicle_type"] == "bike")
-    updated = client.put("/api/admin/pricing/bike", headers=admin_h, json={**{k: bike[k] for k in ("base_fare", "per_km", "per_min", "min_fare", "max_multiplier")}, "base_fare": 25})
+    pricing_body = {k: bike[k] for k in ("base_fare", "per_km", "per_min", "min_fare", "max_multiplier", "commission_pct")}
+    pricing_body.update(base_fare=25, max_multiplier=1.6)
+    updated = client.put("/api/admin/pricing/bike", headers=admin_h, json=pricing_body)
     assert updated.json()["base_fare"] == 25
+    rule_history = client.get("/api/admin/pricing/rule-history", headers=admin_h).json()
+    assert rule_history["items"][0]["vehicle_type"] == "bike"
+    assert rule_history["items"][0]["previous_values"]["base_fare"] == bike["base_fare"]
+    assert rule_history["items"][0]["current_values"]["max_multiplier"] == 1.6
+    assert rule_history["items"][0]["changed_by_email"] == "admin@ride.local"
+
+    unchanged = client.put("/api/admin/pricing/bike", headers=admin_h, json=pricing_body)
+    assert unchanged.status_code == 200
+    assert len(client.get("/api/admin/pricing/rule-history", headers=admin_h).json()["items"]) == len(rule_history["items"])
+
+    multiplier_history = client.get("/api/admin/pricing/multiplier-history", headers=admin_h).json()
+    assert multiplier_history["items"]
+    assert {"trip_id", "vehicle_type", "multiplier", "requested_at"} <= multiplier_history["items"][0].keys()
+    assert client.get("/api/admin/pricing/multiplier-history?vehicle_type=unknown", headers=admin_h).status_code == 422
+    assert client.get("/api/admin/pricing/rule-history", headers=user_h).status_code == 403
 
     live = client.get("/api/admin/trips/live", headers=admin_h).json()
     assert "trips" in live and "riders" in live
+
+
+def test_demand_forecast_horizons_and_vehicle_breakdowns(client, admin_h):
+    results = {
+        minutes: client.get(
+            "/api/admin/forecasts", headers=admin_h, params={"horizon_minutes": minutes}
+        ).json()
+        for minutes in (15, 30, 60)
+    }
+
+    for minutes, result in results.items():
+        assert result["horizon_minutes"] == minutes
+        assert len(result["zones"]) == 12
+        for zone in result["zones"]:
+            assert set(zone["free_riders_by_type"]) == {"bike", "cng", "car"}
+            assert abs(zone["total"] - sum(zone[vehicle] for vehicle in ("bike", "cng", "car"))) < 0.02
+        assert set(result["hourly"][0]["forecast_by_vehicle"]) == {"bike", "cng", "car"}
+        assert result["hourly"][0]["actual_by_vehicle"] is not None
+        metrics = result["model_comparison"]["baseline"]["metrics"]
+        assert set(metrics["by_vehicle"]) == {"bike", "cng", "car"}
+
+    for short, medium, long in zip(results[15]["zones"], results[30]["zones"], results[60]["zones"]):
+        assert short["total"] <= medium["total"] <= long["total"]
+    assert client.get("/api/admin/forecasts?horizon_minutes=45", headers=admin_h).status_code == 422
+
+
+def test_registered_deep_learning_demand_model_is_used(client, admin_h, monkeypatch):
+    class ConstantDemandModel:
+        name = "test-demand-dl"
+        kind = "deep-learning"
+        description = "Test model"
+
+        def predict(self, features):
+            return 1.0
+
+    monkeypatch.setitem(predictors.registry, "demand", ConstantDemandModel())
+    response = client.get("/api/admin/forecasts?horizon_minutes=30", headers=admin_h)
+    assert response.status_code == 200, response.text
+    forecasts = response.json()
+
+    assert forecasts["model"] == "test-demand-dl"
+    assert forecasts["zones"][0]["bike"] == 2.0
+    comparison = forecasts["model_comparison"]
+    assert comparison["baseline"]["status"] == "comparison"
+    assert comparison["deep_learning"]["status"] == "active"
+    assert comparison["deep_learning"]["predictions_by_vehicle"]["bike"] == 24.0
 
 
 def test_register_rider_needs_verification(client):
