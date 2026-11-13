@@ -9,6 +9,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
+from pydantic import BaseModel, Field
 from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import aliased, selectinload
 
@@ -43,11 +44,11 @@ from app.schemas import (
 )
 from app.security import DB, Admin, Staff, account_is_suspended
 from app.realtime import ADMINS, emit, hub
-from app.services import availability, cancel_fees, demand, documents, rider_prefs
+from app.services import availability, cancel_fees, demand, documents, rider_prefs, simulator
 from app.services import trips as trip_service
 from app.services.alert_severity import anomaly_severity
 from app.services.alerts import ensure_summary
-from app.services.predictors import active_demand_model, demand_baseline_forecaster, predict_demand
+from app.services.predictors import active_demand_model, demand_baseline_forecaster, eta_predictor, predict_demand, registry
 from app.services.weather import current_weather, is_raining
 from app.services.zones import all_zones
 from app.routers.vehicle_changes import pending_change_rider_ids
@@ -56,10 +57,17 @@ from app.routers.vehicle_changes import pending_change_rider_ids
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
+class SimulatorControlsIn(BaseModel):
+    speedup: float = Field(ge=1, le=10)
+    anomaly_rate: float = Field(ge=0, le=0.5)
+
+
 @router.get("/stats")
 def stats(db: DB, admin: Admin):
     today = local_day_start()
     week = utcnow() - timedelta(days=7)
+    today_local = local_time(utcnow()).date()
+    first_day = today_local - timedelta(days=6)
 
     def count(*where) -> int:
         return db.scalar(select(func.count(Trip.id)).where(*where)) or 0
@@ -67,14 +75,40 @@ def stats(db: DB, admin: Admin):
     trips_week = count(Trip.requested_at >= week)
     cancelled_week = count(Trip.requested_at >= week, Trip.status == "cancelled")
     rider_cancels_week = count(Trip.requested_at >= week, Trip.cancelled_by == "rider")
+    passenger_cancels_week = count(Trip.requested_at >= week, Trip.cancelled_by == "user")
 
     completed = db.execute(
-        select(Trip.predicted_eta_min, Trip.actual_duration_min, Trip.pickup_eta_min).where(
+        select(Trip.predicted_eta_min, Trip.actual_duration_min).where(
             Trip.completed_at >= week, Trip.status == "completed", Trip.actual_duration_min.is_not(None)
         )
     ).all()
-    eta_errors = [abs(p - a) for p, a, _ in completed]
-    waits = [w for _, _, w in completed if w is not None]
+    eta_errors = [abs(predicted - actual) for predicted, actual in completed if predicted is not None]
+    wait_rows = db.execute(
+        select(Trip.requested_at, Trip.arrived_at).where(Trip.requested_at >= week, Trip.arrived_at.is_not(None))
+    ).all()
+    waits = [
+        (arrived_at - requested_at).total_seconds() / 60
+        for requested_at, arrived_at in wait_rows
+        if arrived_at >= requested_at
+    ]
+
+    daily = {
+        (first_day + timedelta(days=offset)).isoformat(): {"trips": 0, "completed": 0, "cancelled": 0}
+        for offset in range(7)
+    }
+    daily_start = datetime.combine(first_day, time.min, tzinfo=DHAKA_TZ).astimezone(UTC).replace(tzinfo=None)
+    daily_rows = db.execute(
+        select(Trip.requested_at, Trip.status).where(Trip.requested_at >= daily_start)
+    ).all()
+    for requested_at, trip_status in daily_rows:
+        day = local_time(requested_at).date().isoformat()
+        if day not in daily:
+            continue
+        daily[day]["trips"] += 1
+        if trip_status == "completed":
+            daily[day]["completed"] += 1
+        elif trip_status == "cancelled":
+            daily[day]["cancelled"] += 1
 
     online = db.scalars(select(Rider).where(Rider.is_online.is_(True)).options(selectinload(Rider.vehicles))).all()
     busy = availability.busy_rider_ids(db)
@@ -93,8 +127,20 @@ def stats(db: DB, admin: Admin):
         ),
         "cancel_rate_7d": round(cancelled_week / trips_week, 3) if trips_week else 0.0,
         "rider_cancel_rate_7d": round(rider_cancels_week / trips_week, 3) if trips_week else 0.0,
+        "passenger_cancel_rate_7d": round(passenger_cancels_week / trips_week, 3) if trips_week else 0.0,
         "avg_pickup_wait_min_7d": round(sum(waits) / len(waits), 1) if waits else None,
         "eta_mae_min_7d": round(sum(eta_errors) / len(eta_errors), 2) if eta_errors else None,
+        "eta_rmse_min_7d": round((sum(error * error for error in eta_errors) / len(eta_errors)) ** 0.5, 2)
+        if eta_errors
+        else None,
+        "daily_trips": [
+            {
+                "date": day,
+                **values,
+                "completion_rate": round(values["completed"] / values["trips"], 3) if values["trips"] else 0.0,
+            }
+            for day, values in daily.items()
+        ],
         "online_riders": len(online),
         "busy_riders": sum(1 for r in online if r.id in busy),
         "online_by_type": {vt: online_by_type.get(vt, 0) for vt in VEHICLE_TYPES},
@@ -113,6 +159,91 @@ def stats(db: DB, admin: Admin):
         if weather
         else None,
     }
+
+
+@router.get("/model-evaluation")
+def model_evaluation(db: DB, admin: Admin):
+    now = utcnow()
+    since = now - timedelta(days=30)
+    trips = db.execute(
+        select(
+            Trip.vehicle_type_requested,
+            Trip.distance_km,
+            Trip.requested_at,
+            Trip.predicted_eta_min,
+            Trip.actual_duration_min,
+        ).where(
+            Trip.completed_at >= since,
+            Trip.status == "completed",
+            Trip.actual_duration_min.is_not(None),
+            Trip.predicted_eta_min.is_not(None),
+        )
+    ).all()
+
+    baseline_errors: list[float] = []
+    recorded_errors: list[float] = []
+    for vehicle_type, distance_km, requested_at, predicted_eta, actual_duration in trips:
+        baseline_eta = eta_predictor.predict_eta(distance_km, vehicle_type, requested_at)
+        baseline_errors.append(abs(baseline_eta - actual_duration))
+        recorded_errors.append(abs(predicted_eta - actual_duration))
+
+    def metrics(errors: list[float]) -> dict[str, float | int | None]:
+        if not errors:
+            return {"mae_min": None, "rmse_min": None, "samples": 0}
+        return {
+            "mae_min": round(sum(errors) / len(errors), 2),
+            "rmse_min": round((sum(error * error for error in errors) / len(errors)) ** 0.5, 2),
+            "samples": len(errors),
+        }
+
+    eta_model = registry["eta"]
+    return {
+        "generated_at": iso_utc(now),
+        "window_days": 30,
+        "eta": {
+            "baseline_name": eta_predictor.name,
+            "recorded_model_name": eta_model.name,
+            "recorded_model_kind": eta_model.kind,
+            "baseline": metrics(baseline_errors),
+            "recorded": metrics(recorded_errors),
+        },
+        "baseline_only_models": [
+            {"component": component, "name": model.name, "kind": model.kind}
+            for component, model in registry.items()
+            if component != "eta"
+        ],
+    }
+
+
+def _simulator_status(db: DB) -> dict:
+    simulated_rider_ids = select(Rider.id).where(Rider.is_simulated.is_(True))
+    active_simulated_trips = db.scalar(
+        select(func.count(Trip.id)).where(
+            Trip.status.in_(ACTIVE_TRIP_STATUSES),
+            or_(
+                Trip.auto_drive.is_(True),
+                Trip.rider_id.in_(simulated_rider_ids),
+                Trip.offered_rider_id.in_(simulated_rider_ids),
+            ),
+        )
+    ) or 0
+    return {
+        "running": settings.simulator_enabled,
+        "speedup": settings.simulator_speedup,
+        "anomaly_rate": settings.simulator_anomaly_rate,
+        "active_simulated_trips": active_simulated_trips,
+    }
+
+
+@router.get("/simulator")
+def simulator_status(db: DB, admin: Admin):
+    return _simulator_status(db)
+
+
+@router.put("/simulator")
+def update_simulator(controls: SimulatorControlsIn, db: DB, admin: Admin):
+    simulator.update_controls(controls.speedup, controls.anomaly_rate)
+    return _simulator_status(db)
 
 
 @router.get("/riders")

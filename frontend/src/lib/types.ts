@@ -205,14 +205,43 @@ export interface AdminStats {
   revenue_today: number;
   cancel_rate_7d: number;
   rider_cancel_rate_7d: number;
+  passenger_cancel_rate_7d: number;
   avg_pickup_wait_min_7d: number | null;
   eta_mae_min_7d: number | null;
+  eta_rmse_min_7d: number | null;
+  daily_trips: {
+    date: string;
+    trips: number;
+    completed: number;
+    cancelled: number;
+    completion_rate: number;
+  }[];
   online_riders: number;
   busy_riders: number;
   online_by_type: Record<VehicleType, number>;
   pending_riders: number;
   open_alerts: number;
   weather: { temperature_c: number; precipitation_mm: number; raining: boolean } | null;
+}
+
+export interface ModelEvaluation {
+  generated_at: string;
+  window_days: number;
+  eta: {
+    baseline_name: string;
+    recorded_model_name: string;
+    recorded_model_kind: string;
+    baseline: { mae_min: number | null; rmse_min: number | null; samples: number };
+    recorded: { mae_min: number | null; rmse_min: number | null; samples: number };
+  };
+  baseline_only_models: { component: string; name: string; kind: string }[];
+}
+
+export interface SimulatorStatus {
+  running: boolean;
+  speedup: number;
+  anomaly_rate: number;
+  active_simulated_trips: number;
 }
 
 export interface AdminRider {
