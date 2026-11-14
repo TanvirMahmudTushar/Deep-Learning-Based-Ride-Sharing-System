@@ -30,6 +30,11 @@ SUPPORT_ROUTES = {
     ("POST", "/api/admin/alerts/x/release"),
     ("POST", "/api/admin/alerts/x/notes"),
     ("GET", "/api/admin/trips/x"),
+    # Saved replies (#60): agents manage their own; team replies stay admin-only inside the route.
+    ("GET", "/api/admin/saved-replies"),
+    ("POST", "/api/admin/saved-replies"),
+    ("PUT", "/api/admin/saved-replies/x"),
+    ("DELETE", "/api/admin/saved-replies/x"),
 }
 
 

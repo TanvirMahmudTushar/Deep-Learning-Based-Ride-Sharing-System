@@ -360,6 +360,8 @@ export interface SafetyAlert {
   resolution_note: string | null;
   status: "open" | "reviewed" | "closed";
   created_at: string;
+  /** When the trip was booked (for the {trip_date} placeholder in saved replies). */
+  trip_requested_at?: string;
   trip_status: TripStatus;
   vehicle_type: VehicleType;
   pickup_address: string;
@@ -740,4 +742,19 @@ export interface PassengerRiderEntry {
 export interface PassengerRiders {
   favourites: PassengerRiderEntry[];
   blocked: PassengerRiderEntry[];
+}
+
+export type ReportCategory = "safety" | "driving" | "rider_behaviour" | "fare" | "lost_item" | "other";
+
+/** A support desk reply template: the agent's own, or shared with the whole team. */
+export interface SavedReply {
+  id: string;
+  title: string;
+  body: string;
+  category: ReportCategory | null;
+  shared: boolean;
+  owner_name: string | null;
+  mine: boolean;
+  can_edit: boolean;
+  updated_at: string;
 }

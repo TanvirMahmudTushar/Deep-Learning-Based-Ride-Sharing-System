@@ -349,6 +349,23 @@ class AlertNote(Base):
     author: Mapped[Profile] = relationship()
 
 
+class SavedReply(Base):
+    """A reply template for the support desk. Private to its owner, or shared with the whole team
+    (only admins can add or change shared ones). Default team replies have no owner."""
+
+    __tablename__ = "saved_replies"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    owner_id: Mapped[str | None] = mapped_column(ForeignKey("profiles.id"), index=True)
+    title: Mapped[str] = mapped_column(String(60))
+    body: Mapped[str] = mapped_column(Text)
+    # A report category the reply suits (lost_item, fare, ...), or None for any report.
+    category: Mapped[str | None] = mapped_column(String(20))
+    shared: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class Payment(Base):
     """Cash collected by the rider at drop-off. The platform's commission is owed by the rider."""
 
