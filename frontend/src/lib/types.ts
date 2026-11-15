@@ -693,6 +693,8 @@ export interface TripMessage {
   mine: boolean;
 }
 
+export type StaffTripMessage = Omit<TripMessage, "mine">;
+
 export interface PassengerReview {
   trip_id: string;
   stars: number;
