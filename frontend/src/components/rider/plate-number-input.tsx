@@ -1,13 +1,11 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { useEffect, useId, useMemo, useState } from "react";
 import { Check, ChevronDown, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { SPRING_UI } from "@/components/ui/motion";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BRTA_CLASS_CODES, BRTA_REGIONS, formatPlate, parsePlate, type BrtaRegion } from "@/lib/brta";
 import { cn } from "@/lib/utils";
@@ -53,7 +51,7 @@ export function PlateNumberInput({
   const parsed = useMemo(() => parsePlate(value || "", vehicleType), [value, vehicleType]);
 
   const [region, setRegion] = useState(parsed.region);
-  const [classCode, setClassCode] = useState(parsed.classCode);
+  const [classCodeState, setClassCode] = useState(parsed.classCode);
   const [number6, setNumber6] = useState(parsed.number6);
 
   const [selectorOpen, setSelectorOpen] = useState(false);
@@ -61,25 +59,28 @@ export function PlateNumberInput({
 
   const availableClasses = BRTA_CLASS_CODES[vehicleType] || BRTA_CLASS_CODES.bike;
 
-  // When vehicleType changes, ensure classCode is valid for that type
-  useEffect(() => {
-    const valid = availableClasses.some((c) => c.code === classCode);
-    if (!valid && availableClasses[0]) {
-      const nextClass = availableClasses[0].code;
-      setClassCode(nextClass);
-      const nextPlate = formatPlate(region, nextClass, number6);
-      onChange?.(nextPlate);
+  // Sync state if the external value or vehicle type changes (adjusted during render, not in an effect)
+  const [synced, setSynced] = useState({ value, vehicleType });
+  if (synced.value !== value || synced.vehicleType !== vehicleType) {
+    setSynced({ value, vehicleType });
+    if (value) {
+      const p = parsePlate(value, vehicleType);
+      setRegion(p.region);
+      setClassCode(p.classCode);
+      setNumber6(p.number6);
     }
-  }, [vehicleType, availableClasses, classCode, region, number6, onChange]);
+  }
 
-  // Sync state if external value changes drastically
+  // The class has to be valid for the vehicle type; if it isn't, fall back to the first valid one.
+  const classIsValid = availableClasses.some((c) => c.code === classCodeState);
+  const classCode = classIsValid ? classCodeState : (availableClasses[0]?.code ?? classCodeState);
+
+  // Tell the parent about the corrected plate.
   useEffect(() => {
-    if (!value) return;
-    const p = parsePlate(value, vehicleType);
-    setRegion(p.region);
-    setClassCode(p.classCode);
-    setNumber6(p.number6);
-  }, [value, vehicleType]);
+    if (!classIsValid && availableClasses[0]) {
+      onChange?.(formatPlate(region, classCode, number6));
+    }
+  }, [classIsValid, availableClasses, classCode, region, number6, onChange]);
 
   const filteredRegions = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();

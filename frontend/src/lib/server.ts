@@ -18,26 +18,24 @@ export async function fetchFileUrl(path: string): Promise<string> {
 
 /** React hook that resolves a protected API file path into a revocable object URL. */
 export function useAuthFileUrl(path?: string | null): string | null {
-  const [url, setUrl] = useState<string | null>(null);
+  // Remember which path the URL belongs to, so a stale URL is never returned for a new path.
+  const [resolved, setResolved] = useState<{ path: string; url: string } | null>(null);
 
   useEffect(() => {
-    if (!path) {
-      setUrl(null);
-      return;
-    }
+    if (!path) return;
     let active = true;
     let objectUrl: string | null = null;
     fetchFileUrl(path)
-      .then((resolved) => {
+      .then((next) => {
         if (!active) {
-          URL.revokeObjectURL(resolved);
+          URL.revokeObjectURL(next);
           return;
         }
-        objectUrl = resolved;
-        setUrl(resolved);
+        objectUrl = next;
+        setResolved({ path, url: next });
       })
       .catch(() => {
-        if (active) setUrl(null);
+        if (active) setResolved(null);
       });
     return () => {
       active = false;
@@ -45,5 +43,5 @@ export function useAuthFileUrl(path?: string | null): string | null {
     };
   }, [path]);
 
-  return url;
+  return path && resolved?.path === path ? resolved.url : null;
 }

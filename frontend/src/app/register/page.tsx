@@ -205,7 +205,7 @@ function RegisterForm() {
                           transition={SPRING_UI}
                           className="overflow-hidden rounded-lg border p-3 text-sm text-muted-foreground"
                         >
-                          You can log in straight away, but you won&apos;t see any trips or reports until an admin approves your account.
+                          You can log in straight away and open the support desk.
                         </motion.p>
                       )}
                       {role === "rider" && (

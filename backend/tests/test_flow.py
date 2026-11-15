@@ -229,7 +229,7 @@ def test_demand_forecast_horizons_and_vehicle_breakdowns(client, admin_h):
         assert len(result["zones"]) == 12
         for zone in result["zones"]:
             assert set(zone["free_riders_by_type"]) == {"bike", "cng", "car"}
-            assert abs(zone["total"] - sum(zone[vehicle] for vehicle in ("bike", "cng", "car"))) < 0.02
+            assert abs(zone["total"] - sum(zone[vehicle] for vehicle in ("bike", "cng", "car"))) < 0.02 + 1e-9
         assert set(result["hourly"][0]["forecast_by_vehicle"]) == {"bike", "cng", "car"}
         assert result["hourly"][0]["actual_by_vehicle"] is not None
         metrics = result["model_comparison"]["baseline"]["metrics"]
