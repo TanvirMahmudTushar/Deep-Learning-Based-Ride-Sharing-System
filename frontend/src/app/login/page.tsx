@@ -27,7 +27,7 @@ const HEADINGS: Record<string, { title: string; description: string }> = {
   user: { title: "Passenger log in", description: "Log in to book a ride and track your trips." },
   rider: { title: "Rider log in", description: "Log in to go online and take trip offers." },
   admin: { title: "Admin log in", description: "For platform staff. Admin accounts can't be created through sign-up." },
-  support: { title: "Support log in", description: "New support accounts need admin approval before they can see anything." },
+  support: { title: "Support log in", description: "Log in to see trips, alerts and passenger reports." },
 };
 const DEFAULT_HEADING = { title: "Log in", description: "Everyone uses the same login." };
 

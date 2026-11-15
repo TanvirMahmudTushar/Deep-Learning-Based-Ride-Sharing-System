@@ -60,14 +60,14 @@ def register(body: RegisterIn, db: DB):
         phone=body.phone.strip(),
         password_hash=hash_password(body.password),
         role=body.role,
-        # Support agents can see other people's trips, so they get no access until an admin approves them.
-        approval_status="pending" if body.role == "support" else None,
+        # Support agents get access straight away; an admin can still remove it later.
+        approval_status="approved" if body.role == "support" else None,
         phone_verified=body.otp is not None,
     )
     db.add(profile)
     db.flush()
     if body.role == "support":
-        emit(db, ADMINS, "support.changed", notify=("New support agent", f"{profile.full_name} is waiting for approval."))
+        emit(db, ADMINS, "support.changed", notify=("New support agent", f"{profile.full_name} signed up as a support agent."))
     if body.role == "rider":
         rider = Rider(profile_id=profile.id, license_no=(body.license_no or "").strip(), status="pending")
         db.add(rider)
