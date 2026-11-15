@@ -114,10 +114,6 @@ def report(trip_id: str, body: ReportIn, db: DB, user: Passenger):
     trip = _own_trip(db, user, trip_id)
     if trip.status not in ("completed", "cancelled"):
         raise HTTPException(status.HTTP_409_CONFLICT, "Report a problem after the trip ends; use the emergency button during a trip")
-    if body.category == "fee" and (
-        trip.status != "cancelled" or trip.cancel_fee is None or trip.cancel_fee_status not in ("owed", "paid")
-    ):
-        raise HTTPException(status.HTTP_409_CONFLICT, "Only a cancelled trip with an unpaid or paid cancellation fee can be disputed")
     # Reports support has closed don't count, so a passenger can report something new later.
     open_reports = db.scalar(
         select(func.count(SafetyAlert.id)).where(

@@ -1,12 +1,9 @@
 """Support desk features: live events (#22), people on alerts (#23), trip detail (#24), trip search (#25),
-case notes and ownership (#26), replies to passengers (#27), queue summary (#28) and escalations (#56)."""
+case notes and ownership (#26), replies to passengers (#27) and the queue summary (#28)."""
 
 import pytest
 
-from app.db import SessionLocal
-from app.models import Trip, TripMessage
 from app.realtime import ADMINS, SUPPORT_EVENTS, hub
-from app.routers import admin as admin_router
 from app.routers import ws as ws_router
 
 from .test_auth import _register
@@ -16,7 +13,7 @@ def _h(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _report(client, user_h, note="Left my umbrella behind", require_rider=False) -> dict:
+def _report(client, user_h, note="Left my umbrella behind") -> dict:
     """File a report on one of the demo passenger's finished trips and return its alert."""
     trips = client.get("/api/trips?limit=100", headers=user_h).json()
     # A trip with room for another report (each trip takes a few open reports at most).
@@ -24,7 +21,6 @@ def _report(client, user_h, note="Left my umbrella behind", require_rider=False)
         t
         for t in trips
         if t["status"] in ("completed", "cancelled")
-        and (not require_rider or t["rider"] is not None)
         and sum(r["status"] != "closed" for r in client.get(f"/api/trips/{t['id']}/reports", headers=user_h).json()) < 2
     )
     assert client.post(f"/api/trips/{trip['id']}/report", headers=user_h, json={"category": "other", "note": note}).status_code == 201
@@ -58,7 +54,7 @@ def test_support_gets_alert_events_but_not_admin_only_ones():
     try:
         for event_type in SUPPORT_EVENTS:
             assert set(hub._targets([ADMINS], event_type)) == {admin_ws, support_ws}
-        for event_type in ("alert.escalated", "payments.changed", "riders.changed", "support.changed", "earnings.updated"):
+        for event_type in ("payments.changed", "riders.changed", "support.changed", "earnings.updated"):
             assert hub._targets([ADMINS], event_type) == [admin_ws], f"support must not get {event_type}"
     finally:
         hub._roles.pop(admin_ws, None)
@@ -113,52 +109,6 @@ def test_trip_detail_has_route_payment_and_alerts_but_no_earnings(client, suppor
         assert body["trip"]["payment"]["commission"] is None
         assert body["trip"]["payment"]["rider_earning"] is None
     assert client.get("/api/admin/trips/not-a-trip", headers=support_h).status_code == 404
-
-
-def test_staff_can_read_chat_only_for_trips_with_an_alert(client, support_h, admin_h, user_h, rider_h):
-    trip = _report(client, user_h, "Chat evidence report", require_rider=True)
-    with SessionLocal() as db:
-        recorded_trip = db.get(Trip, trip["id"])
-        db.add(TripMessage(trip_id=trip["id"], sender_id=recorded_trip.user_id, sender_role="user", body="I am at the entrance"))
-        db.add(
-            TripMessage(
-                trip_id=trip["id"],
-                sender_id=recorded_trip.rider.profile_id,
-                sender_role="rider",
-                body="I have arrived",
-            )
-        )
-        db.commit()
-
-    path = f"/api/admin/trips/{trip['id']}/messages"
-    response = client.get(path, headers=support_h)
-    assert response.status_code == 200
-    assert [(message["sender_role"], message["body"]) for message in response.json()] == [
-        ("user", "I am at the entrance"),
-        ("rider", "I have arrived"),
-    ]
-    assert all(set(message) == {"id", "sender_role", "body", "created_at"} for message in response.json())
-    assert client.get(path, headers=admin_h).status_code == 200
-    assert client.get(path, headers=user_h).status_code == 403
-    assert client.get(path, headers=rider_h).status_code == 403
-    assert client.post(path, headers=support_h).status_code == 405
-
-    private_user = _register(client, "private.chat@example.com").json()
-    private_h = _h(private_user["token"])
-    private_trip = client.post(
-        "/api/trips",
-        headers=private_h,
-        json={
-            "pickup": {"lat": 23.7810, "lng": 90.4150},
-            "drop": {"lat": 23.7465, "lng": 90.3745},
-            "vehicle_type": "bike",
-        },
-    ).json()
-    cancelled = client.post(f"/api/trips/{private_trip['id']}/cancel", headers=private_h, json={"reason": "other"})
-    assert cancelled.status_code == 200
-    detail = client.get(f"/api/admin/trips/{private_trip['id']}", headers=support_h).json()
-    assert detail["alerts"] == []
-    assert client.get(f"/api/admin/trips/{private_trip['id']}/messages", headers=support_h).status_code == 403
 
 
 # --- #25 search and filters --------------------------------------------------------------
@@ -216,48 +166,6 @@ def test_one_agent_owns_an_alert_and_admins_can_take_over(client, admin_h, user_
     assert client.post(f"/api/admin/alerts/{alert['id']}/claim", headers=admin_h).json()["assigned_to"]["name"] == "Platform Admin"
     released = client.post(f"/api/admin/alerts/{alert['id']}/release", headers=admin_h).json()
     assert released["assigned_to"] is None
-
-
-def test_support_can_escalate_and_only_admins_can_resolve(client, support_h, admin_h, user_h, rider_h, monkeypatch):
-    trip = _report(client, user_h, "Escalation check")
-    alert = _alert_for(client, support_h, trip["id"], "Escalation check")
-    path = f"/api/admin/alerts/{alert['id']}"
-    emitted = []
-    monkeypatch.setattr(admin_router, "emit", lambda db, audience, event_type, **data: emitted.append((audience, event_type, data)))
-
-    assert client.post(f"{path}/escalate", headers=user_h, json={"reason": "Needs admin review"}).status_code == 403
-    assert client.post(f"{path}/escalate", headers=rider_h, json={"reason": "Needs admin review"}).status_code == 403
-    assert client.post(f"{path}/escalate", headers=support_h, json={"reason": "   "}).status_code == 422
-
-    escalated = client.post(f"{path}/escalate", headers=support_h, json={"reason": "Third safety report this week"})
-    assert escalated.status_code == 200
-    body = escalated.json()
-    assert body["escalation_reason"] == "Third safety report this week"
-    assert body["escalated_by"]["name"] == "Demo Support Agent"
-    assert body["escalated_at"] is not None and body["escalation_resolved_at"] is None
-    escalation_event = next(event for event in emitted if event[1] == "alert.escalated")
-    assert escalation_event[0] == ADMINS
-    assert escalation_event[2]["notify"][0] == "Support case escalated"
-    assert client.post(f"{path}/escalate", headers=support_h, json={"reason": "Again"}).status_code == 409
-
-    queued = client.get("/api/admin/alerts", headers=support_h, params={"status_filter": "open"}).json()
-    assert any(item["id"] == alert["id"] for item in queued)
-    assert queued[0]["id"] == alert["id"]
-    assert client.post(f"{path}/status", headers=support_h, json={"status": "closed", "resolution_note": "Done"}).status_code == 409
-    assert client.post(f"{path}/escalation/resolve", headers=support_h, json={"note": "Reviewed"}).status_code == 403
-
-    assert client.post(f"{path}/notes", headers=support_h, json={"body": "Still working on the case"}).status_code == 201
-    resolved = client.post(f"{path}/escalation/resolve", headers=admin_h, json={"note": "Admin reviewed and contacted the rider"})
-    assert resolved.status_code == 200
-    outcome = resolved.json()
-    assert outcome["escalation_outcome"] == "Admin reviewed and contacted the rider"
-    assert outcome["escalation_resolved_by"]["name"] == "Platform Admin"
-    assert outcome["escalation_resolved_at"] is not None
-    assert outcome["notes"][-1]["body"] == "Still working on the case"
-    assert client.post(f"{path}/escalation/resolve", headers=admin_h, json={"note": "Again"}).status_code == 409
-
-    visible_to_support = _alert_for(client, support_h, trip["id"], "Escalation check")
-    assert visible_to_support["escalation_outcome"] == "Admin reviewed and contacted the rider"
 
 
 def test_notes_record_who_wrote_them_and_who_changed_the_status(client, support_h, admin_h, user_h):

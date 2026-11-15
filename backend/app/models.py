@@ -273,12 +273,6 @@ class SafetyAlert(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     # The admin or support agent handling this alert, so two people don't work on the same one.
     assigned_to: Mapped[str | None] = mapped_column(ForeignKey("profiles.id"))
-    escalated_at: Mapped[datetime | None] = mapped_column(DateTime)
-    escalated_by: Mapped[str | None] = mapped_column(ForeignKey("profiles.id"))
-    escalation_reason: Mapped[str | None] = mapped_column(Text)
-    escalation_resolved_at: Mapped[datetime | None] = mapped_column(DateTime)
-    escalation_resolved_by: Mapped[str | None] = mapped_column(ForeignKey("profiles.id"))
-    escalation_outcome: Mapped[str | None] = mapped_column(Text)
 
     trip: Mapped[Trip] = relationship()
     notes: Mapped[list["AlertNote"]] = relationship(back_populates="alert", order_by="AlertNote.created_at")
