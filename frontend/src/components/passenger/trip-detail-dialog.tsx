@@ -43,6 +43,10 @@ function Timeline({ trip }: { trip: Trip }) {
 
 const REPORT_STATUS: Record<PassengerReport["status"], string> = { received: "Received", in_review: "Being reviewed", closed: "Closed" };
 
+function reportCategoryLabel(category: string | null) {
+  return category === "fee" ? "Late-cancellation fee dispute" : (category ?? "other").replace(/_/g, " ");
+}
+
 /** The passenger's reports on this trip, with their status and any reply from support. */
 function ReportUpdates({ tripId }: { tripId: string }) {
   const { data: reports } = useSWR<PassengerReport[]>(`/api/trips/${tripId}/reports`, fetcher);
@@ -53,7 +57,7 @@ function ReportUpdates({ tripId }: { tripId: string }) {
       {reports.map((r) => (
         <div key={r.id} className="space-y-2 rounded-lg border p-3 text-sm">
           <div className="flex items-center justify-between gap-2">
-            <span className="capitalize">{(r.category ?? "other").replace(/_/g, " ")}</span>
+            <span className="capitalize">{reportCategoryLabel(r.category)}</span>
             <Badge variant="outline">{REPORT_STATUS[r.status]}</Badge>
           </div>
           <p className="text-muted-foreground">“{r.note}”</p>
@@ -73,9 +77,13 @@ function ReportUpdates({ tripId }: { tripId: string }) {
 
 function Body({ trip, onChanged }: { trip: Trip; onChanged: () => void }) {
   const router = useRouter();
-  const [reporting, setReporting] = useState(false);
+  const [reporting, setReporting] = useState<"problem" | "fee" | null>(null);
   const { mutate } = useSWRConfig();
   const ended = trip.status === "completed" || trip.status === "cancelled";
+  const canDisputeFee =
+    trip.status === "cancelled" &&
+    trip.cancel_fee != null &&
+    (trip.cancel_fee_status === "owed" || trip.cancel_fee_status === "paid");
 
   function rideAgain() {
     setPrefill({
@@ -191,8 +199,9 @@ function Body({ trip, onChanged }: { trip: Trip; onChanged: () => void }) {
       {reporting && (
         <ReportForm
           tripId={trip.id}
+          initialCategory={reporting === "fee" ? "fee" : undefined}
           onDone={() => {
-            setReporting(false);
+            setReporting(null);
             void mutate(`/api/trips/${trip.id}/reports`);
           }}
         />
@@ -211,9 +220,16 @@ function Body({ trip, onChanged }: { trip: Trip; onChanged: () => void }) {
             </Button>
           )}
           {!reporting && (
-            <Button variant="outline" onClick={() => setReporting(true)}>
-              <Flag /> Report a problem
-            </Button>
+            <>
+              <Button variant="outline" onClick={() => setReporting("problem")}>
+                <Flag /> Report a problem
+              </Button>
+              {canDisputeFee && (
+                <Button variant="outline" onClick={() => setReporting("fee")}>
+                  Dispute this fee
+                </Button>
+              )}
+            </>
           )}
         </div>
       )}

@@ -116,16 +116,17 @@ const CATEGORIES = [
   { value: "other", label: "Something else" },
 ];
 
-export function ReportForm({ tripId, onDone }: { tripId: string; onDone: () => void }) {
-  const [category, setCategory] = useState("safety");
+export function ReportForm({ tripId, onDone, initialCategory }: { tripId: string; onDone: () => void; initialCategory?: "fee" }) {
+  const [category, setCategory] = useState(initialCategory ?? "safety");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
+  const feeDispute = initialCategory === "fee";
 
   async function submit() {
     setSaving(true);
     try {
       await api(`/api/trips/${tripId}/report`, { json: { category, note } });
-      toast.success("Report sent. Our team will follow up.");
+      toast.success(feeDispute ? "Fee dispute sent. Our team will follow up." : "Report sent. Our team will follow up.");
       onDone();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not send report");
@@ -135,24 +136,33 @@ export function ReportForm({ tripId, onDone }: { tripId: string; onDone: () => v
 
   return (
     <div className="space-y-3 rounded-lg border p-4">
-      <div className="space-y-2">
-        <Label>What went wrong?</Label>
-        <Select value={category} onValueChange={setCategory}>
-          <SelectTrigger className="w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {CATEGORIES.map((c) => (
-              <SelectItem key={c.value} value={c.value}>
-                {c.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      <Textarea placeholder="Tell us what happened" value={note} onChange={(e) => setNote(e.target.value)} maxLength={1000} />
+      {feeDispute ? (
+        <Label>Why do you dispute this fee?</Label>
+      ) : (
+        <div className="space-y-2">
+          <Label>What went wrong?</Label>
+          <Select value={category} onValueChange={setCategory}>
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {CATEGORIES.map((c) => (
+                <SelectItem key={c.value} value={c.value}>
+                  {c.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+      <Textarea
+        placeholder={feeDispute ? "Briefly explain why you think the fee was unfair" : "Tell us what happened"}
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        maxLength={feeDispute ? 500 : 1000}
+      />
       <Button className="w-full" disabled={note.trim().length < 3 || saving} onClick={submit}>
-        {saving && <Loader2 className="animate-spin" />} Send report
+        {saving && <Loader2 className="animate-spin" />} {feeDispute ? "Send fee dispute" : "Send report"}
       </Button>
     </div>
   );
