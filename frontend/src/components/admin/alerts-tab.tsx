@@ -174,10 +174,19 @@ export function AlertsTab() {
   const [busy, setBusy] = useState<string | null>(null);
   const [summarizingId, setSummarizingId] = useState<string | null>(null);
   const [resolutionDraft, setResolutionDraft] = useState<{ alertId: string; note: string } | null>(null);
+  const [escalationReasonDraft, setEscalationReasonDraft] = useState<{ alertId: string; reason: string } | null>(null);
+  const [escalationOutcomeDraft, setEscalationOutcomeDraft] = useState<{ alertId: string; note: string } | null>(null);
+  const session = useSession();
+  const isAdmin = session.status === "authenticated" && session.profile.role === "admin";
   const autoSummarized = useRef(new Set<string>());
   const selected = alerts?.find((a) => a.id === selectedId) ?? alerts?.[0] ?? null;
   const resolutionNote =
     resolutionDraft && resolutionDraft.alertId === selected?.id ? resolutionDraft.note : selected?.resolution_note ?? "";
+  const escalationReason =
+    escalationReasonDraft && escalationReasonDraft.alertId === selected?.id ? escalationReasonDraft.reason : "";
+  const escalationOutcome =
+    escalationOutcomeDraft && escalationOutcomeDraft.alertId === selected?.id ? escalationOutcomeDraft.note : "";
+  const escalationPending = !!selected?.escalated_at && !selected.escalation_resolved_at;
   const selectedAlertId = selected && !selected.summary ? selected.id : null;
 
   useEffect(() => {
@@ -243,9 +252,16 @@ export function AlertsTab() {
                 <span className="inline-flex items-center gap-2 font-medium">
                   <AlertIcon type={a.alert_type} /> {ALERT_TYPE_LABEL[a.alert_type]}
                 </span>
-                <Badge variant="outline" className={ALERT_STATUS_STYLE[a.status]}>
-                  {a.status === "closed" ? "resolved" : a.status}
-                </Badge>
+                <span className="flex items-center gap-1.5">
+                  {a.escalated_at && (
+                    <Badge variant="outline" className={a.escalation_resolved_at ? ALERT_STATUS_STYLE.reviewed : "border-orange-400/40 bg-orange-400/10 text-orange-200"}>
+                      {a.escalation_resolved_at ? "Handled" : "Escalated"}
+                    </Badge>
+                  )}
+                  <Badge variant="outline" className={ALERT_STATUS_STYLE[a.status]}>
+                    {a.status === "closed" ? "resolved" : a.status}
+                  </Badge>
+                </span>
               </div>
               <div className="text-xs text-muted-foreground">{alertDetailText(a)}</div>
               <div className="flex justify-between gap-2 text-xs text-muted-foreground">
@@ -334,6 +350,76 @@ export function AlertsTab() {
               )}
 
               <Ownership alert={selected} busy={!!busy} onAction={(path) => void call(path, path)} />
+
+              {selected.escalated_at ? (
+                <div className="space-y-2 rounded-lg border p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-medium">Admin escalation</span>
+                    <Badge variant="outline" className={escalationPending ? "border-orange-400/40 bg-orange-400/10 text-orange-200" : ALERT_STATUS_STYLE.reviewed}>
+                      {escalationPending ? "Escalated" : "Handled"}
+                    </Badge>
+                  </div>
+                  <p className="text-sm text-pretty">{selected.escalation_reason}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Escalated by {selected.escalated_by?.name ?? "Staff"} · {formatDateTime(selected.escalated_at)}
+                  </p>
+                  {selected.escalation_outcome && (
+                    <div className="space-y-1 border-t pt-2">
+                      <p className="text-sm text-pretty">{selected.escalation_outcome}</p>
+                      <p className="text-xs text-muted-foreground">
+                        Handled by {selected.escalation_resolved_by?.name ?? "Admin"}
+                        {selected.escalation_resolved_at ? ` · ${formatDateTime(selected.escalation_resolved_at)}` : ""}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              ) : session.status === "authenticated" && session.profile.role === "support" ? (
+                <div className="space-y-2 rounded-lg border p-3">
+                  <label htmlFor="escalation-reason" className="text-sm font-medium">Escalate to admin</label>
+                  <Textarea
+                    id="escalation-reason"
+                    placeholder="Explain why an admin needs to act"
+                    value={escalationReason}
+                    onChange={(e) => setEscalationReasonDraft({ alertId: selected.id, reason: e.target.value })}
+                    maxLength={1000}
+                  />
+                  <Button
+                    size="sm"
+                    disabled={!!busy || !escalationReason.trim()}
+                    onClick={() => {
+                      void call("escalate", "escalate", { reason: escalationReason.trim() }).then((ok) => {
+                        if (ok) setEscalationReasonDraft(null);
+                      });
+                    }}
+                  >
+                    Escalate to admin
+                  </Button>
+                </div>
+              ) : null}
+
+              {isAdmin && escalationPending && (
+                <div className="space-y-2 rounded-lg border p-3">
+                  <label htmlFor="escalation-outcome" className="text-sm font-medium">Mark escalation handled</label>
+                  <Textarea
+                    id="escalation-outcome"
+                    placeholder="Record the action taken"
+                    value={escalationOutcome}
+                    onChange={(e) => setEscalationOutcomeDraft({ alertId: selected.id, note: e.target.value })}
+                    maxLength={500}
+                  />
+                  <Button
+                    size="sm"
+                    disabled={!!busy || !escalationOutcome.trim()}
+                    onClick={() => {
+                      void call("escalation/resolve", "escalation", { note: escalationOutcome.trim() }).then((ok) => {
+                        if (ok) setEscalationOutcomeDraft(null);
+                      });
+                    }}
+                  >
+                    Mark handled
+                  </Button>
+                </div>
+              )}
 
               <div className="space-y-2 rounded-lg border p-3">
                 <div className="flex items-center justify-between">

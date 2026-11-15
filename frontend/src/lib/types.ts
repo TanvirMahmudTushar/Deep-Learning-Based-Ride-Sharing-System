@@ -360,6 +360,12 @@ export interface SafetyAlert {
   resolution_note: string | null;
   status: "open" | "reviewed" | "closed";
   created_at: string;
+  escalated_at: string | null;
+  escalated_by: { id: string; name: string } | null;
+  escalation_reason: string | null;
+  escalation_resolved_at: string | null;
+  escalation_resolved_by: { id: string; name: string } | null;
+  escalation_outcome: string | null;
   /** When the trip was booked (for the {trip_date} placeholder in saved replies). */
   trip_requested_at?: string;
   trip_status: TripStatus;
