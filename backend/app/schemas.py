@@ -519,6 +519,14 @@ class AlertNoteIn(BaseModel):
     for_passenger: bool = False
 
 
+class AlertEscalateIn(BaseModel):
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+class AlertEscalationResolveIn(BaseModel):
+    note: str = Field(min_length=1, max_length=500)
+
+
 class PricingRuleIn(BaseModel):
     base_fare: float = Field(ge=0)
     per_km: float = Field(ge=0)
