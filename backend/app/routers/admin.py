@@ -38,6 +38,7 @@ from app.schemas import (
     AlertEscalationIn,
     AlertEscalationResolutionIn,
     AlertStatusIn,
+    FeeDisputeResolutionIn,
     PricingRuleIn,
     RiderBlockOut,
     iso_utc,
@@ -725,6 +726,16 @@ def _person(db: DB, profile_id: str | None) -> dict | None:
 def _alert_out(db: DB, a: SafetyAlert) -> dict:
     rider_profile = a.trip.rider.profile if a.trip.rider else None
     last_changed = _person(db, a.reviewed_by)
+    fee_dispute = None
+    if a.alert_type == "report" and a.details.get("category") == "fee":
+        fee_dispute = {
+            "amount": a.trip.cancel_fee,
+            "status": a.trip.cancel_fee_status,
+            "cancel_reason": a.trip.cancel_reason,
+            "accepted_at": iso_utc(a.trip.accepted_at),
+            "arrived_at": iso_utc(a.trip.arrived_at),
+            "cancelled_at": iso_utc(a.trip.completed_at),
+        }
     return {
         "id": a.id,
         "trip_id": a.trip_id,
@@ -755,6 +766,7 @@ def _alert_out(db: DB, a: SafetyAlert) -> dict:
         "passenger_name": a.trip.user.full_name,
         "assigned_to": _person(db, a.assigned_to),
         "last_changed_by": last_changed["name"] if last_changed else None,
+        "fee_dispute": fee_dispute,
         "notes": [_note_out(n) for n in a.notes],
     }
 
@@ -915,6 +927,39 @@ def add_alert_note(alert_id: str, body: AlertNoteIn, db: DB, staff: Staff):
     db.flush()
     notice = ("Reply to your report", text if len(text) <= 140 else text[:137] + "...") if body.for_passenger else None
     _alert_changed(db, alert, notice)
+    db.commit()
+    return _alert_out(db, alert)
+
+
+@router.post("/alerts/{alert_id}/fee-dispute/resolve")
+def resolve_fee_dispute(alert_id: str, body: FeeDisputeResolutionIn, db: DB, staff: Staff):
+    alert = _alert_or_404(db, alert_id)
+    trip = alert.trip
+    if alert.alert_type != "report" or alert.details.get("category") != "fee" or alert.status != "open":
+        raise HTTPException(status.HTTP_409_CONFLICT, "This alert is not an open fee dispute")
+    if trip.status != "cancelled" or trip.cancel_fee is None or trip.cancel_fee_status not in ("owed", "paid"):
+        raise HTTPException(status.HTTP_409_CONFLICT, "This trip no longer has a fee that can be disputed")
+    reply = body.reply.strip()
+    if len(reply) < 3:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "A reply to the passenger is required")
+    if body.decision == "waive":
+        try:
+            fee_status = cancel_fees.waive(db, trip)
+        except ValueError as e:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(e))
+        outcome = "Fee waived." if fee_status == "waived" else "Fee waived and credited to your next ride."
+    else:
+        outcome = "Fee kept."
+    passenger_reply = f"{outcome} {reply}"
+    note = AlertNote(alert_id=alert.id, author_id=staff.id, body=passenger_reply, for_passenger=True)
+    db.add(note)
+    alert.notes.append(note)
+    alert.status = "closed"
+    alert.reviewed_by = staff.id
+    alert.resolution_note = passenger_reply
+    db.flush()
+    notice = passenger_reply if len(passenger_reply) <= 140 else passenger_reply[:137] + "..."
+    _alert_changed(db, alert, ("Update on your fee dispute", notice))
     db.commit()
     return _alert_out(db, alert)
 

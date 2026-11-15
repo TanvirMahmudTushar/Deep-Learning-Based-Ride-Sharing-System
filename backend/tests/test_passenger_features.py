@@ -153,6 +153,96 @@ def test_admin_can_waive_an_owed_fee_and_refund_a_paid_one_as_credit(client, rid
     assert done["payment"]["amount"] == done["fare_final"] - 20
 
 
+def test_fee_dispute_is_only_allowed_for_cancelled_trips_with_a_fee(client, rider_h, no_grace):
+    p = _passenger(client, "cancel.dispute-eligibility@example.com")
+    free = _book(client, p, rider_h, accept=False)
+    client.post(f"/api/trips/{free['id']}/cancel", headers=p, json={"reason": "other"})
+    assert client.post(
+        f"/api/trips/{free['id']}/report", headers=p, json={"category": "fee", "note": "The fee is unfair"}
+    ).status_code == 409
+
+    completed = _book(client, p, rider_h)
+    _finish(client, completed["id"], rider_h)
+    assert client.post(
+        f"/api/trips/{completed['id']}/report", headers=p, json={"category": "fee", "note": "The fee is unfair"}
+    ).status_code == 409
+
+
+def test_support_can_keep_a_fee_and_reply_to_the_passenger(client, rider_h, support_h, no_grace):
+    p = _passenger(client, "cancel.dispute-keep@example.com")
+    trip = _book(client, p, rider_h)
+    cancelled = client.post(f"/api/trips/{trip['id']}/cancel", headers=p, json={"reason": "wait_too_long"}).json()
+    assert cancelled["cancel_fee_status"] == "owed"
+    assert client.post(
+        f"/api/trips/{trip['id']}/report", headers=p, json={"category": "fee", "note": "The rider was on time"}
+    ).status_code == 201
+
+    alert = next(a for a in client.get("/api/admin/alerts", headers=support_h).json() if a["trip_id"] == trip["id"])
+    assert alert["fee_dispute"]["amount"] == cancelled["cancel_fee"]
+    assert alert["fee_dispute"]["status"] == "owed"
+    resolved = client.post(
+        f"/api/admin/alerts/{alert['id']}/fee-dispute/resolve",
+        headers=support_h,
+        json={"decision": "keep", "reply": "The rider arrived within the promised time."},
+    )
+    assert resolved.status_code == 200, resolved.text
+    assert resolved.json()["status"] == "closed"
+    assert resolved.json()["fee_dispute"]["status"] == "owed"
+    report = client.get(f"/api/trips/{trip['id']}/reports", headers=p).json()[0]
+    assert report["status"] == "closed"
+    assert report["replies"][0]["body"] == "Fee kept. The rider arrived within the promised time."
+
+
+def test_support_can_waive_owed_and_paid_fee_disputes(client, rider_h, support_h, no_grace):
+    p = _passenger(client, "cancel.dispute-waive@example.com")
+    owed = _book(client, p, rider_h)
+    client.post(f"/api/trips/{owed['id']}/cancel", headers=p, json={"reason": "wait_too_long"})
+    client.post(f"/api/trips/{owed['id']}/report", headers=p, json={"category": "fee", "note": "The rider went the wrong way"})
+    alert = next(a for a in client.get("/api/admin/alerts", headers=support_h).json() if a["trip_id"] == owed["id"])
+    waived = client.post(
+        f"/api/admin/alerts/{alert['id']}/fee-dispute/resolve",
+        headers=support_h,
+        json={"decision": "waive", "reply": "We reviewed the trip and removed the fee."},
+    )
+    assert waived.status_code == 200, waived.text
+    assert waived.json()["fee_dispute"]["status"] == "waived"
+
+    paid = _book(client, p, rider_h)
+    client.post(f"/api/trips/{paid['id']}/cancel", headers=p, json={"reason": "wait_too_long"})
+    carrying = _book(client, p, rider_h)
+    _finish(client, carrying["id"], rider_h)
+    assert client.get(f"/api/trips/{paid['id']}", headers=p).json()["cancel_fee_status"] == "paid"
+    assert client.post(
+        f"/api/trips/{paid['id']}/report", headers=p, json={"category": "fee", "note": "The rider went the wrong way"}
+    ).status_code == 201
+    alert = next(a for a in client.get("/api/admin/alerts", headers=support_h).json() if a["trip_id"] == paid["id"])
+    credited = client.post(
+        f"/api/admin/alerts/{alert['id']}/fee-dispute/resolve",
+        headers=support_h,
+        json={"decision": "waive", "reply": "We reviewed the trip and credited the fee."},
+    )
+    assert credited.status_code == 200, credited.text
+    assert credited.json()["fee_dispute"]["status"] == "credited"
+    report = client.get(f"/api/trips/{paid['id']}/reports", headers=p).json()[0]
+    assert "Fee waived and credited" in report["replies"][0]["body"]
+
+
+def test_support_cannot_waive_a_fee_without_an_open_fee_dispute(client, rider_h, support_h, no_grace):
+    p = _passenger(client, "cancel.dispute-required@example.com")
+    trip = _book(client, p, rider_h)
+    client.post(f"/api/trips/{trip['id']}/cancel", headers=p, json={"reason": "wait_too_long"})
+    assert client.post(
+        f"/api/admin/trips/{trip['id']}/cancel-fee/waive", headers=support_h
+    ).status_code == 403
+    client.post(f"/api/trips/{trip['id']}/report", headers=p, json={"category": "other", "note": "An unrelated report"})
+    alert = next(a for a in client.get("/api/admin/alerts", headers=support_h).json() if a["trip_id"] == trip["id"])
+    assert client.post(
+        f"/api/admin/alerts/{alert['id']}/fee-dispute/resolve",
+        headers=support_h,
+        json={"decision": "waive", "reply": "This should not be allowed."},
+    ).status_code == 409
+
+
 def test_admins_set_the_fee_per_vehicle(client, admin_h):
     bike = next(r for r in client.get("/api/admin/pricing", headers=admin_h).json() if r["vehicle_type"] == "bike")
     assert bike["cancel_fee"] == 20.0
