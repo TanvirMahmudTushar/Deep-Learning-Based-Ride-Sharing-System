@@ -275,6 +275,9 @@ class SafetyAlert(Base):
 
     trip: Mapped[Trip] = relationship()
     notes: Mapped[list["AlertNote"]] = relationship(back_populates="alert", order_by="AlertNote.created_at")
+    escalations: Mapped[list["AlertEscalation"]] = relationship(
+        back_populates="alert", order_by=lambda: AlertEscalation.escalated_at.desc()
+    )
 
     @property
     def details(self) -> dict:
@@ -346,6 +349,25 @@ class AlertNote(Base):
 
     alert: Mapped[SafetyAlert] = relationship(back_populates="notes")
     author: Mapped[Profile] = relationship()
+
+
+class AlertEscalation(Base):
+    """An escalation from support to admin, including the admin's outcome."""
+
+    __tablename__ = "alert_escalations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    alert_id: Mapped[str] = mapped_column(ForeignKey("safety_alerts.id"), index=True)
+    escalated_by_id: Mapped[str] = mapped_column(ForeignKey("profiles.id"))
+    reason: Mapped[str] = mapped_column(Text)
+    escalated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    resolved_by_id: Mapped[str | None] = mapped_column(ForeignKey("profiles.id"))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime)
+    outcome: Mapped[str | None] = mapped_column(Text)
+
+    alert: Mapped[SafetyAlert] = relationship(back_populates="escalations")
+    escalated_by: Mapped[Profile] = relationship(foreign_keys=[escalated_by_id])
+    resolved_by: Mapped[Profile | None] = relationship(foreign_keys=[resolved_by_id])
 
 
 class SavedReply(Base):
