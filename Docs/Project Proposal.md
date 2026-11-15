@@ -46,10 +46,10 @@ Four roles use the platform, and riders are registered by vehicle type (bike, CN
 | --- | --- | --- |
 | User | Passenger | Book a ride, choose a vehicle type, track the trip, see the reason for the price, raise an SOS, pay the rider in cash, rate the ride, save places, review past trips |
 | Rider | Driver of a bike, CNG or car | Register a vehicle, upload documents, go online, accept or decline trips, complete trips, record cash received, track earnings |
-| Admin | Platform operator | Review documents and verify riders, monitor live trips and safety alerts, view demand forecasts, set pricing rules, manage payments and commission settlements, approve support agents |
+| Admin | Platform operator | Review documents and verify riders, monitor live trips and safety alerts, view demand forecasts, set pricing rules, manage payments and commission settlements, manage support agent access |
 | Support agent | Support staff | See live and recent trips, read safety alerts and passenger reports, mark them reviewed or closed; no access to pricing, payments, revenue or rider documents |
 
-Passengers, riders and support agents sign up themselves, but riders and support agents need admin approval before they can start. Admin accounts cannot be created through sign-up. How the three roles connect during a ride is described for the team in [Plan.md](Plan.md).
+Passengers, riders and support agents sign up themselves, but riders need admin verification before they can start. Support agents can start straight away, and an admin can remove their access. Admin accounts cannot be created through sign-up. How the three roles connect during a ride is described for the team in [Plan.md](Plan.md).
 
 Architecture (portals talk only to the backend, which calls four prediction models and three external APIs):
 
@@ -751,8 +751,8 @@ If the week-10 gate slips, the stretch models are dropped and the remaining time
 
 - **Passenger portal:** choose pickup and drop-off on the map, by address search or from saved places; compare bike, CNG and car fares with an explained price; book; track the rider live; cancel; raise an SOS or report a trip; pay in cash; rate; view a personal dashboard with spending, trip history and receipts; chat with the Groq assistant, which can fill in a booking.
 - **Rider portal:** register with a vehicle and licence, upload documents, wait for verification, go online, receive offers with a 30-second timer, accept or decline, start and complete trips, record cash received, view earnings, commission owed, rating and cancellation rate.
-- **Admin dashboard:** live platform stats and map, document review, rider verification and suspension, safety alerts (including passenger SOS and reports) with Groq summaries and review status, payments and commission settlements, demand forecasts per zone and per hour (with a table view), editable pricing rules, and support agent approval.
-- **Support portal:** sign up and wait for admin approval, then see live and recent trips and work on safety alerts and passenger reports.
+- **Admin dashboard:** live platform stats and map, document review, rider verification and suspension, safety alerts (including passenger SOS and reports) with Groq summaries and review status, payments and commission settlements, demand forecasts per zone and per hour (with a table view), editable pricing rules, and support agent access.
+- **Support portal:** sign up and see live and recent trips and work on safety alerts and passenger reports.
 - **Backend:** role-based authentication for all four roles; cancellation-aware matching that offers a trip to one rider at a time, with fallback to the next candidate on decline or timeout; demand-based pricing with explanations; route-deviation and long-stop alerts; cash payment records and settlements; WebSocket events; weather ingestion; and the trip simulator.
 
 The remaining work is improving the three portals and the deep learning: data pipelines for NYC TLC and Chicago, training the four models, swapping them into the prediction registry, and the evaluation against the baselines.

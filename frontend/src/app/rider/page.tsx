@@ -155,20 +155,19 @@ function RiderPortal() {
 
   const sheetBodyRef = useRef<HTMLDivElement>(null);
   const sheetStopRef = useRef<HTMLDivElement>(null);
-  const [idleSheetHeight, setIdleSheetHeight] = useState<number | null>(null);
+  const [measuredSheetHeight, setMeasuredSheetHeight] = useState<number | null>(null);
   const clampToIdlePrompt = !!me && verified && !active && !offer && !toCollect;
+  // Only meaningful while the sheet is clamped to the idle prompt.
+  const idleSheetHeight = clampToIdlePrompt ? measuredSheetHeight : null;
 
   useEffect(() => {
-    if (!clampToIdlePrompt) {
-      setIdleSheetHeight(null);
-      return;
-    }
+    if (!clampToIdlePrompt) return;
     const body = sheetBodyRef.current;
     const stop = sheetStopRef.current;
     if (!body || !stop) return;
     const measure = () => {
       // 104px = drag handle (32px) + sheet header (72px); stop.offsetTop includes top/bottom 16px padding.
-      setIdleSheetHeight(104 + stop.offsetTop);
+      setMeasuredSheetHeight(104 + stop.offsetTop);
     };
     measure();
     const ro = new ResizeObserver(measure);

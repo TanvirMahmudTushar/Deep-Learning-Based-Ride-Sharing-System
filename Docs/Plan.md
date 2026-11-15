@@ -44,17 +44,17 @@ Real-time events only mean "something changed, fetch it again". For example, `tr
 | Passenger (`user`) | Signs up at `/register` | `/user` | `/rider`, `/admin`, `/support` |
 | Rider (`rider`) | Signs up at `/register`, then needs admin verification before going online | `/rider` | `/user`, `/admin`, `/support` |
 | Admin (`admin`) | No sign-up. The first admin comes from `ADMIN_EMAIL` and `ADMIN_PASSWORD` in `.env` on a database with no admin yet | `/admin` | `/user`, `/rider`, `/support` |
-| Support agent (`support`) | Signs up at `/register`, then sees nothing until an admin approves them | `/support` | `/user`, `/rider`, `/admin` |
+| Support agent (`support`) | Signs up at `/register` and has access straight away | `/support` | `/user`, `/rider`, `/admin` |
 
 Everyone uses the same login page. The role is stored on the account, and the backend reads it from the database on every request. The frontend checks are only for a better experience; the backend check is what actually protects data.
 
 ### What a support agent can do
 
-Support agents help people with problems, so they can see other people's trips. That's why sign-up alone gives them no access.
+Support agents help people with problems, so they can see other people's trips. They get access as soon as they sign up.
 
 - **Can:** see live and recent trips (with names, addresses and rider phone numbers, but not passenger phone numbers), read safety alerts and passenger reports, get an AI summary of an alert, mark alerts as open, reviewed or closed, and keep their own saved replies (admins manage the team replies everyone shares).
 - **Can't:** see revenue, stats, pricing, payments, demand forecasts, the rider list or rider documents, or verify or suspend riders.
-- **Approval:** an admin approves agents in the **Support** tab of `/admin`, and can remove access there at any time. Access is checked on every request, so removal works immediately.
+- **Access:** agents need no approval. An admin can remove access in the **Support** tab of `/admin` at any time, and give it back. Access is checked on every request, so removal works immediately.
 
 > **IMPORTANT — Testing OTP Default (`000000`):** Phone OTP verification during `/register` (`POST /api/auth/otp/request`, `POST /api/auth/otp/verify`, and `POST /api/auth/register`) currently uses a hardcoded testing default `Settings.default_test_otp = "000000"` in `backend/app/config.py`. **Future work MUST replace this with a real SMS/OTP provider (with expiring single-use codes and rate limiting) before any production deployment.**
 
@@ -175,7 +175,7 @@ A trip can't be cancelled once it's `ongoing`. A rider can't go offline during a
 | Admin changes pricing rules | New fares and commission apply to new bookings | None; it shows on the next quote |
 | Admin records a settlement | Rider's commission owed goes down | `earnings.updated` |
 | Support agent signs up | Admin's Support tab updates and shows a notice | `support.changed` |
-| Admin approves an agent or removes access | Agent's page opens or closes within a few seconds | `support.changed` for admins; the agent's page polls |
+| Admin removes or restores an agent's access | Agent's page opens or closes within a few seconds | `support.changed` for admins; the agent's page polls |
 | Support agent marks an alert reviewed or closed | Admin's Safety tab shows the new status | None; it shows on the next fetch |
 
 ## Where the code lives
@@ -291,7 +291,7 @@ The login is stored per browser, so two tabs in the same browser share one accou
 5. **Rider:** accept, start and complete the trip, then record the cash.
 6. **Admin:** watch the live map, alerts and payments as it happens.
 
-To test support, sign up on the **Support staff** tab, then approve the account as admin in the **Support** tab. Demo mode also has an approved agent on the login page.
+To test support, sign up on the **Support staff** tab. Demo mode also has an agent on the login page.
 
 ## Deployment
 

@@ -167,6 +167,8 @@ function Notes({ alert, busy, onPost }: { alert: SafetyAlert; busy: boolean; onP
 }
 
 export function AlertsTab() {
+  const session = useSession();
+  const role = session.status === "authenticated" ? session.profile.role : null;
   const [filter, setFilter] = useState("open");
   const key = filter === "all" ? "/api/admin/alerts" : `/api/admin/alerts?status_filter=${filter}`;
   const { data: alerts, mutate } = useSWR<SafetyAlert[]>(key, fetcher, { refreshInterval: useLiveInterval(4000, 30000) });
@@ -174,10 +176,16 @@ export function AlertsTab() {
   const [busy, setBusy] = useState<string | null>(null);
   const [summarizingId, setSummarizingId] = useState<string | null>(null);
   const [resolutionDraft, setResolutionDraft] = useState<{ alertId: string; note: string } | null>(null);
+  const [escalationReasonDraft, setEscalationReasonDraft] = useState<{ alertId: string; reason: string } | null>(null);
+  const [escalationOutcomeDraft, setEscalationOutcomeDraft] = useState<{ alertId: string; note: string } | null>(null);
   const autoSummarized = useRef(new Set<string>());
   const selected = alerts?.find((a) => a.id === selectedId) ?? alerts?.[0] ?? null;
   const resolutionNote =
     resolutionDraft && resolutionDraft.alertId === selected?.id ? resolutionDraft.note : selected?.resolution_note ?? "";
+  const escalationReason =
+    escalationReasonDraft && escalationReasonDraft.alertId === selected?.id ? escalationReasonDraft.reason : "";
+  const escalationOutcome =
+    escalationOutcomeDraft && escalationOutcomeDraft.alertId === selected?.id ? escalationOutcomeDraft.note : "";
   const selectedAlertId = selected && !selected.summary ? selected.id : null;
 
   useEffect(() => {
@@ -243,11 +251,26 @@ export function AlertsTab() {
                 <span className="inline-flex items-center gap-2 font-medium">
                   <AlertIcon type={a.alert_type} /> {ALERT_TYPE_LABEL[a.alert_type]}
                 </span>
-                <Badge variant="outline" className={ALERT_STATUS_STYLE[a.status]}>
-                  {a.status === "closed" ? "resolved" : a.status}
-                </Badge>
+                <span className="flex items-center gap-1">
+                  {a.escalation?.active && (
+                    <Badge variant="outline" className="border-amber-400/40 text-amber-200">
+                      Escalated
+                    </Badge>
+                  )}
+                  <Badge variant="outline" className={ALERT_STATUS_STYLE[a.status]}>
+                    {a.status === "closed" ? "resolved" : a.status}
+                  </Badge>
+                </span>
               </div>
               <div className="text-xs text-muted-foreground">{alertDetailText(a)}</div>
+              {a.escalation && (
+                <div className="space-y-0.5 text-xs">
+                  <p className="line-clamp-2 text-foreground">{a.escalation.reason}</p>
+                  <p className="text-muted-foreground">
+                    Escalated by {a.escalation.escalated_by.name} · {timeAgo(a.escalation.escalated_at)}
+                  </p>
+                </div>
+              )}
               <div className="flex justify-between gap-2 text-xs text-muted-foreground">
                 <VehicleTag type={a.vehicle_type} className="text-xs" />
                 <span className="truncate">
@@ -335,6 +358,78 @@ export function AlertsTab() {
 
               <Ownership alert={selected} busy={!!busy} onAction={(path) => void call(path, path)} />
 
+              {selected.escalation && (
+                <div className="space-y-2 rounded-lg border border-amber-400/30 bg-amber-400/5 p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="outline" className="border-amber-400/40 text-amber-200">
+                      {selected.escalation.active ? "Escalated" : "Escalation handled"}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">
+                      {selected.escalation.escalated_by.name} · {formatDateTime(selected.escalation.escalated_at)}
+                    </span>
+                  </div>
+                  <p className="whitespace-pre-wrap text-sm">{selected.escalation.reason}</p>
+                  {selected.escalation.active && role === "admin" && (
+                    <div className="space-y-2 border-t pt-2">
+                      <label htmlFor="escalation-outcome" className="text-sm font-medium">Admin handling note</label>
+                      <Textarea
+                        id="escalation-outcome"
+                        value={escalationOutcome}
+                        onChange={(e) => setEscalationOutcomeDraft({ alertId: selected.id, note: e.target.value })}
+                        placeholder="Briefly explain how this escalation was handled"
+                        maxLength={500}
+                        rows={2}
+                      />
+                      <Button
+                        size="sm"
+                        disabled={!!busy || !escalationOutcome.trim()}
+                        onClick={() => {
+                          void call("escalation/resolve", "escalation", { note: escalationOutcome.trim() }).then((ok) => {
+                            if (ok) setEscalationOutcomeDraft(null);
+                          });
+                        }}
+                      >
+                        Mark escalation handled
+                      </Button>
+                    </div>
+                  )}
+                  {!selected.escalation.active && selected.escalation.outcome && (
+                    <div className="space-y-1 border-t pt-2 text-sm">
+                      <p className="whitespace-pre-wrap">{selected.escalation.outcome}</p>
+                      <p className="text-xs text-muted-foreground">
+                        Handled by {selected.escalation.resolved_by?.name ?? "Admin"}
+                        {selected.escalation.resolved_at ? ` · ${formatDateTime(selected.escalation.resolved_at)}` : ""}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+              {role === "support" && !selected.escalation?.active && (
+                <div className="space-y-2 rounded-lg border p-3">
+                  <label htmlFor="escalation-reason" className="text-sm font-medium">Escalate to admin</label>
+                  <Textarea
+                    id="escalation-reason"
+                    value={escalationReason}
+                    onChange={(e) => setEscalationReasonDraft({ alertId: selected.id, reason: e.target.value })}
+                    placeholder="Explain what needs admin attention"
+                    maxLength={1000}
+                    rows={2}
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!!busy || !escalationReason.trim()}
+                    onClick={() => {
+                      void call("escalate", "escalation", { reason: escalationReason.trim() }).then((ok) => {
+                        if (ok) setEscalationReasonDraft(null);
+                      });
+                    }}
+                  >
+                    Escalate to admin
+                  </Button>
+                </div>
+              )}
+
               <div className="space-y-2 rounded-lg border p-3">
                 <div className="flex items-center justify-between">
                   <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
@@ -376,7 +471,12 @@ export function AlertsTab() {
                     key={s}
                     size="sm"
                     variant={selected.status === s ? "default" : "outline"}
-                    disabled={!!busy || selected.status === s || (s === "closed" && !resolutionNote.trim())}
+                    disabled={
+                      !!busy ||
+                      selected.status === s ||
+                      (selected.escalation?.active && s !== "open") ||
+                      (s === "closed" && !resolutionNote.trim())
+                    }
                     onClick={() => void call("status", s, { status: s, ...(s === "closed" ? { resolution_note: resolutionNote.trim() } : {}) })}
                   >
                     Mark {s === "closed" ? "resolved" : s}
