@@ -35,6 +35,8 @@ from app.schemas import (
     AdminAccountOut,
     AdminAccountPageOut,
     AdminAccountTripPageOut,
+    AlertEscalationIn,
+    AlertEscalationResolutionIn,
     AlertStatusIn,
     PricingRuleIn,
     RiderBlockOut,
@@ -734,6 +736,12 @@ def _alert_out(db: DB, a: SafetyAlert) -> dict:
         "resolution_note": a.resolution_note,
         "status": a.status,
         "created_at": iso_utc(a.created_at),
+        "escalated_at": iso_utc(a.escalated_at),
+        "escalated_by": _person(db, a.escalated_by),
+        "escalation_reason": a.escalation_reason,
+        "escalation_resolved_at": iso_utc(a.escalation_resolved_at),
+        "escalation_resolved_by": _person(db, a.escalation_resolved_by),
+        "escalation_outcome": a.escalation_outcome,
         # When the trip was booked, for saved replies ("your {trip_date} trip").
         "trip_requested_at": iso_utc(a.trip.requested_at),
         "trip_status": a.trip.status,
@@ -753,11 +761,23 @@ def _alert_out(db: DB, a: SafetyAlert) -> dict:
 
 @router.get("/alerts")
 def alerts(db: DB, staff: Staff, status_filter: str | None = None):
-    # Open SOS alerts first, then newest first.
+    # Pending escalations stay at the top of the queue, then open SOS alerts, then newest first.
+    escalated_first = case(
+        (and_(SafetyAlert.escalated_at.is_not(None), SafetyAlert.escalation_resolved_at.is_(None)), 0),
+        else_=1,
+    )
     sos_first = case((and_(SafetyAlert.alert_type == "sos", SafetyAlert.status == "open"), 0), else_=1)
-    q = select(SafetyAlert).order_by(sos_first, SafetyAlert.created_at.desc()).limit(100)
+    q = select(SafetyAlert).order_by(escalated_first, sos_first, SafetyAlert.created_at.desc()).limit(100)
     if status_filter:
-        q = q.where(SafetyAlert.status == ("closed" if status_filter == "resolved" else status_filter))
+        if status_filter == "open":
+            q = q.where(
+                or_(
+                    SafetyAlert.status == "open",
+                    and_(SafetyAlert.escalated_at.is_not(None), SafetyAlert.escalation_resolved_at.is_(None)),
+                )
+            )
+        else:
+            q = q.where(SafetyAlert.status == ("closed" if status_filter == "resolved" else status_filter))
     return [_alert_out(db, a) for a in db.scalars(q)]
 
 
@@ -806,11 +826,46 @@ def _alert_changed(db: DB, alert: SafetyAlert, passenger_notice: tuple[str, str]
         emit(db, alert.trip.user_id, "report.updated", notify=passenger_notice, trip_id=alert.trip_id)
 
 
+@router.post("/alerts/{alert_id}/escalate")
+def escalate_alert(alert_id: str, body: AlertEscalationIn, db: DB, staff: Staff):
+    alert = _alert_or_404(db, alert_id)
+    if alert.escalated_at is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "This alert has already been escalated")
+    reason = body.reason.strip()
+    if not reason:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "An escalation reason is required")
+    alert.escalated_at = utcnow()
+    alert.escalated_by = staff.id
+    alert.escalation_reason = reason
+    _alert_changed(db, alert)
+    emit(db, ADMINS, "alert.escalated", notify=("Support case escalated", reason[:140]), alert_id=alert.id)
+    db.commit()
+    return _alert_out(db, alert)
+
+
+@router.post("/alerts/{alert_id}/escalation/resolve")
+def resolve_alert_escalation(alert_id: str, body: AlertEscalationResolutionIn, db: DB, admin: Admin):
+    alert = _alert_or_404(db, alert_id)
+    if alert.escalated_at is None or alert.escalation_resolved_at is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "This alert has no pending escalation")
+    outcome = body.note.strip()
+    if not outcome:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "A resolution note is required")
+    alert.escalation_resolved_at = utcnow()
+    alert.escalation_resolved_by = admin.id
+    alert.escalation_outcome = outcome
+    _alert_changed(db, alert)
+    db.commit()
+    return _alert_out(db, alert)
+
+
 @router.post("/alerts/{alert_id}/status")
 def set_alert_status(alert_id: str, body: AlertStatusIn, db: DB, staff: Staff):
     if body.status == "closed" and not (body.resolution_note or "").strip():
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "A resolution note is required")
     alert = _alert_or_404(db, alert_id)
+    if body.status == "closed" and alert.escalated_at is not None and alert.escalation_resolved_at is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Resolve the admin escalation before closing this alert")
     changed = alert.status != body.status
     alert.status = body.status
     alert.reviewed_by = staff.id
