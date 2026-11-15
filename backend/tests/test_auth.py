@@ -23,6 +23,7 @@ SUPPORT_ROUTES = {
     ("GET", "/api/admin/trips/live"),
     ("GET", "/api/admin/trips/recent"),
     ("GET", "/api/admin/alerts"),
+    ("POST", "/api/admin/alerts/x/escalate"),
     ("POST", "/api/admin/alerts/x/summarize"),
     ("POST", "/api/admin/alerts/x/status"),
     ("GET", "/api/admin/alerts/summary"),
@@ -30,12 +31,14 @@ SUPPORT_ROUTES = {
     ("POST", "/api/admin/alerts/x/release"),
     ("POST", "/api/admin/alerts/x/notes"),
     ("GET", "/api/admin/trips/x"),
+    ("GET", "/api/admin/trips/x/messages"),
     # Saved replies (#60): agents manage their own; team replies stay admin-only inside the route.
     ("GET", "/api/admin/saved-replies"),
     ("POST", "/api/admin/saved-replies"),
     ("PUT", "/api/admin/saved-replies/x"),
     ("DELETE", "/api/admin/saved-replies/x"),
 }
+CONDITIONALLY_RESTRICTED_SUPPORT_ROUTES = {("GET", "/api/admin/trips/x/messages")}
 
 
 def _api_routes():
@@ -101,6 +104,13 @@ def test_rider_block_reasons_are_admin_only(client, user_h, rider_h, support_h, 
     for headers in (user_h, rider_h, support_h):
         assert client.get(path, headers=headers).status_code == 403
     assert client.get(path, headers=admin_h).status_code == 404
+
+
+def test_support_can_escalate_but_only_admin_can_resolve(client, support_h, admin_h):
+    path = "/api/admin/alerts/not-an-alert"
+    assert client.post(f"{path}/escalate", headers=support_h, json={"reason": "Needs admin review"}).status_code == 404
+    assert client.post(f"{path}/escalation/resolve", headers=support_h, json={"note": "Handled"}).status_code == 403
+    assert client.post(f"{path}/escalation/resolve", headers=admin_h, json={"note": "Handled"}).status_code == 404
 
 
 def test_nobody_can_sign_up_as_admin(client):
@@ -237,7 +247,10 @@ def test_approved_support_agent_only_reaches_trips_and_alerts(client, support_h)
     assert SUPPORT_ROUTES <= set(statuses), "a support route was renamed; update SUPPORT_ROUTES"
     for route, code in statuses.items():
         if route in SUPPORT_ROUTES:
-            assert code != 403, f"support should reach {route}"
+            if route in CONDITIONALLY_RESTRICTED_SUPPORT_ROUTES:
+                assert code == 403, f"the placeholder trip has no alert, so access should be refused for {route}"
+            else:
+                assert code != 403, f"support should reach {route}"
         else:
             assert code == 403, f"support should not reach {route}, got {code}"
     for prefixes in (PASSENGER_PREFIXES, RIDER_PREFIXES):
