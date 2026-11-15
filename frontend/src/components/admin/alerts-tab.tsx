@@ -13,7 +13,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { api, fetcher } from "@/lib/api";
-import { formatDateTime, timeAgo } from "@/lib/format";
+import { formatDateTime, formatTaka, timeAgo } from "@/lib/format";
 import { useLiveInterval } from "@/lib/realtime";
 import { useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
@@ -40,7 +40,7 @@ export function AlertIcon({ type }: { type: SafetyAlert["alert_type"] }) {
   return type === "route_deviation" ? <MapPinned className="size-4" /> : <Timer className="size-4" />;
 }
 
-const categoryLabel = (c?: string) => (c ? c.replace(/_/g, " ") : "other");
+const categoryLabel = (c?: string) => (c === "fee" ? "late-cancellation fee dispute" : c ? c.replace(/_/g, " ") : "other");
 
 export function alertDetailText(a: Pick<SafetyAlert, "alert_type" | "details">) {
   switch (a.alert_type) {
@@ -53,6 +53,34 @@ export function alertDetailText(a: Pick<SafetyAlert, "alert_type" | "details">) 
     default:
       return `Stopped ${a.details.stop_minutes ?? "?"} min at ${a.details.progress_pct ?? "?"}% of the trip`;
   }
+}
+
+function FeeDisputeDetails({ alert }: { alert: SafetyAlert }) {
+  const dispute = alert.fee_dispute;
+  if (!dispute) return null;
+  const timeline: [string, string | null][] = [
+    ["Accepted", dispute.accepted_at],
+    ["Rider arrived", dispute.arrived_at],
+    ["Cancelled", dispute.cancelled_at],
+  ];
+  return (
+    <div className="space-y-2 rounded-lg border p-3 text-sm">
+      <div className="flex flex-wrap justify-between gap-2">
+        <span className="font-medium">Late-cancellation fee</span>
+        <span className="tabular-nums">{dispute.amount == null ? "—" : formatTaka(dispute.amount)}</span>
+      </div>
+      <div className="text-xs text-muted-foreground">Fee status: {dispute.status ?? "unknown"}</div>
+      <p className="text-xs text-muted-foreground">Cancellation reason: {dispute.cancel_reason || "Not recorded"}</p>
+      <ol className="space-y-1 border-t pt-2 text-xs">
+        {timeline.map(([label, at]) => (
+          <li key={label} className="flex justify-between gap-2">
+            <span className="text-muted-foreground">{label}</span>
+            <span>{at ? formatDateTime(at) : "Not recorded"}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
 }
 
 function waitingFor(minutes: number) {
@@ -174,6 +202,7 @@ export function AlertsTab() {
   const [busy, setBusy] = useState<string | null>(null);
   const [summarizingId, setSummarizingId] = useState<string | null>(null);
   const [resolutionDraft, setResolutionDraft] = useState<{ alertId: string; note: string } | null>(null);
+  const [feeReplyDraft, setFeeReplyDraft] = useState<{ alertId: string; reply: string } | null>(null);
   const [escalationReasonDraft, setEscalationReasonDraft] = useState<{ alertId: string; reason: string } | null>(null);
   const [escalationOutcomeDraft, setEscalationOutcomeDraft] = useState<{ alertId: string; note: string } | null>(null);
   const session = useSession();
@@ -182,6 +211,13 @@ export function AlertsTab() {
   const selected = alerts?.find((a) => a.id === selectedId) ?? alerts?.[0] ?? null;
   const resolutionNote =
     resolutionDraft && resolutionDraft.alertId === selected?.id ? resolutionDraft.note : selected?.resolution_note ?? "";
+  const feeReply = feeReplyDraft && feeReplyDraft.alertId === selected?.id ? feeReplyDraft.reply : "";
+  const feeDisputeOpen =
+    selected?.alert_type === "report" &&
+    selected.details.category === "fee" &&
+    selected.status === "open" &&
+    (selected.fee_dispute?.status === "owed" || selected.fee_dispute?.status === "paid");
+  const isStaff = session.status === "authenticated" && (session.profile.role === "support" || session.profile.role === "admin");
   const escalationReason =
     escalationReasonDraft && escalationReasonDraft.alertId === selected?.id ? escalationReasonDraft.reason : "";
   const escalationOutcome =
@@ -349,6 +385,8 @@ export function AlertsTab() {
                 </div>
               )}
 
+              {selected.fee_dispute && <FeeDisputeDetails alert={selected} />}
+
               <Ownership alert={selected} busy={!!busy} onAction={(path) => void call(path, path)} />
 
               {selected.escalated_at ? (
@@ -418,6 +456,36 @@ export function AlertsTab() {
                   >
                     Mark handled
                   </Button>
+                </div>
+              )}
+
+              {feeDisputeOpen && isStaff && (
+                <div className="space-y-2 rounded-lg border p-3">
+                  <label htmlFor="fee-dispute-reply" className="text-sm font-medium">Reply to the passenger to resolve this dispute</label>
+                  <Textarea
+                    id="fee-dispute-reply"
+                    placeholder="Explain the fee decision"
+                    value={feeReply}
+                    onChange={(e) => setFeeReplyDraft({ alertId: selected.id, reply: e.target.value })}
+                    maxLength={500}
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    {(["keep", "waive"] as const).map((decision) => (
+                      <Button
+                        key={decision}
+                        size="sm"
+                        variant={decision === "keep" ? "outline" : "default"}
+                        disabled={!!busy || feeReply.trim().length < 3}
+                        onClick={() => {
+                          void call("fee-dispute/resolve", "fee", { decision, reply: feeReply.trim() }).then((ok) => {
+                            if (ok) setFeeReplyDraft(null);
+                          });
+                        }}
+                      >
+                        {decision === "keep" ? "Keep fee" : "Waive fee"}
+                      </Button>
+                    ))}
+                  </div>
                 </div>
               )}
 

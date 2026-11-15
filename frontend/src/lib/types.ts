@@ -356,6 +356,14 @@ export interface SafetyAlert {
     category?: string;
     trip_status?: TripStatus;
   };
+  fee_dispute: {
+    amount: number | null;
+    status: Trip["cancel_fee_status"] | null;
+    cancel_reason: string | null;
+    accepted_at: string | null;
+    arrived_at: string | null;
+    cancelled_at: string | null;
+  } | null;
   summary: string | null;
   resolution_note: string | null;
   status: "open" | "reviewed" | "closed";
