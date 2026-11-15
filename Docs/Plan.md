@@ -56,8 +56,6 @@ Support agents help people with problems, so they can see other people's trips. 
 - **Can't:** see revenue, stats, pricing, payments, demand forecasts, the rider list or rider documents, or verify or suspend riders.
 - **Access:** agents need no approval. An admin can remove access in the **Support** tab of `/admin` at any time, and give it back. Access is checked on every request, so removal works immediately.
 
-> **IMPORTANT — Testing OTP Default (`000000`):** Phone OTP verification during `/register` (`POST /api/auth/otp/request`, `POST /api/auth/otp/verify`, and `POST /api/auth/register`) currently uses a hardcoded testing default `Settings.default_test_otp = "000000"` in `backend/app/config.py`. **Future work MUST replace this with a real SMS/OTP provider (with expiring single-use codes and rate limiting) before any production deployment.**
-
 ## How a rider gets ready to take trips
 
 A passenger can only be matched with a rider after an admin has approved that rider.
@@ -67,7 +65,7 @@ sequenceDiagram
   actor Rider
   participant API as Backend
   actor Admin
-  Rider->>API: Sign up (name, email, phone, password) + verify phone OTP (000000 in testing)
+  Rider->>API: Sign up (name, email, phone, password)
   Rider->>API: Submit vehicle details (type, model, plate, color, registration, licence)
   Rider->>API: Upload licence, insurance, registration and photo
   API-->>Admin: riders.changed
