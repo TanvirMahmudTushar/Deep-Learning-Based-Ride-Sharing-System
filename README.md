@@ -9,8 +9,8 @@ Live app: https://heycholo.vercel.app (the backend runs on a free plan and can t
 | Part | What it does |
 | --- | --- |
 | Passenger portal (`/user`) | Book a ride, see why it costs what it does, track it live, chat with the rider, raise an SOS, pay in cash, rate, save places, review past trips, ask the AI assistant |
-| Rider portal (`/rider`) | Sign up with a vehicle and documents, go online, accept or decline offers, complete trips, record cash, see earnings and demand hints |
-| Admin dashboard (`/admin`) | Review rider documents, watch live trips and safety alerts, see demand forecasts, set pricing, settle commission payments, approve support agents |
+| Rider portal (`/rider`) | Sign up with a vehicle (documents are optional), go online, accept or decline offers, complete trips, record cash, see earnings and demand hints |
+| Admin dashboard (`/admin`) | Verify riders and review any documents they upload, watch live trips and safety alerts, see demand forecasts, set pricing, settle commission payments, approve support agents |
 | Support dashboard (`/support`) | Read live and recent trips, alerts and passenger reports, reply with saved replies, close cases |
 | Backend (`backend/`) | FastAPI, SQLAlchemy and WebSockets: matching, pricing, payments, alerts and a trip simulator |
 | Prediction layer | Four models behind one interface in `backend/app/services/predictors.py`: demand, ETA, cancellation and anomaly detection |

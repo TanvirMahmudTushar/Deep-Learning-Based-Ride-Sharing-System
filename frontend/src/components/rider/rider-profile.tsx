@@ -399,25 +399,11 @@ export function RiderProfile({ onClose, initialSection }: { onClose: () => void;
                         </span>
                         <div>
                           <div className="text-sm font-medium">Licence &amp; Identity Documents</div>
-                          <div className="text-xs text-muted-foreground">
-                            {me.documents_ready
-                              ? "All required documents are approved"
-                              : me.missing_documents.length > 0
-                                ? `Missing: ${me.missing_documents.join(", ")}`
-                                : "Under admin review"}
-                          </div>
+                          <div className="text-xs text-muted-foreground">Optional. Add them any time.</div>
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5">
-                        {me.documents_ready ? (
-                          <Badge variant="outline" className="border-emerald-400/30 bg-emerald-400/10 text-emerald-200">
-                            Approved
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="border-amber-400/30 bg-amber-400/10 text-amber-200">
-                            Action Needed
-                          </Badge>
-                        )}
+                        <Badge variant="outline">Optional</Badge>
                         <ChevronRight className="size-4 text-muted-foreground" />
                       </div>
                     </button>

@@ -181,13 +181,7 @@ def test_admin_dashboard_endpoints(client, admin_h, user_h):
     riders = client.get("/api/admin/riders", headers=admin_h, params={"status_filter": "pending"}).json()
     assert len(riders) == 1
     rider_id = riders[0]["id"]
-    # Verification is blocked until every required document is approved.
-    blocked = client.post(f"/api/admin/riders/{rider_id}/verify", headers=admin_h)
-    assert blocked.status_code == 409 and "Driving licence" in blocked.json()["detail"]
-    docs = client.get(f"/api/admin/riders/{rider_id}/documents", headers=admin_h).json()["required"]
-    for d in docs:
-        assert client.post(f"/api/admin/documents/{d['document']['id']}/review", headers=admin_h, json={"status": "approved"}).status_code == 200
-
+    # Documents are optional: an admin can verify a rider whose documents haven't been approved.
     assert client.post(f"/api/admin/riders/{rider_id}/verify", headers=admin_h).json()["status"] == "verified"
 
     rules = client.get("/api/admin/pricing", headers=admin_h).json()

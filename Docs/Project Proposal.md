@@ -45,8 +45,8 @@ Four roles use the platform, and riders are registered by vehicle type (bike, CN
 | Role | Who | Main actions |
 | --- | --- | --- |
 | User | Passenger | Book a ride, choose a vehicle type, track the trip, see the reason for the price, raise an SOS, pay the rider in cash, rate the ride, save places, review past trips |
-| Rider | Driver of a bike, CNG or car | Register a vehicle, upload documents, go online, accept or decline trips, complete trips, record cash received, track earnings |
-| Admin | Platform operator | Review documents and verify riders, monitor live trips and safety alerts, view demand forecasts, set pricing rules, manage payments and commission settlements, manage support agent access |
+| Rider | Driver of a bike, CNG or car | Register a vehicle, optionally upload documents, go online, accept or decline trips, complete trips, record cash received, track earnings |
+| Admin | Platform operator | Verify riders and review any documents they upload, monitor live trips and safety alerts, view demand forecasts, set pricing rules, manage payments and commission settlements, manage support agent access |
 | Support agent | Support staff | See live and recent trips, read safety alerts and passenger reports, mark them reviewed or closed; no access to pricing, payments, revenue or rider documents |
 
 Passengers, riders and support agents sign up themselves, but riders need admin verification before they can start. Support agents can start straight away, and an admin can remove their access. Admin accounts cannot be created through sign-up. How the three roles connect during a ride is described for the team in [Plan.md](Plan.md).

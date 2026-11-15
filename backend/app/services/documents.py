@@ -76,12 +76,11 @@ def latest_by_type(db: Session, rider_id: str) -> dict[str, RiderDocument]:
 
 
 def verification_ready(db: Session, rider: Rider) -> tuple[bool, list[str]]:
-    """Whether every required document is approved; returns the missing/unapproved labels."""
-    if rider.is_simulated:
-        return True, []
-    latest = latest_by_type(db, rider.id)
-    missing = [DOC_LABEL[t] for t in DOCUMENT_TYPES if t not in latest or latest[t].status != "approved"]
-    return not missing, missing
+    """Documents are optional in the MVP, so a rider is never held back by missing or unapproved ones.
+
+    Returns (ready, missing) as before so the API keeps its shape; `missing` is always empty.
+    """
+    return True, []
 
 
 def placeholder_png(label: str, rgb: tuple[int, int, int] = (60, 60, 58), size: tuple[int, int] = (320, 200)) -> bytes:

@@ -150,7 +150,15 @@ def request_vehicle_change(body: VehicleChangeIn, db: DB, rider: CurrentRider):
         status="pending",
     )
     db.add(change)
-    emit(ADMINS, "riders.changed")
+    # Documents are optional, so the admin can review the request as soon as it exists.
+    emit(
+        ADMINS,
+        "riders.changed",
+        notify={
+            "title": "Vehicle change to review",
+            "body": f"{rider.profile.full_name} submitted a new vehicle.",
+        },
+    )
     db.commit()
     return change_out(db, change)
 
@@ -253,13 +261,6 @@ def review_vehicle_change(
             "body": note,
         }
     else:
-        missing = [t for t in VEHICLE_CHANGE_DOC_TYPES if t not in by_type]
-        if missing:
-            raise HTTPException(
-                422,
-                "The rider still needs to upload: "
-                + ", ".join(docs.DOC_LABEL.get(t, t) for t in missing),
-            )
         taken = db.scalar(
             select(Vehicle.id).where(
                 Vehicle.plate_no == change.plate_no,
