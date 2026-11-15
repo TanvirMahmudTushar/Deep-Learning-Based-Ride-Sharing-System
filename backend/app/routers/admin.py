@@ -48,7 +48,7 @@ from app.schemas import (
 )
 from app.security import DB, Admin, Staff, account_is_suspended
 from app.realtime import ADMINS, emit, hub
-from app.services import availability, cancel_fees, demand, documents, rider_prefs, simulator
+from app.services import availability, cancel_fees, demand, documents, messages, rider_prefs, simulator
 from app.services import trips as trip_service
 from app.services.alert_severity import anomaly_severity
 from app.services.alerts import ensure_summary
@@ -928,6 +928,20 @@ def trip_detail(trip_id: str, db: DB, staff: Staff):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Trip not found")
     alerts_on_trip = db.scalars(select(SafetyAlert).where(SafetyAlert.trip_id == trip.id).order_by(SafetyAlert.created_at)).all()
     return {"trip": trip_out(db, trip).model_dump(mode="json"), "alerts": [_alert_out(db, a) for a in alerts_on_trip]}
+
+
+@router.get("/trips/{trip_id}/messages")
+def staff_trip_messages(trip_id: str, db: DB, staff: Staff):
+    trip = db.get(Trip, trip_id)
+    if trip is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Trip not found")
+    has_alert = db.scalar(select(SafetyAlert.id).where(SafetyAlert.trip_id == trip.id).limit(1))
+    if has_alert is None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Trip chat is only available for trips with a safety alert or report")
+    return [
+        {"id": message.id, "sender_role": message.sender_role, "body": message.body, "created_at": iso_utc(message.created_at)}
+        for message in messages.list_for(db, trip)
+    ]
 
 
 @router.get("/cancel-fees")
