@@ -3,6 +3,8 @@ case notes and ownership (#26), replies to passengers (#27), queue summary (#28)
 
 import pytest
 
+from app.db import SessionLocal
+from app.models import Trip, TripMessage
 from app.realtime import ADMINS, SUPPORT_EVENTS, hub
 from app.routers import admin as admin_router
 from app.routers import ws as ws_router
@@ -14,7 +16,7 @@ def _h(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _report(client, user_h, note="Left my umbrella behind") -> dict:
+def _report(client, user_h, note="Left my umbrella behind", require_rider=False) -> dict:
     """File a report on one of the demo passenger's finished trips and return its alert."""
     trips = client.get("/api/trips?limit=100", headers=user_h).json()
     # A trip with room for another report (each trip takes a few open reports at most).
@@ -22,6 +24,7 @@ def _report(client, user_h, note="Left my umbrella behind") -> dict:
         t
         for t in trips
         if t["status"] in ("completed", "cancelled")
+        and (not require_rider or t["rider"] is not None)
         and sum(r["status"] != "closed" for r in client.get(f"/api/trips/{t['id']}/reports", headers=user_h).json()) < 2
     )
     assert client.post(f"/api/trips/{trip['id']}/report", headers=user_h, json={"category": "other", "note": note}).status_code == 201
@@ -110,6 +113,52 @@ def test_trip_detail_has_route_payment_and_alerts_but_no_earnings(client, suppor
         assert body["trip"]["payment"]["commission"] is None
         assert body["trip"]["payment"]["rider_earning"] is None
     assert client.get("/api/admin/trips/not-a-trip", headers=support_h).status_code == 404
+
+
+def test_staff_can_read_chat_only_for_trips_with_an_alert(client, support_h, admin_h, user_h, rider_h):
+    trip = _report(client, user_h, "Chat evidence report", require_rider=True)
+    with SessionLocal() as db:
+        recorded_trip = db.get(Trip, trip["id"])
+        db.add(TripMessage(trip_id=trip["id"], sender_id=recorded_trip.user_id, sender_role="user", body="I am at the entrance"))
+        db.add(
+            TripMessage(
+                trip_id=trip["id"],
+                sender_id=recorded_trip.rider.profile_id,
+                sender_role="rider",
+                body="I have arrived",
+            )
+        )
+        db.commit()
+
+    path = f"/api/admin/trips/{trip['id']}/messages"
+    response = client.get(path, headers=support_h)
+    assert response.status_code == 200
+    assert [(message["sender_role"], message["body"]) for message in response.json()] == [
+        ("user", "I am at the entrance"),
+        ("rider", "I have arrived"),
+    ]
+    assert all(set(message) == {"id", "sender_role", "body", "created_at"} for message in response.json())
+    assert client.get(path, headers=admin_h).status_code == 200
+    assert client.get(path, headers=user_h).status_code == 403
+    assert client.get(path, headers=rider_h).status_code == 403
+    assert client.post(path, headers=support_h).status_code == 405
+
+    private_user = _register(client, "private.chat@example.com").json()
+    private_h = _h(private_user["token"])
+    private_trip = client.post(
+        "/api/trips",
+        headers=private_h,
+        json={
+            "pickup": {"lat": 23.7810, "lng": 90.4150},
+            "drop": {"lat": 23.7465, "lng": 90.3745},
+            "vehicle_type": "bike",
+        },
+    ).json()
+    cancelled = client.post(f"/api/trips/{private_trip['id']}/cancel", headers=private_h, json={"reason": "other"})
+    assert cancelled.status_code == 200
+    detail = client.get(f"/api/admin/trips/{private_trip['id']}", headers=support_h).json()
+    assert detail["alerts"] == []
+    assert client.get(f"/api/admin/trips/{private_trip['id']}/messages", headers=support_h).status_code == 403
 
 
 # --- #25 search and filters --------------------------------------------------------------
