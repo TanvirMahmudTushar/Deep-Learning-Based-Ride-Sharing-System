@@ -48,7 +48,8 @@ def register(body: RegisterIn, db: DB):
     if body.role == "support":
         emit(db, ADMINS, "support.changed", notify=("New support agent", f"{profile.full_name} signed up as a support agent."))
     if body.role == "rider":
-        rider = Rider(profile_id=profile.id, license_no=(body.license_no or "").strip(), status="pending")
+        # No admin verification: riders can go online as soon as they have a vehicle.
+        rider = Rider(profile_id=profile.id, license_no=(body.license_no or "").strip(), status="verified")
         db.add(rider)
         db.flush()
         if all(vehicle_fields):
@@ -58,6 +59,7 @@ def register(body: RegisterIn, db: DB):
                     vehicle_type=body.vehicle_type,
                     plate_no=normalize_plate(body.plate_no, body.vehicle_type),
                     model=body.vehicle_model.strip(),
+                    verified=True,
                 )
             )
     db.commit()

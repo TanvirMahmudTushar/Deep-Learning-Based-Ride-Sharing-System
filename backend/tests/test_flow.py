@@ -256,7 +256,7 @@ def test_registered_deep_learning_demand_model_is_used(client, admin_h, monkeypa
     assert comparison["deep_learning"]["predictions_by_vehicle"]["bike"] == 24.0
 
 
-def test_register_rider_needs_verification(client):
+def test_register_rider_is_verified_straight_away(client):
     body = {
         "full_name": "New Rider", "email": "new.rider@example.com", "phone": "+8801700000000", "password": "secret123",
         "role": "rider", "license_no": "DK-1", "vehicle_type": "cng", "plate_no": "dhaka metro-tha 11-1111", "vehicle_model": "Bajaj RE",
@@ -264,7 +264,11 @@ def test_register_rider_needs_verification(client):
     resp = client.post("/api/auth/register", json=body)
     assert resp.status_code == 201, resp.text
     h = {"Authorization": f"Bearer {resp.json()['token']}"}
-    assert client.post("/api/rider/online", headers=h, json={"is_online": True, "lat": 23.78, "lng": 90.41}).status_code == 403
+    me = client.get("/api/rider/me", headers=h).json()
+    assert me["status"] == "verified" and me["vehicle"]["verified"] is True
+    # No admin verification: the rider can go online straight away.
+    assert client.post("/api/rider/online", headers=h, json={"is_online": True, "lat": 23.78, "lng": 90.41}).status_code == 200
+    assert client.post("/api/rider/online", headers=h, json={"is_online": False}).status_code == 200
     assert client.post("/api/auth/register", json=body).status_code == 409
     incomplete = {**body, "email": "x@example.com", "license_no": None}
     assert client.post("/api/auth/register", json=incomplete).status_code == 422
@@ -325,7 +329,7 @@ def test_rider_signup_and_onboarding_vehicle(client):
     h = {"Authorization": f"Bearer {data['token']}"}
 
     me_before = client.get("/api/rider/me", headers=h).json()
-    assert me_before["status"] == "pending" and me_before["vehicle"] is None
+    assert me_before["status"] == "verified" and me_before["vehicle"] is None
 
     saved = client.post(
         "/api/rider/onboarding/vehicle",
@@ -345,7 +349,7 @@ def test_rider_signup_and_onboarding_vehicle(client):
     assert v["plate_no"] == "DHAKA METRO GA-22-3344"
     assert v["color"] == "Pearl White"
     assert v["registration_no"] == "REG-998877"
-    assert v["verified"] is False
+    assert v["verified"] is True
     assert saved.json()["license_no"] == "DK-9988"
     assert saved.json()["earnings_today"] == 0 and saved.json()["trips_completed"] == 0
 

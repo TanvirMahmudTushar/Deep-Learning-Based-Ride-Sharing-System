@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
-import { FileCheck2, FileWarning, Loader2, LocateFixed, LocateOff, Lock, MapPin, RefreshCw, ShieldAlert } from "lucide-react";
+import { FileCheck2, Loader2, LocateFixed, LocateOff, Lock, MapPin, RefreshCw, ShieldAlert } from "lucide-react";
 import { PortalShell } from "@/components/app-shell";
 import { RideMap, type MapCircle, type MapLine, type MapMarker } from "@/components/map/ride-map";
 import { BottomSheet } from "@/components/rider/bottom-sheet";
@@ -98,8 +98,10 @@ function RiderPortal() {
 
   // ---- device GPS -------------------------------------------------------------------------
   const verified = me?.status === "verified";
-  const needsOnboarding = !!me && !verified && (!me.vehicle || !me.license_no);
-  const lockedOut = !!me && !verified;
+  // No admin verification: a rider only needs a vehicle to start, and is locked out only if suspended.
+  const suspended = me?.status === "suspended";
+  const needsOnboarding = !!me && !suspended && (!me.vehicle || !me.license_no);
+  const lockedOut = !!me && (suspended || needsOnboarding);
 
   useEffect(() => {
     if (needsOnboarding) {
@@ -362,15 +364,6 @@ function RiderPortal() {
             {!me && <Loader2 className="mx-auto size-5 animate-spin text-muted-foreground" />}
             {me && (
               <>
-                {me.status === "pending" && (
-                  <Alert>
-                    <FileWarning />
-                    <AlertTitle>Waiting for verification</AlertTitle>
-                    <AlertDescription>
-                      An admin will verify your account shortly. You can add your documents any time, but they aren&apos;t required.
-                    </AlertDescription>
-                  </Alert>
-                )}
                 {me.status === "suspended" && (
                   <Alert variant="destructive">
                     <AlertTitle>Account suspended</AlertTitle>
@@ -429,7 +422,7 @@ function RiderPortal() {
         </BottomSheet>
       </div>
 
-      {/* Lockout overlay until rider passes verification */}
+      {/* Lockout overlay while the account is suspended or has no vehicle yet */}
       <AnimatePresence>
         {lockedOut && me && (
           <motion.div
@@ -461,41 +454,45 @@ function RiderPortal() {
                 </motion.span>
                 <div className="min-w-0 space-y-1">
                   <h2 className="text-lg font-bold">
-                    {me.status === "suspended" ? "Account suspended" : "You haven't been verified yet"}
+                    {me.status === "suspended" ? "Account suspended" : "Add your vehicle"}
                   </h2>
                   <p className="text-sm text-muted-foreground">
                     {me.status === "suspended"
                       ? "Your rider account is currently suspended. Contact support to restore access."
-                      : "Add your vehicle details. The rider app unlocks once an admin verifies you. Documents are optional."}
+                      : "Add your vehicle details to start taking trips. Documents are optional."}
                   </p>
                 </div>
               </div>
 
               <div className="flex flex-col gap-3 pt-1 sm:flex-row">
-                <Button type="button" className="h-12 min-h-12 w-full text-base sm:w-auto sm:flex-1" onClick={() => router.push("/rider/onboarding")}>
-                  <FileCheck2 /> Vehicle &amp; Documents
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-12 min-h-12 w-full text-base sm:w-auto sm:flex-1"
-                  disabled={refreshingStatus}
-                  onClick={() => {
-                    setRefreshingStatus(true);
-                    void refreshMe()
-                      .then((updated) => {
-                        if (updated?.status === "verified") {
-                          toast.success("Account verified! Welcome to Cholo.");
-                        } else {
-                          toast.info("Still waiting for admin verification");
-                        }
-                      })
-                      .finally(() => setRefreshingStatus(false));
-                  }}
-                >
-                  <RefreshCw className={refreshingStatus ? "animate-spin" : undefined} />
-                  {refreshingStatus ? "Checking…" : "Check Status"}
-                </Button>
+                {me.status !== "suspended" && (
+                  <Button type="button" className="h-12 min-h-12 w-full text-base sm:w-auto sm:flex-1" onClick={() => router.push("/rider/onboarding")}>
+                    <FileCheck2 /> Add vehicle details
+                  </Button>
+                )}
+                {me.status === "suspended" && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-12 min-h-12 w-full text-base sm:w-auto sm:flex-1"
+                    disabled={refreshingStatus}
+                    onClick={() => {
+                      setRefreshingStatus(true);
+                      void refreshMe()
+                        .then((updated) => {
+                          if (updated?.status === "suspended") {
+                            toast.info("Your account is still suspended");
+                          } else {
+                            toast.success("Your account is active again");
+                          }
+                        })
+                        .finally(() => setRefreshingStatus(false));
+                    }}
+                  >
+                    <RefreshCw className={refreshingStatus ? "animate-spin" : undefined} />
+                    {refreshingStatus ? "Checking…" : "Check Status"}
+                  </Button>
+                )}
               </div>
             </motion.div>
           </motion.div>
