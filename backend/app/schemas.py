@@ -418,7 +418,7 @@ class MessageIn(BaseModel):
 
 
 class ReportIn(BaseModel):
-    category: Literal["safety", "driving", "fare", "rider_behaviour", "lost_item", "other"]
+    category: Literal["safety", "driving", "fare", "fee", "rider_behaviour", "lost_item", "other"]
     note: str = Field(min_length=3, max_length=1000)
 
 
@@ -517,6 +517,11 @@ class AlertNoteIn(BaseModel):
     body: str = Field(min_length=1, max_length=2000)
     # True sends it to the passenger as a reply (reports only); false keeps it internal.
     for_passenger: bool = False
+
+
+class FeeDisputeResolutionIn(BaseModel):
+    decision: Literal["waive", "keep"]
+    reply: str = Field(min_length=3, max_length=500)
 
 
 class AlertEscalationIn(BaseModel):
