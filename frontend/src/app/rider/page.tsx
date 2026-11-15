@@ -86,7 +86,7 @@ function RiderPortal() {
   const [manual, setManual] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(true);
   const [selectedZone, setSelectedZone] = useState<RiderDemandZone | null>(null);
-  const [blocked, setBlocked] = useState<{ title: string; message: string; toDocuments: boolean } | null>(null);
+  const [blocked, setBlocked] = useState<{ title: string; message: string } | null>(null);
   const interval = useLiveInterval(3000, 30000);
   const { data: health } = useServerHealth();
   const { data: me, mutate: refreshMe } = useSWR<RiderMe>("/api/rider/me", fetcher, { refreshInterval: interval });
@@ -182,29 +182,17 @@ function RiderPortal() {
     void refreshCollect();
   };
 
-  const canGoOnline = !!me && me.status === "verified" && (me.is_simulated || me.documents_ready);
+  const canGoOnline = !!me && me.status === "verified";
 
-  function goToDocuments() {
-    setBlocked(null);
-    openProfile("documents");
-  }
-
-  /** Going online needs a verified account with approved documents; otherwise explain and send them to Documents. */
+  /** Going online needs a verified account; otherwise explain why. Documents are optional. */
   function requestOnline(online: boolean) {
     if (online && me && !canGoOnline) {
       if (me.status === "suspended") {
-        setBlocked({ title: "Account suspended", message: "Your account is suspended, so you can't go online. Contact support to restore access.", toDocuments: false });
-      } else if (!me.documents_ready) {
-        setBlocked({
-          title: "Documents not approved yet",
-          message: `You can only go online once all your documents are approved. Still needed: ${me.missing_documents.join(", ") || "approval of your uploads"}. Finish uploading, then wait for verification.`,
-          toDocuments: true,
-        });
+        setBlocked({ title: "Account suspended", message: "Your account is suspended, so you can't go online. Contact support to restore access." });
       } else {
         setBlocked({
           title: "Waiting for verification",
-          message: "Your documents are approved. An admin still needs to verify your account before you can go online. Check Documents in your profile for updates.",
-          toDocuments: true,
+          message: "An admin still needs to verify your account before you can go online. You'll get a notice as soon as it's done.",
         });
       }
       return;
@@ -379,14 +367,7 @@ function RiderPortal() {
                     <FileWarning />
                     <AlertTitle>Waiting for verification</AlertTitle>
                     <AlertDescription>
-                      {me.documents_ready
-                        ? "Your documents are approved. An admin will verify your account shortly."
-                        : `Upload and get these approved: ${me.missing_documents.join(", ")}.`}
-                      {!me.documents_ready && (
-                        <Button size="sm" variant="link" className="h-auto p-0" onClick={() => openProfile("documents")}>
-                          Go to documents
-                        </Button>
-                      )}
+                      An admin will verify your account shortly. You can add your documents any time, but they aren&apos;t required.
                     </AlertDescription>
                   </Alert>
                 )}
@@ -485,25 +466,10 @@ function RiderPortal() {
                   <p className="text-sm text-muted-foreground">
                     {me.status === "suspended"
                       ? "Your rider account is currently suspended. Contact support to restore access."
-                      : me.documents_ready
-                        ? "All your documents are approved. An admin will finish your background verification shortly."
-                        : "Complete your vehicle details and upload all required documents. The rider app unlocks once you're verified."}
+                      : "Add your vehicle details. The rider app unlocks once an admin verifies you. Documents are optional."}
                   </p>
                 </div>
               </div>
-
-              {me.status === "pending" && !me.documents_ready && me.missing_documents.length > 0 && (
-                <div className="rounded-xl border border-amber-400/25 bg-amber-400/5 p-3 text-xs">
-                  <div className="mb-1.5 font-semibold text-amber-200">Pending documents:</div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {me.missing_documents.map((doc) => (
-                      <Badge key={doc} variant="outline" className="border-amber-400/30 bg-amber-400/10 text-amber-200">
-                        {doc}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
 
               <div className="flex flex-col gap-3 pt-1 sm:flex-row">
                 <Button type="button" className="h-12 min-h-12 w-full text-base sm:w-auto sm:flex-1" onClick={() => router.push("/rider/onboarding")}>
@@ -549,7 +515,6 @@ function RiderPortal() {
             <Button variant="outline" onClick={() => setBlocked(null)}>
               Close
             </Button>
-            {blocked?.toDocuments && <Button onClick={goToDocuments}>Go to documents</Button>}
           </DialogFooter>
         </DialogContent>
       </Dialog>

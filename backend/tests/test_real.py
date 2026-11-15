@@ -144,7 +144,8 @@ def test_document_upload_review_and_access(client, admin_h, rider_h):
     ).json()
     h = {"Authorization": f"Bearer {reg['token']}"}
     overview = client.get("/api/rider/documents", headers=h).json()
-    assert not overview["ready"] and len(overview["missing"]) == 4
+    # Documents are optional, so nothing is missing even before the first upload.
+    assert overview["ready"] and overview["missing"] == [] and len(overview["required"]) == 4
 
     png = placeholder_png("licence")
     bad = client.post("/api/rider/documents", headers=h, data={"doc_type": "license"}, files={"file": ("fake.png", b"not an image", "image/png")})
@@ -173,6 +174,16 @@ def test_document_upload_review_and_access(client, admin_h, rider_h):
     for doc_id in (ids["license"], ids["insurance"], ids["registration"], new["id"]):
         client.post(f"/api/admin/documents/{doc_id}/review", headers=admin_h, json={"status": "approved"})
     assert client.get("/api/rider/me", headers=h).json()["documents_ready"] is True
+
+
+def test_riders_need_no_documents_to_be_verified_or_go_online(client, admin_h):
+    body = {"full_name": "No Docs", "email": "nodocs.rider@example.com", "phone": "+8801788888888", "password": "a-good-password", "role": "rider"}
+    token = client.post("/api/auth/register", json=body).json()["token"]
+    h = {"Authorization": f"Bearer {token}"}
+    me = client.get("/api/rider/me", headers=h).json()
+    assert me["documents_ready"] is True and me["missing_documents"] == []
+    assert client.get("/api/rider/documents", headers=h).json()["ready"] is True
+    assert client.post(f"/api/admin/riders/{me['id']}/verify", headers=admin_h).json()["status"] == "verified"
 
 
 def test_settlement_reduces_commission_due(client, admin_h, rider_h):

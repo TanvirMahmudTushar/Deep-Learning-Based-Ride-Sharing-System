@@ -49,7 +49,7 @@ function OnboardingContent() {
   }
 
   const hasVehicle = !!me.vehicle && !!me.license_no;
-  const activeStep: Step = step ?? (hasVehicle ? "documents" : "vehicle");
+  const activeStep: Step = step ?? (hasVehicle ? "status" : "vehicle");
 
   return (
     <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-6">
@@ -99,15 +99,15 @@ function OnboardingContent() {
                 {activeStep === "vehicle"
                   ? "Vehicle & Licence Details"
                   : activeStep === "documents"
-                    ? "Upload Required Documents"
-                    : "Background Verification Status"}
+                    ? "Upload Documents (optional)"
+                    : "Verification Status"}
               </CardTitle>
               <CardDescription>
                 {activeStep === "vehicle"
                   ? "Choose your vehicle type and enter registration details."
                   : activeStep === "documents"
-                    ? "Upload your driving licence, vehicle insurance, registration, and photo."
-                    : "Track your verification progress. The rider app unlocks once verified."}
+                    ? "Documents aren't required. Add your driving licence, insurance, registration or a photo if you like."
+                    : "Track your verification progress. The rider app unlocks once an admin verifies you."}
               </CardDescription>
             </CardHeader>
             <CardContent>

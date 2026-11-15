@@ -101,9 +101,7 @@ export function DocumentsPanel() {
   return (
     <div className="space-y-3">
       <p className="text-sm text-muted-foreground">
-        {data.ready
-          ? "All documents are approved."
-          : "Upload all four documents. An admin reviews them before you can go online. JPG, PNG, WebP or PDF."}
+        Documents are optional. If you add them, an admin may review them. JPG, PNG, WebP or PDF.
       </p>
       {data.required.map(({ doc_type, label, document: doc }) => {
         const st = doc ? STATUS[doc.status] : null;

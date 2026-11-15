@@ -56,24 +56,23 @@ Support agents help people with problems, so they can see other people's trips. 
 - **Can't:** see revenue, stats, pricing, payments, demand forecasts, the rider list or rider documents, or verify or suspend riders.
 - **Access:** agents need no approval. An admin can remove access in the **Support** tab of `/admin` at any time, and give it back. Access is checked on every request, so removal works immediately.
 
-> **IMPORTANT — Testing OTP Default (`000000`):** Phone OTP verification during `/register` (`POST /api/auth/otp/request`, `POST /api/auth/otp/verify`, and `POST /api/auth/register`) currently uses a hardcoded testing default `Settings.default_test_otp = "000000"` in `backend/app/config.py`. **Future work MUST replace this with a real SMS/OTP provider (with expiring single-use codes and rate limiting) before any production deployment.**
-
 ## How a rider gets ready to take trips
 
-A passenger can only be matched with a rider after an admin has approved that rider.
+A passenger can only be matched with a rider after an admin has verified that rider. Documents are optional in the MVP: riders can upload them, and admins can review them, but nothing is blocked on them.
 
 ```mermaid
 sequenceDiagram
   actor Rider
   participant API as Backend
   actor Admin
-  Rider->>API: Sign up (name, email, phone, password) + verify phone OTP (000000 in testing)
+  Rider->>API: Sign up (name, email, phone, password)
   Rider->>API: Submit vehicle details (type, model, plate, color, registration, licence)
-  Rider->>API: Upload licence, insurance, registration and photo
-  API-->>Admin: riders.changed
-  Admin->>API: Approve or reject each document
-  API-->>Rider: profile.updated
-  Admin->>API: Verify rider (only works once all 4 are approved)
+  opt Optional
+    Rider->>API: Upload licence, insurance, registration and photo
+    API-->>Admin: riders.changed
+    Admin->>API: Approve or reject each document
+  end
+  Admin->>API: Verify rider (no documents needed)
   API-->>Rider: profile.updated, "You're verified"
   Rider->>API: Go online and share location
 ```
@@ -284,8 +283,8 @@ npm run dev
 
 The login is stored per browser, so two tabs in the same browser share one account. Use a different browser or profile for each role, such as a normal window, an incognito window and a second browser.
 
-1. **Rider:** sign up and upload the three documents.
-2. **Admin:** approve the documents and verify the rider.
+1. **Rider:** sign up and add vehicle details. Documents are optional.
+2. **Admin:** verify the rider.
 3. **Rider:** go online. If your browser can't get GPS, turn on manual position and set it on the map.
 4. **Passenger:** book the same vehicle type, with a pickup within 8 km of the rider.
 5. **Rider:** accept, start and complete the trip, then record the cash.

@@ -133,7 +133,7 @@ export function ChangeVehicleScreen({
           model: model.trim(),
         },
       });
-      toast.success("Vehicle change request created. Please upload the required documents.");
+      toast.success("Vehicle change request sent to the admin.");
       await refreshChange();
       await onSuccess();
     } catch (err) {
@@ -289,12 +289,12 @@ export function ChangeVehicleScreen({
               {change.documents_complete ? (
                 <div className="flex items-center gap-2 rounded-lg bg-emerald-500/10 p-3 text-xs text-emerald-300 border border-emerald-500/20">
                   <CheckCircle2 className="size-4 shrink-0" />
-                  All required documents uploaded. Waiting for admin verification.
+                  Documents uploaded. Waiting for admin verification.
                 </div>
               ) : (
                 <div className="flex items-center gap-2 rounded-lg bg-amber-500/10 p-3 text-xs text-amber-300 border border-amber-500/20">
                   <AlertCircle className="size-4 shrink-0" />
-                  Please upload both registration and vehicle photo above so admins can review.
+                  Registration and vehicle photo are optional, but they help the admin review.
                 </div>
               )}
 

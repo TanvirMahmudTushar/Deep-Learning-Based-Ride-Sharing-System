@@ -181,13 +181,7 @@ def test_admin_dashboard_endpoints(client, admin_h, user_h):
     riders = client.get("/api/admin/riders", headers=admin_h, params={"status_filter": "pending"}).json()
     assert len(riders) == 1
     rider_id = riders[0]["id"]
-    # Verification is blocked until every required document is approved.
-    blocked = client.post(f"/api/admin/riders/{rider_id}/verify", headers=admin_h)
-    assert blocked.status_code == 409 and "Driving licence" in blocked.json()["detail"]
-    docs = client.get(f"/api/admin/riders/{rider_id}/documents", headers=admin_h).json()["required"]
-    for d in docs:
-        assert client.post(f"/api/admin/documents/{d['document']['id']}/review", headers=admin_h, json={"status": "approved"}).status_code == 200
-
+    # Documents are optional: an admin can verify a rider whose documents haven't been approved.
     assert client.post(f"/api/admin/riders/{rider_id}/verify", headers=admin_h).json()["status"] == "verified"
 
     rules = client.get("/api/admin/pricing", headers=admin_h).json()
@@ -311,26 +305,23 @@ def test_offer_details_decline_feeds_cancel_rate_and_vehicle_guard(client, user_
     assert client.get("/api/rider/offer", headers=rider_h).json() is None
 
 
-def test_rider_otp_signup_and_onboarding_vehicle(client):
-    req = client.post("/api/auth/otp/request", json={"email": "otp.rider@example.com", "phone": "+8801799999999"})
-    assert req.status_code == 200
-    assert client.post("/api/auth/otp/verify", json={"phone": "+8801799999999", "otp": "123456"}).status_code == 400
-    assert client.post("/api/auth/otp/verify", json={"phone": "+8801799999999", "otp": "000000"}).status_code == 200
+def test_rider_signup_and_onboarding_vehicle(client):
+    # Sign-up takes no phone verification, and the old OTP endpoints are gone.
+    assert client.post("/api/auth/otp/request", json={"email": "otp.rider@example.com", "phone": "+8801799999999"}).status_code == 404
 
     reg = client.post(
         "/api/auth/register",
         json={
-            "full_name": "OTP Rider",
+            "full_name": "Signup Rider",
             "email": "otp.rider@example.com",
             "phone": "+8801799999999",
             "password": "secret123",
             "role": "rider",
-            "otp": "000000",
         },
     )
     assert reg.status_code == 201, reg.text
     data = reg.json()
-    assert data["profile"]["phone_verified"] is True
+    assert "phone_verified" not in data["profile"]
     h = {"Authorization": f"Bearer {data['token']}"}
 
     me_before = client.get("/api/rider/me", headers=h).json()
