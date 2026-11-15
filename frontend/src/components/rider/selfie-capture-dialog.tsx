@@ -31,25 +31,24 @@ export function SelfieCaptureDialog({
   const [useAsProfile, setUseAsProfile] = useState(true);
   const [uploading, setUploading] = useState(false);
 
-  function stopStream() {
+  function releaseStream() {
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
+  }
+
+  function stopStream() {
+    releaseStream();
     setCameraReady(false);
   }
 
   useEffect(() => {
-    if (!open || capturedBlob) {
-      stopStream();
-      return;
-    }
+    if (!open || capturedBlob) return;
     let cancelled = false;
-    setCameraError(null);
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setCameraError("Live camera unavailable here. You can still take or choose a photo below.");
-      return;
-    }
-    navigator.mediaDevices
-      .getUserMedia({ video: { facingMode: "user", width: { ideal: 720 }, height: { ideal: 720 } }, audio: false })
+    const unsupported = !navigator.mediaDevices?.getUserMedia;
+    const request = unsupported
+      ? Promise.reject(new Error("unsupported"))
+      : navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 720 }, height: { ideal: 720 } }, audio: false });
+    request
       .then((stream) => {
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop());
@@ -63,14 +62,19 @@ export function SelfieCaptureDialog({
         setCameraReady(true);
       })
       .catch(() => {
-        if (!cancelled) {
-          setCameraError("Camera permission not granted. Use the button below to take or upload a clear selfie.");
-        }
+        if (cancelled) return;
+        setCameraError(
+          unsupported
+            ? "Live camera unavailable here. You can still take or choose a photo below."
+            : "Camera permission not granted. Use the button below to take or upload a clear selfie.",
+        );
       });
 
     return () => {
       cancelled = true;
-      stopStream();
+      releaseStream();
+      setCameraReady(false);
+      setCameraError(null);
     };
   }, [open, capturedBlob]);
 

@@ -33,10 +33,10 @@ def _alert_for(client, staff_h, trip_id: str, note: str) -> dict:
     return next(a for a in client.get("/api/admin/alerts", headers=staff_h).json() if a["trip_id"] == trip_id and a["details"].get("note") == note)
 
 
-def _new_agent(client, admin_h, email: str, approve: bool = True) -> tuple[str, dict]:
+def _new_agent(client, admin_h, email: str) -> tuple[str, dict]:
+    """Sign up a support agent. They have access straight away, with no admin approval."""
     body = _register(client, email, role="support").json()
-    if approve:
-        assert client.post(f"/api/admin/support-agents/{body['profile']['id']}/approve", headers=admin_h).status_code == 200
+    assert body["profile"]["approval_status"] == "approved"
     return body["profile"]["id"], _h(body["token"])
 
 
@@ -61,14 +61,14 @@ def test_support_gets_alert_events_but_not_admin_only_ones():
         hub._roles.pop(support_ws, None)
 
 
-def test_only_approved_agents_can_open_the_live_connection(client, admin_h):
-    pending_id, _ = _new_agent(client, admin_h, "ws.pending@example.com", approve=False)
-    pending_token = client.post("/api/auth/login", json={"email": "ws.pending@example.com", "password": "a-good-password"}).json()["token"]
-    assert ws_router._authenticate(pending_token) is None
-
+def test_new_agents_can_open_the_live_connection_straight_away(client, admin_h):
     agent_id, agent_h = _new_agent(client, admin_h, "ws.approved@example.com")
     token = agent_h["Authorization"].split()[1]
     assert ws_router._authenticate(token) == (agent_id, "support")
+
+    # An admin can still remove access afterwards.
+    assert client.post(f"/api/admin/support-agents/{agent_id}/revoke", headers=admin_h).status_code == 200
+    assert ws_router._authenticate(token) is None
 
 
 def test_removing_access_closes_the_agents_live_connection(client, admin_h, monkeypatch):

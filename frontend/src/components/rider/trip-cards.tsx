@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { Banknote, Check, Clock, ExternalLink, Loader2, MapPin, Navigation, Navigation2, Phone, ShieldAlert, Star, X } from "lucide-react";
 import { TripStatusBadge, VehicleTag } from "@/components/ride-bits";
@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
-import { SPRING_BOUNCY, SPRING_UI } from "@/components/ui/motion";
+import { SPRING_UI } from "@/components/ui/motion";
 import { api } from "@/lib/api";
 import { formatKm, formatMinutes, formatTaka } from "@/lib/format";
 import { haversineKm } from "@/lib/geo";

@@ -6,9 +6,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import update
 
 from app.config import settings
 from app.db import SessionLocal, create_schema
+from app.models import Profile
 from app.realtime import hub
 from app.routers import admin, assistant, auth, documents, geo, meta, passenger, payments, rider, saved_replies, trips, vehicle_changes, ws
 from app.seed import ensure_admin, seed_demo, seed_reference
@@ -28,6 +30,9 @@ async def lifespan(_: FastAPI):
     create_schema()
     with SessionLocal() as db:
         seed_reference(db)
+        # Support agents no longer wait for approval, so let in any who signed up before that changed.
+        db.execute(update(Profile).where(Profile.role == "support", Profile.approval_status == "pending").values(approval_status="approved"))
+        db.commit()
         if created := ensure_admin(db):
             log.info("Created admin account %s", created)
         if settings.demo_mode and seed_demo(db):

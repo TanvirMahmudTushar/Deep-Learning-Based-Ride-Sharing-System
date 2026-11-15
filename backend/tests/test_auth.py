@@ -212,24 +212,25 @@ def _support_signup(client, email):
     return body, {"Authorization": f"Bearer {body['token']}"}
 
 
-def test_new_support_agent_sees_nothing_until_approved(client):
+def test_new_support_agent_has_access_straight_away_but_only_to_support_routes(client):
     body, agent = _support_signup(client, "new.agent@example.com")
     assert body["profile"]["role"] == "support"
-    assert body["profile"]["approval_status"] == "pending"
+    assert body["profile"]["approval_status"] == "approved"
     assert client.get("/api/auth/me", headers=agent).status_code == 200
+    assert client.get("/api/admin/alerts", headers=agent).status_code == 200
 
-    statuses = _call_all(client, PASSENGER_PREFIXES + RIDER_PREFIXES + ADMIN_PREFIXES, agent)
+    statuses = _call_all(client, PASSENGER_PREFIXES + RIDER_PREFIXES, agent)
     allowed = {route: code for route, code in statuses.items() if code != 403}
-    assert not allowed, f"a pending support agent reached: {allowed}"
+    assert not allowed, f"a support agent reached: {allowed}"
 
 
-def test_support_agent_cannot_approve_themselves(client):
+def test_support_agent_cannot_choose_their_own_status_or_use_admin_actions(client):
     body = {"full_name": "Sneaky", "email": "sneaky@example.com", "phone": "+8801711111111", "password": "a-good-password"}
-    created = client.post("/api/auth/register", json={**body, "role": "support", "approval_status": "approved"}).json()
-    assert created["profile"]["approval_status"] == "pending"
+    created = client.post("/api/auth/register", json={**body, "role": "support", "approval_status": "revoked"}).json()
+    assert created["profile"]["approval_status"] == "approved"  # the field is ignored; sign-up decides it
     agent = {"Authorization": f"Bearer {created['token']}"}
+    assert client.post(f"/api/admin/support-agents/{created['profile']['id']}/revoke", headers=agent).status_code == 403
     assert client.post(f"/api/admin/support-agents/{created['profile']['id']}/approve", headers=agent).status_code == 403
-    assert client.get("/api/admin/alerts", headers=agent).status_code == 403
 
 
 def test_approved_support_agent_only_reaches_trips_and_alerts(client, support_h):
@@ -254,23 +255,23 @@ def test_support_agent_cannot_open_rider_documents(client, support_h, admin_h):
     assert client.get(f"/api/documents/{doc_id}/file", headers=support_h).status_code == 404
 
 
-def test_admin_approves_and_revokes_support_access(client, admin_h):
+def test_admin_can_remove_and_restore_support_access(client, admin_h):
     body, agent = _support_signup(client, "lifecycle.agent@example.com")
     agent_id = body["profile"]["id"]
 
     listed = client.get("/api/admin/support-agents", headers=admin_h).json()
-    assert next(a for a in listed if a["id"] == agent_id)["status"] == "pending"
-    assert client.get("/api/admin/stats", headers=admin_h).json()["pending_support"] >= 1
-
-    approved = client.post(f"/api/admin/support-agents/{agent_id}/approve", headers=admin_h)
-    assert approved.status_code == 200 and approved.json()["status"] == "approved"
+    assert next(a for a in listed if a["id"] == agent_id)["status"] == "approved"
     assert client.get("/api/admin/alerts", headers=agent).status_code == 200
-    assert client.get("/api/auth/me", headers=agent).json()["approval_status"] == "approved"
 
     assert client.post(f"/api/admin/support-agents/{agent_id}/revoke", headers=admin_h).status_code == 200
     # The same token loses access straight away; there is no need to wait for it to expire.
     assert client.get("/api/admin/alerts", headers=agent).status_code == 403
     assert client.get("/api/admin/trips/live", headers=agent).status_code == 403
+
+    restored = client.post(f"/api/admin/support-agents/{agent_id}/approve", headers=admin_h)
+    assert restored.status_code == 200 and restored.json()["status"] == "approved"
+    assert client.get("/api/admin/alerts", headers=agent).status_code == 200
+
 
 
 def test_only_support_accounts_can_be_approved(client, admin_h):
