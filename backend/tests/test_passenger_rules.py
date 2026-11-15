@@ -66,5 +66,5 @@ def test_open_reports_per_trip_are_limited(client, rider_h, admin_h):
 
     # Once support closes one, the passenger can report again.
     alert = next(a for a in client.get("/api/admin/alerts", headers=admin_h).json() if a["trip_id"] == trip["id"])
-    assert client.post(f"/api/admin/alerts/{alert['id']}/status", headers=admin_h, json={"status": "closed"}).status_code == 200
+    assert client.post(f"/api/admin/alerts/{alert['id']}/status", headers=admin_h, json={"status": "closed", "resolution_note": "Handled"}).status_code == 200
     assert client.post(url, headers=p, json={"category": "other", "note": "Something new"}).status_code == 201
