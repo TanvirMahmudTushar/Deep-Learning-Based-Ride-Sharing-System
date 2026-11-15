@@ -356,10 +356,24 @@ export interface SafetyAlert {
     category?: string;
     trip_status?: TripStatus;
   };
+  fee_dispute: {
+    amount: number | null;
+    status: Trip["cancel_fee_status"] | null;
+    cancel_reason: string | null;
+    accepted_at: string | null;
+    arrived_at: string | null;
+    cancelled_at: string | null;
+  } | null;
   summary: string | null;
   resolution_note: string | null;
   status: "open" | "reviewed" | "closed";
   created_at: string;
+  escalated_at: string | null;
+  escalated_by: { id: string; name: string } | null;
+  escalation_reason: string | null;
+  escalation_resolved_at: string | null;
+  escalation_resolved_by: { id: string; name: string } | null;
+  escalation_outcome: string | null;
   /** When the trip was booked (for the {trip_date} placeholder in saved replies). */
   trip_requested_at?: string;
   trip_status: TripStatus;
@@ -686,6 +700,8 @@ export interface TripMessage {
   created_at: string;
   mine: boolean;
 }
+
+export type StaffTripMessage = Omit<TripMessage, "mine">;
 
 export interface PassengerReview {
   trip_id: string;

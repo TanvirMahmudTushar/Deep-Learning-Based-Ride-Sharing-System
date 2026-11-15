@@ -26,6 +26,7 @@ const EVENT_KEYS: Record<string, string[]> = {
   "offer.closed": ["/api/rider/offer"],
   "live.changed": ["/api/admin/trips/live", "/api/admin/stats", "/api/admin/forecasts"],
   "alert.new": ["/api/admin/alerts", "/api/admin/stats"],
+  "alert.escalated": ["/api/admin/alerts"],
   "riders.changed": ["/api/admin/riders", "/api/admin/accounts", "/api/admin/stats"],
   "profile.updated": ["/api/rider/me", "/api/rider/documents"],
   "earnings.updated": ["/api/rider/earnings", "/api/rider/me"],
@@ -37,7 +38,7 @@ const EVENT_KEYS: Record<string, string[]> = {
 };
 
 /** Events worth a sound even when the tab is visible. */
-const URGENT = new Set(["offer.new", "alert.new"]);
+const URGENT = new Set(["offer.new", "alert.new", "alert.escalated"]);
 
 const RealtimeContext = createContext({ connected: false });
 

@@ -11,7 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { fetcher } from "@/lib/api";
 import { formatDateTime, formatKm, formatMinutes, formatTaka } from "@/lib/format";
 import { toTuple } from "@/lib/geo";
-import type { StaffTripDetail, Trip } from "@/lib/types";
+import type { StaffTripDetail, StaffTripMessage, Trip } from "@/lib/types";
 
 const PAYMENT_LABEL: Record<string, string> = { pending: "Waiting for cash", collected: "Cash collected", disputed: "Disputed" };
 
@@ -40,6 +40,10 @@ function Timeline({ trip }: { trip: Trip }) {
 
 function Body({ detail }: { detail: StaffTripDetail }) {
   const { trip, alerts } = detail;
+  const { data: messages, error: messagesError } = useSWR<StaffTripMessage[]>(
+    alerts.length ? `/api/admin/trips/${trip.id}/messages` : null,
+    fetcher,
+  );
   return (
     <div className="space-y-5">
       <div className="h-52 overflow-hidden rounded-lg border">
@@ -142,6 +146,31 @@ function Body({ detail }: { detail: StaffTripDetail }) {
           ))}
         </ul>
       </div>
+
+      {alerts.length > 0 && (
+        <div className="space-y-2">
+          <h3 className="text-xs font-medium text-muted-foreground">Trip chat</h3>
+          {messagesError ? (
+            <p role="alert" className="text-sm text-destructive">Could not load the trip chat.</p>
+          ) : !messages ? (
+            <Skeleton className="h-20" />
+          ) : messages.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No chat messages on this trip.</p>
+          ) : (
+            <ul className="space-y-2">
+              {messages.map((message) => (
+                <li key={message.id} className="space-y-1 rounded-lg border p-3 text-sm">
+                  <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                    <span className="font-medium text-foreground">{message.sender_role === "user" ? "Passenger" : "Rider"}</span>
+                    <span>{formatDateTime(message.created_at)}</span>
+                  </div>
+                  <p className="whitespace-pre-wrap text-pretty">{message.body}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   );
 }
