@@ -734,6 +734,8 @@ def _alert_out(db: DB, a: SafetyAlert) -> dict:
         "resolution_note": a.resolution_note,
         "status": a.status,
         "created_at": iso_utc(a.created_at),
+        # When the trip was booked, for saved replies ("your {trip_date} trip").
+        "trip_requested_at": iso_utc(a.trip.requested_at),
         "trip_status": a.trip.status,
         "vehicle_type": a.trip.vehicle_type_requested,
         "pickup_address": a.trip.pickup_address,
