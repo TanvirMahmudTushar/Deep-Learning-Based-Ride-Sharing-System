@@ -35,10 +35,7 @@ from app.schemas import (
     AdminAccountOut,
     AdminAccountPageOut,
     AdminAccountTripPageOut,
-    AlertEscalationIn,
-    AlertEscalationResolutionIn,
     AlertStatusIn,
-    FeeDisputeResolutionIn,
     PricingRuleIn,
     RiderBlockOut,
     iso_utc,
@@ -49,7 +46,7 @@ from app.schemas import (
 )
 from app.security import DB, Admin, Staff, account_is_suspended
 from app.realtime import ADMINS, emit, hub
-from app.services import availability, cancel_fees, demand, documents, messages, rider_prefs, simulator
+from app.services import availability, cancel_fees, demand, documents, rider_prefs, simulator
 from app.services import trips as trip_service
 from app.services.alert_severity import anomaly_severity
 from app.services.alerts import ensure_summary
@@ -726,16 +723,6 @@ def _person(db: DB, profile_id: str | None) -> dict | None:
 def _alert_out(db: DB, a: SafetyAlert) -> dict:
     rider_profile = a.trip.rider.profile if a.trip.rider else None
     last_changed = _person(db, a.reviewed_by)
-    fee_dispute = None
-    if a.alert_type == "report" and a.details.get("category") == "fee":
-        fee_dispute = {
-            "amount": a.trip.cancel_fee,
-            "status": a.trip.cancel_fee_status,
-            "cancel_reason": a.trip.cancel_reason,
-            "accepted_at": iso_utc(a.trip.accepted_at),
-            "arrived_at": iso_utc(a.trip.arrived_at),
-            "cancelled_at": iso_utc(a.trip.completed_at),
-        }
     return {
         "id": a.id,
         "trip_id": a.trip_id,
@@ -747,12 +734,6 @@ def _alert_out(db: DB, a: SafetyAlert) -> dict:
         "resolution_note": a.resolution_note,
         "status": a.status,
         "created_at": iso_utc(a.created_at),
-        "escalated_at": iso_utc(a.escalated_at),
-        "escalated_by": _person(db, a.escalated_by),
-        "escalation_reason": a.escalation_reason,
-        "escalation_resolved_at": iso_utc(a.escalation_resolved_at),
-        "escalation_resolved_by": _person(db, a.escalation_resolved_by),
-        "escalation_outcome": a.escalation_outcome,
         # When the trip was booked, for saved replies ("your {trip_date} trip").
         "trip_requested_at": iso_utc(a.trip.requested_at),
         "trip_status": a.trip.status,
@@ -766,30 +747,17 @@ def _alert_out(db: DB, a: SafetyAlert) -> dict:
         "passenger_name": a.trip.user.full_name,
         "assigned_to": _person(db, a.assigned_to),
         "last_changed_by": last_changed["name"] if last_changed else None,
-        "fee_dispute": fee_dispute,
         "notes": [_note_out(n) for n in a.notes],
     }
 
 
 @router.get("/alerts")
 def alerts(db: DB, staff: Staff, status_filter: str | None = None):
-    # Pending escalations stay at the top of the queue, then open SOS alerts, then newest first.
-    escalated_first = case(
-        (and_(SafetyAlert.escalated_at.is_not(None), SafetyAlert.escalation_resolved_at.is_(None)), 0),
-        else_=1,
-    )
+    # Open SOS alerts first, then newest first.
     sos_first = case((and_(SafetyAlert.alert_type == "sos", SafetyAlert.status == "open"), 0), else_=1)
-    q = select(SafetyAlert).order_by(escalated_first, sos_first, SafetyAlert.created_at.desc()).limit(100)
+    q = select(SafetyAlert).order_by(sos_first, SafetyAlert.created_at.desc()).limit(100)
     if status_filter:
-        if status_filter == "open":
-            q = q.where(
-                or_(
-                    SafetyAlert.status == "open",
-                    and_(SafetyAlert.escalated_at.is_not(None), SafetyAlert.escalation_resolved_at.is_(None)),
-                )
-            )
-        else:
-            q = q.where(SafetyAlert.status == ("closed" if status_filter == "resolved" else status_filter))
+        q = q.where(SafetyAlert.status == ("closed" if status_filter == "resolved" else status_filter))
     return [_alert_out(db, a) for a in db.scalars(q)]
 
 
@@ -838,46 +806,11 @@ def _alert_changed(db: DB, alert: SafetyAlert, passenger_notice: tuple[str, str]
         emit(db, alert.trip.user_id, "report.updated", notify=passenger_notice, trip_id=alert.trip_id)
 
 
-@router.post("/alerts/{alert_id}/escalate")
-def escalate_alert(alert_id: str, body: AlertEscalationIn, db: DB, staff: Staff):
-    alert = _alert_or_404(db, alert_id)
-    if alert.escalated_at is not None:
-        raise HTTPException(status.HTTP_409_CONFLICT, "This alert has already been escalated")
-    reason = body.reason.strip()
-    if not reason:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "An escalation reason is required")
-    alert.escalated_at = utcnow()
-    alert.escalated_by = staff.id
-    alert.escalation_reason = reason
-    _alert_changed(db, alert)
-    emit(db, ADMINS, "alert.escalated", notify=("Support case escalated", reason[:140]), alert_id=alert.id)
-    db.commit()
-    return _alert_out(db, alert)
-
-
-@router.post("/alerts/{alert_id}/escalation/resolve")
-def resolve_alert_escalation(alert_id: str, body: AlertEscalationResolutionIn, db: DB, admin: Admin):
-    alert = _alert_or_404(db, alert_id)
-    if alert.escalated_at is None or alert.escalation_resolved_at is not None:
-        raise HTTPException(status.HTTP_409_CONFLICT, "This alert has no pending escalation")
-    outcome = body.note.strip()
-    if not outcome:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "A resolution note is required")
-    alert.escalation_resolved_at = utcnow()
-    alert.escalation_resolved_by = admin.id
-    alert.escalation_outcome = outcome
-    _alert_changed(db, alert)
-    db.commit()
-    return _alert_out(db, alert)
-
-
 @router.post("/alerts/{alert_id}/status")
 def set_alert_status(alert_id: str, body: AlertStatusIn, db: DB, staff: Staff):
     if body.status == "closed" and not (body.resolution_note or "").strip():
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "A resolution note is required")
     alert = _alert_or_404(db, alert_id)
-    if body.status == "closed" and alert.escalated_at is not None and alert.escalation_resolved_at is None:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Resolve the admin escalation before closing this alert")
     changed = alert.status != body.status
     alert.status = body.status
     alert.reviewed_by = staff.id
@@ -931,39 +864,6 @@ def add_alert_note(alert_id: str, body: AlertNoteIn, db: DB, staff: Staff):
     return _alert_out(db, alert)
 
 
-@router.post("/alerts/{alert_id}/fee-dispute/resolve")
-def resolve_fee_dispute(alert_id: str, body: FeeDisputeResolutionIn, db: DB, staff: Staff):
-    alert = _alert_or_404(db, alert_id)
-    trip = alert.trip
-    if alert.alert_type != "report" or alert.details.get("category") != "fee" or alert.status != "open":
-        raise HTTPException(status.HTTP_409_CONFLICT, "This alert is not an open fee dispute")
-    if trip.status != "cancelled" or trip.cancel_fee is None or trip.cancel_fee_status not in ("owed", "paid"):
-        raise HTTPException(status.HTTP_409_CONFLICT, "This trip no longer has a fee that can be disputed")
-    reply = body.reply.strip()
-    if len(reply) < 3:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "A reply to the passenger is required")
-    if body.decision == "waive":
-        try:
-            fee_status = cancel_fees.waive(db, trip)
-        except ValueError as e:
-            raise HTTPException(status.HTTP_409_CONFLICT, str(e))
-        outcome = "Fee waived." if fee_status == "waived" else "Fee waived and credited to your next ride."
-    else:
-        outcome = "Fee kept."
-    passenger_reply = f"{outcome} {reply}"
-    note = AlertNote(alert_id=alert.id, author_id=staff.id, body=passenger_reply, for_passenger=True)
-    db.add(note)
-    alert.notes.append(note)
-    alert.status = "closed"
-    alert.reviewed_by = staff.id
-    alert.resolution_note = passenger_reply
-    db.flush()
-    notice = passenger_reply if len(passenger_reply) <= 140 else passenger_reply[:137] + "..."
-    _alert_changed(db, alert, ("Update on your fee dispute", notice))
-    db.commit()
-    return _alert_out(db, alert)
-
-
 @router.get("/trips/{trip_id}")
 def trip_detail(trip_id: str, db: DB, staff: Staff):
     """One trip for the support desk: route, timeline, fare, payment status, rating and its alerts.
@@ -973,20 +873,6 @@ def trip_detail(trip_id: str, db: DB, staff: Staff):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Trip not found")
     alerts_on_trip = db.scalars(select(SafetyAlert).where(SafetyAlert.trip_id == trip.id).order_by(SafetyAlert.created_at)).all()
     return {"trip": trip_out(db, trip).model_dump(mode="json"), "alerts": [_alert_out(db, a) for a in alerts_on_trip]}
-
-
-@router.get("/trips/{trip_id}/messages")
-def staff_trip_messages(trip_id: str, db: DB, staff: Staff):
-    trip = db.get(Trip, trip_id)
-    if trip is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Trip not found")
-    has_alert = db.scalar(select(SafetyAlert.id).where(SafetyAlert.trip_id == trip.id).limit(1))
-    if has_alert is None:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Trip chat is only available for trips with a safety alert or report")
-    return [
-        {"id": message.id, "sender_role": message.sender_role, "body": message.body, "created_at": iso_utc(message.created_at)}
-        for message in messages.list_for(db, trip)
-    ]
 
 
 @router.get("/cancel-fees")
