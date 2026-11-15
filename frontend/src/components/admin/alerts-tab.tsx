@@ -13,7 +13,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { api, fetcher } from "@/lib/api";
-import { formatDateTime, timeAgo } from "@/lib/format";
+import { formatDateTime, formatTaka, timeAgo } from "@/lib/format";
 import { useLiveInterval } from "@/lib/realtime";
 import { useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
@@ -178,6 +178,7 @@ export function AlertsTab() {
   const [resolutionDraft, setResolutionDraft] = useState<{ alertId: string; note: string } | null>(null);
   const [escalationReasonDraft, setEscalationReasonDraft] = useState<{ alertId: string; reason: string } | null>(null);
   const [escalationOutcomeDraft, setEscalationOutcomeDraft] = useState<{ alertId: string; note: string } | null>(null);
+  const [feeReplyDraft, setFeeReplyDraft] = useState<{ alertId: string; reply: string } | null>(null);
   const autoSummarized = useRef(new Set<string>());
   const selected = alerts?.find((a) => a.id === selectedId) ?? alerts?.[0] ?? null;
   const resolutionNote =
@@ -186,6 +187,14 @@ export function AlertsTab() {
     escalationReasonDraft && escalationReasonDraft.alertId === selected?.id ? escalationReasonDraft.reason : "";
   const escalationOutcome =
     escalationOutcomeDraft && escalationOutcomeDraft.alertId === selected?.id ? escalationOutcomeDraft.note : "";
+  const feeReply = feeReplyDraft && feeReplyDraft.alertId === selected?.id ? feeReplyDraft.reply : "";
+  const isOpenFeeDispute =
+    selected?.alert_type === "report" &&
+    selected.details.category === "fee" &&
+    selected.status !== "closed";
+  const canResolveFeeDispute =
+    isOpenFeeDispute &&
+    (selected?.fee_dispute?.status === "owed" || selected?.fee_dispute?.status === "paid");
   const selectedAlertId = selected && !selected.summary ? selected.id : null;
 
   useEffect(() => {
@@ -356,6 +365,70 @@ export function AlertsTab() {
                 </div>
               )}
 
+              {selected.fee_dispute && (
+                <div className="space-y-3 rounded-lg border border-amber-400/20 bg-amber-400/5 p-3 text-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-medium">Late-cancellation fee</span>
+                    <Badge variant="outline" className="capitalize">{selected.fee_dispute.status ?? "unknown"}</Badge>
+                  </div>
+                  <p>Amount: <span className="font-medium tabular-nums">{formatTaka(selected.fee_dispute.amount)}</span></p>
+                  <p>Cancel reason: {selected.fee_dispute.cancel_reason || "Not provided"}</p>
+                  <div className="space-y-1">
+                    <div className="text-xs font-medium text-muted-foreground">Trip timeline</div>
+                    {(
+                      [
+                        ["Accepted", selected.fee_dispute.accepted_at],
+                        ["Rider arrived", selected.fee_dispute.arrived_at],
+                        ["Cancelled", selected.fee_dispute.cancelled_at],
+                      ] as const
+                    ).map(([label, at]) => (
+                      <div key={label} className="flex justify-between gap-3 text-xs">
+                        <span className="text-muted-foreground">{label}</span>
+                        <span>{at ? formatDateTime(at) : "Not recorded"}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {canResolveFeeDispute && (
+                    <div className="space-y-2 border-t pt-3">
+                      <label htmlFor="fee-dispute-reply" className="text-sm font-medium">Reply to passenger (required)</label>
+                      <Textarea
+                        id="fee-dispute-reply"
+                        value={feeReply}
+                        onChange={(e) => setFeeReplyDraft({ alertId: selected.id, reply: e.target.value })}
+                        placeholder="Explain the decision to the passenger"
+                        maxLength={500}
+                        rows={2}
+                      />
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={!!busy || !feeReply.trim()}
+                          onClick={() => {
+                            void call("fee-dispute/resolve", "fee-dispute", { decision: "keep", reply: feeReply.trim() }).then((ok) => {
+                              if (ok) setFeeReplyDraft(null);
+                            });
+                          }}
+                        >
+                          Keep fee
+                        </Button>
+                        <Button
+                          size="sm"
+                          disabled={!!busy || !feeReply.trim()}
+                          onClick={() => {
+                            void call("fee-dispute/resolve", "fee-dispute", { decision: "waive", reply: feeReply.trim() }).then((ok) => {
+                              if (ok) setFeeReplyDraft(null);
+                            });
+                          }}
+                        >
+                          Waive fee
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <Ownership alert={selected} busy={!!busy} onAction={(path) => void call(path, path)} />
 
               {selected.escalation && (
@@ -475,6 +548,7 @@ export function AlertsTab() {
                       !!busy ||
                       selected.status === s ||
                       (selected.escalation?.active && s !== "open") ||
+                      (isOpenFeeDispute && s !== "open") ||
                       (s === "closed" && !resolutionNote.trim())
                     }
                     onClick={() => void call("status", s, { status: s, ...(s === "closed" ? { resolution_note: resolutionNote.trim() } : {}) })}

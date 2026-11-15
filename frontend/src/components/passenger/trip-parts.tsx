@@ -116,8 +116,8 @@ const CATEGORIES = [
   { value: "other", label: "Something else" },
 ];
 
-export function ReportForm({ tripId, onDone }: { tripId: string; onDone: () => void }) {
-  const [category, setCategory] = useState("safety");
+export function ReportForm({ tripId, onDone, feeDispute = false }: { tripId: string; onDone: () => void; feeDispute?: boolean }) {
+  const [category, setCategory] = useState(feeDispute ? "fee" : "safety");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -125,7 +125,7 @@ export function ReportForm({ tripId, onDone }: { tripId: string; onDone: () => v
     setSaving(true);
     try {
       await api(`/api/trips/${tripId}/report`, { json: { category, note } });
-      toast.success("Report sent. Our team will follow up.");
+      toast.success(feeDispute ? "Fee dispute sent. Our team will follow up." : "Report sent. Our team will follow up.");
       onDone();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not send report");
@@ -136,23 +136,32 @@ export function ReportForm({ tripId, onDone }: { tripId: string; onDone: () => v
   return (
     <div className="space-y-3 rounded-lg border p-4">
       <div className="space-y-2">
-        <Label>What went wrong?</Label>
-        <Select value={category} onValueChange={setCategory}>
-          <SelectTrigger className="w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {CATEGORIES.map((c) => (
-              <SelectItem key={c.value} value={c.value}>
-                {c.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <Label>{feeDispute ? "Dispute type" : "What went wrong?"}</Label>
+        {feeDispute ? (
+          <p className="rounded-md border px-3 py-2 text-sm text-muted-foreground">Late-cancellation fee</p>
+        ) : (
+          <Select value={category} onValueChange={setCategory}>
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {CATEGORIES.map((c) => (
+                <SelectItem key={c.value} value={c.value}>
+                  {c.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
       </div>
-      <Textarea placeholder="Tell us what happened" value={note} onChange={(e) => setNote(e.target.value)} maxLength={1000} />
+      <Textarea
+        placeholder={feeDispute ? "Briefly explain why you are disputing this fee" : "Tell us what happened"}
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        maxLength={feeDispute ? 500 : 1000}
+      />
       <Button className="w-full" disabled={note.trim().length < 3 || saving} onClick={submit}>
-        {saving && <Loader2 className="animate-spin" />} Send report
+        {saving && <Loader2 className="animate-spin" />} {feeDispute ? "Submit fee dispute" : "Send report"}
       </Button>
     </div>
   );

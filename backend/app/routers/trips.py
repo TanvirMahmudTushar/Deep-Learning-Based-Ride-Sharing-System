@@ -114,6 +114,26 @@ def report(trip_id: str, body: ReportIn, db: DB, user: Passenger):
     trip = _own_trip(db, user, trip_id)
     if trip.status not in ("completed", "cancelled"):
         raise HTTPException(status.HTTP_409_CONFLICT, "Report a problem after the trip ends; use the emergency button during a trip")
+    if body.category == "fee":
+        if (
+            trip.status != "cancelled"
+            or trip.cancel_fee is None
+            or trip.cancel_fee <= 0
+            or trip.cancel_fee_status not in ("owed", "paid")
+        ):
+            raise HTTPException(status.HTTP_409_CONFLICT, "Only a cancelled trip with an owed or paid fee can be disputed")
+        reason = body.note.strip()
+        if len(reason) < 3 or len(reason) > 500:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "A fee dispute reason must be 3 to 500 characters")
+        fee_disputes = db.scalars(
+            select(SafetyAlert).where(
+                SafetyAlert.trip_id == trip.id,
+                SafetyAlert.alert_type == "report",
+                SafetyAlert.status != "closed",
+            )
+        )
+        if any(alert.details.get("category") == "fee" for alert in fee_disputes):
+            raise HTTPException(status.HTTP_409_CONFLICT, "This trip already has an open fee dispute")
     # Reports support has closed don't count, so a passenger can report something new later.
     open_reports = db.scalar(
         select(func.count(SafetyAlert.id)).where(

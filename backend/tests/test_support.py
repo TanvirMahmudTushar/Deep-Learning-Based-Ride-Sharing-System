@@ -3,6 +3,7 @@ case notes and ownership (#26), replies to passengers (#27) and the queue summar
 
 import pytest
 
+from app.config import settings
 from app.routers import admin as admin_router
 from app.realtime import ADMINS, SUPPORT_EVENTS, hub
 from app.routers import ws as ws_router
@@ -33,6 +34,18 @@ def _report(client, user_h, note="Left my umbrella behind") -> dict:
 
 def _alert_for(client, staff_h, trip_id: str, note: str) -> dict:
     return next(a for a in client.get("/api/admin/alerts", headers=staff_h).json() if a["trip_id"] == trip_id and a["details"].get("note") == note)
+
+
+def _cancel_with_fee(client, passenger_h, rider_h) -> dict:
+    trip = _book(client, passenger_h, rider_h)
+    cancelled = client.post(
+        f"/api/trips/{trip['id']}/cancel",
+        headers=passenger_h,
+        json={"reason": "wait_too_long"},
+    )
+    assert cancelled.status_code == 200, cancelled.text
+    assert cancelled.json()["cancel_fee"] == 20.0
+    return cancelled.json()
 
 
 def _new_agent(client, admin_h, email: str, approve: bool = True) -> tuple[str, dict]:
@@ -156,6 +169,227 @@ def test_staff_can_read_chat_only_for_reported_trips(client, support_h, admin_h,
         rider_h,
     )
     assert client.get(f"/api/admin/trips/{unreported_trip['id']}/messages", headers=support_h).status_code == 403
+
+
+# --- #58 late-cancellation fee disputes -------------------------------------------------
+
+
+def test_passenger_can_dispute_only_an_open_fee_on_a_cancelled_trip(client, support_h, rider_h, monkeypatch):
+    monkeypatch.setattr(settings, "late_cancel_grace_seconds", 0)
+    passenger_h = _passenger(client, "fee.dispute.open@example.com")
+    trip = _cancel_with_fee(client, passenger_h, rider_h)
+    note = "The rider took a wrong turn"
+    response = client.post(
+        f"/api/trips/{trip['id']}/report",
+        headers=passenger_h,
+        json={"category": "fee", "note": note},
+    )
+    assert response.status_code == 201
+    assert client.post(
+        f"/api/trips/{trip['id']}/report",
+        headers=passenger_h,
+        json={"category": "fee", "note": "The same fee is still unfair"},
+    ).status_code == 409
+
+    alert = _alert_for(client, support_h, trip["id"], note)
+    open_alerts = client.get("/api/admin/alerts", headers=support_h, params={"status_filter": "open"}).json()
+    assert any(item["id"] == alert["id"] for item in open_alerts)
+    assert alert["fee_dispute"] == {
+        "amount": 20.0,
+        "status": "owed",
+        "cancel_reason": trip["cancel_reason"],
+        "accepted_at": trip["accepted_at"],
+        "arrived_at": trip["arrived_at"],
+        "cancelled_at": trip["completed_at"],
+    }
+
+    completed = _finish(client, _book(client, passenger_h, rider_h)["id"], rider_h)
+    assert client.post(
+        f"/api/trips/{completed['id']}/report",
+        headers=passenger_h,
+        json={"category": "fee", "note": "This trip has no cancellation fee"},
+    ).status_code == 409
+
+
+def test_cancelled_trip_without_a_fee_cannot_file_a_fee_dispute(client, user_h, rider_h):
+    trip = _book(client, user_h, rider_h, accept=False)
+    cancelled = client.post(
+        f"/api/trips/{trip['id']}/cancel",
+        headers=user_h,
+        json={"reason": "changed_plans"},
+    )
+    assert cancelled.status_code == 200
+    assert cancelled.json()["cancel_fee"] is None
+    assert client.post(
+        f"/api/trips/{trip['id']}/report",
+        headers=user_h,
+        json={"category": "fee", "note": "There should not be a fee"},
+    ).status_code == 409
+
+
+def test_support_can_waive_an_owed_fee_and_passenger_sees_the_reply(client, support_h, rider_h, monkeypatch):
+    monkeypatch.setattr(settings, "late_cancel_grace_seconds", 0)
+    passenger_h = _passenger(client, "fee.dispute.waived@example.com")
+    trip = _cancel_with_fee(client, passenger_h, rider_h)
+    reason = "The rider went the wrong way"
+    assert client.post(
+        f"/api/trips/{trip['id']}/report",
+        headers=passenger_h,
+        json={"category": "fee", "note": reason},
+    ).status_code == 201
+    alert = _alert_for(client, support_h, trip["id"], reason)
+    empty_reply = client.post(
+        f"/api/admin/alerts/{alert['id']}/fee-dispute/resolve",
+        headers=support_h,
+        json={"decision": "keep", "reply": "   "},
+    )
+    assert empty_reply.status_code == 422
+    assert client.post(
+        f"/api/admin/alerts/{alert['id']}/status",
+        headers=support_h,
+        json={"status": "closed", "resolution_note": "Attempt to bypass the required decision"},
+    ).status_code == 409
+
+    response = client.post(
+        f"/api/admin/alerts/{alert['id']}/fee-dispute/resolve",
+        headers=support_h,
+        json={"decision": "waive", "reply": "We confirmed the route issue."},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "closed"
+    assert response.json()["fee_dispute"]["status"] == "waived"
+    assert response.json()["notes"][-1]["for_passenger"] is True
+    assert response.json()["notes"][-1]["body"] == "Fee waived. We confirmed the route issue."
+    report = client.get(f"/api/trips/{trip['id']}/reports", headers=passenger_h).json()[0]
+    assert report["status"] == "closed"
+    assert report["replies"][0]["body"] == "Fee waived. We confirmed the route issue."
+    assert client.get("/api/passenger/summary", headers=passenger_h).json()["outstanding_fee"] == 0
+    for status in ("open", "reviewed"):
+        assert client.post(
+            f"/api/admin/alerts/{alert['id']}/status",
+            headers=support_h,
+            json={"status": status},
+        ).status_code == 409
+    assert client.post(
+        f"/api/admin/trips/{trip['id']}/cancel-fee/waive",
+        headers=support_h,
+    ).status_code == 403
+
+
+def test_support_can_keep_a_fee_with_a_required_reply(client, support_h, rider_h, monkeypatch):
+    monkeypatch.setattr(settings, "late_cancel_grace_seconds", 0)
+    passenger_h = _passenger(client, "fee.dispute.kept@example.com")
+    trip = _cancel_with_fee(client, passenger_h, rider_h)
+    reason = "I believe the fee was calculated incorrectly"
+    assert client.post(
+        f"/api/trips/{trip['id']}/report",
+        headers=passenger_h,
+        json={"category": "fee", "note": reason},
+    ).status_code == 201
+    alert = _alert_for(client, support_h, trip["id"], reason)
+
+    response = client.post(
+        f"/api/admin/alerts/{alert['id']}/fee-dispute/resolve",
+        headers=support_h,
+        json={"decision": "keep", "reply": "We reviewed the trip and the fee is correct."},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "closed"
+    assert response.json()["fee_dispute"]["status"] == "owed"
+    report = client.get(f"/api/trips/{trip['id']}/reports", headers=passenger_h).json()[0]
+    assert report["replies"][0]["body"] == "We reviewed the trip and the fee is correct."
+    assert client.get("/api/passenger/summary", headers=passenger_h).json()["outstanding_fee"] == 20
+
+
+def test_support_waiving_a_paid_dispute_issues_a_credit(client, support_h, rider_h, monkeypatch):
+    monkeypatch.setattr(settings, "late_cancel_grace_seconds", 0)
+    passenger_h = _passenger(client, "fee.dispute.paid@example.com")
+    trip = _cancel_with_fee(client, passenger_h, rider_h)
+    completed = _finish(client, _book(client, passenger_h, rider_h)["id"], rider_h)
+    assert completed["status"] == "completed"
+    trip = client.get(f"/api/trips/{trip['id']}", headers=passenger_h).json()
+    assert trip["cancel_fee_status"] == "paid"
+    reason = "The rider cancelled the pickup after accepting"
+    assert client.post(
+        f"/api/trips/{trip['id']}/report",
+        headers=passenger_h,
+        json={"category": "fee", "note": reason},
+    ).status_code == 201
+    alert = _alert_for(client, support_h, trip["id"], reason)
+
+    response = client.post(
+        f"/api/admin/alerts/{alert['id']}/fee-dispute/resolve",
+        headers=support_h,
+        json={"decision": "waive", "reply": "We are crediting the paid fee."},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["fee_dispute"]["status"] == "credited"
+    assert client.get(f"/api/trips/{trip['id']}/reports", headers=passenger_h).json()[0]["replies"][0]["body"] == (
+        "Fee waived. We are crediting the paid fee."
+    )
+    next_trip = _book(client, passenger_h, rider_h)
+    assert next_trip["fee_adjustment"] == -20.0
+
+
+def test_support_cannot_waive_without_a_fee_dispute(client, support_h, rider_h, monkeypatch):
+    monkeypatch.setattr(settings, "late_cancel_grace_seconds", 0)
+    passenger_h = _passenger(client, "fee.dispute.missing@example.com")
+    trip = _cancel_with_fee(client, passenger_h, rider_h)
+    reason = "Please review this cancellation"
+    assert client.post(
+        f"/api/trips/{trip['id']}/report",
+        headers=passenger_h,
+        json={"category": "other", "note": reason},
+    ).status_code == 201
+    alert = _alert_for(client, support_h, trip["id"], reason)
+
+    response = client.post(
+        f"/api/admin/alerts/{alert['id']}/fee-dispute/resolve",
+        headers=support_h,
+        json={"decision": "waive", "reply": "We waived the fee."},
+    )
+    assert response.status_code == 403
+    assert client.post(
+        f"/api/admin/trips/{trip['id']}/cancel-fee/waive",
+        headers=support_h,
+    ).status_code == 403
+    assert client.get(f"/api/trips/{trip['id']}", headers=passenger_h).json()["cancel_fee_status"] == "owed"
+
+
+def test_admin_can_resolve_fee_dispute_but_passengers_and_riders_cannot(client, admin_h, rider_h, monkeypatch):
+    monkeypatch.setattr(settings, "late_cancel_grace_seconds", 0)
+    passenger_h = _passenger(client, "fee.dispute.admin@example.com")
+    trip = _cancel_with_fee(client, passenger_h, rider_h)
+    reason = "The fee was charged despite a road closure"
+    assert client.post(
+        f"/api/trips/{trip['id']}/report",
+        headers=passenger_h,
+        json={"category": "fee", "note": reason},
+    ).status_code == 201
+    alert = _alert_for(client, admin_h, trip["id"], reason)
+    url = f"/api/admin/alerts/{alert['id']}/fee-dispute/resolve"
+    body = {"decision": "keep", "reply": "We reviewed the fee and it remains due."}
+
+    assert client.post(url, headers=passenger_h, json=body).status_code == 403
+    assert client.post(url, headers=rider_h, json=body).status_code == 403
+    response = client.post(url, headers=admin_h, json=body)
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "closed"
+    assert response.json()["notes"][-1]["body"] == body["reply"]
+
+
+def test_ordinary_report_status_can_still_be_reopened(client, support_h, user_h):
+    trip = _report(client, user_h, "Ordinary report status check")
+    alert = _alert_for(client, support_h, trip["id"], "Ordinary report status check")
+    closed = client.post(
+        f"/api/admin/alerts/{alert['id']}/status",
+        headers=support_h,
+        json={"status": "closed", "resolution_note": "Handled"},
+    )
+    assert closed.status_code == 200
+    reopened = client.post(f"/api/admin/alerts/{alert['id']}/status", headers=support_h, json={"status": "open"})
+    assert reopened.status_code == 200
+    assert reopened.json()["status"] == "open"
 
 
 # --- #25 search and filters --------------------------------------------------------------

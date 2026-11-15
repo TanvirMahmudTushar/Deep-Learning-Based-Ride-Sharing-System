@@ -44,8 +44,7 @@ function Timeline({ trip }: { trip: Trip }) {
 const REPORT_STATUS: Record<PassengerReport["status"], string> = { received: "Received", in_review: "Being reviewed", closed: "Closed" };
 
 /** The passenger's reports on this trip, with their status and any reply from support. */
-function ReportUpdates({ tripId }: { tripId: string }) {
-  const { data: reports } = useSWR<PassengerReport[]>(`/api/trips/${tripId}/reports`, fetcher);
+function ReportUpdates({ reports }: { reports: PassengerReport[] | undefined }) {
   if (!reports?.length) return null;
   return (
     <div className="space-y-2">
@@ -74,8 +73,19 @@ function ReportUpdates({ tripId }: { tripId: string }) {
 function Body({ trip, onChanged }: { trip: Trip; onChanged: () => void }) {
   const router = useRouter();
   const [reporting, setReporting] = useState(false);
+  const [feeDisputeForm, setFeeDisputeForm] = useState(false);
   const { mutate } = useSWRConfig();
   const ended = trip.status === "completed" || trip.status === "cancelled";
+  const reportsKey = ended ? `/api/trips/${trip.id}/reports` : null;
+  const { data: reports } = useSWR<PassengerReport[]>(reportsKey, fetcher);
+  const hasOpenFeeDispute = reports?.some((report) => report.category === "fee" && report.status !== "closed") ?? false;
+  const canDisputeFee =
+    trip.status === "cancelled" &&
+    trip.cancel_fee != null &&
+    trip.cancel_fee > 0 &&
+    (trip.cancel_fee_status === "owed" || trip.cancel_fee_status === "paid") &&
+    reports !== undefined &&
+    !hasOpenFeeDispute;
 
   function rideAgain() {
     setPrefill({
@@ -186,14 +196,16 @@ function Body({ trip, onChanged }: { trip: Trip; onChanged: () => void }) {
         </p>
       )}
 
-      {ended && <ReportUpdates tripId={trip.id} />}
+      {ended && <ReportUpdates reports={reports} />}
 
       {reporting && (
         <ReportForm
           tripId={trip.id}
+          feeDispute={feeDisputeForm}
           onDone={() => {
             setReporting(false);
-            void mutate(`/api/trips/${trip.id}/reports`);
+            setFeeDisputeForm(false);
+            void mutate(reportsKey);
           }}
         />
       )}
@@ -213,6 +225,17 @@ function Body({ trip, onChanged }: { trip: Trip; onChanged: () => void }) {
           {!reporting && (
             <Button variant="outline" onClick={() => setReporting(true)}>
               <Flag /> Report a problem
+            </Button>
+          )}
+          {canDisputeFee && !reporting && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                setFeeDisputeForm(true);
+                setReporting(true);
+              }}
+            >
+              <ShieldAlert /> Dispute this fee
             </Button>
           )}
         </div>

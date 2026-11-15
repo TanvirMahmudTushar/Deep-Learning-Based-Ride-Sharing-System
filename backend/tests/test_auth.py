@@ -30,6 +30,7 @@ SUPPORT_ROUTES = {
     ("POST", "/api/admin/alerts/x/claim"),
     ("POST", "/api/admin/alerts/x/release"),
     ("POST", "/api/admin/alerts/x/notes"),
+    ("POST", "/api/admin/alerts/x/fee-dispute/resolve"),
     ("GET", "/api/admin/trips/x"),
     ("GET", "/api/admin/trips/x/messages"),
     # Saved replies (#60): agents manage their own; team replies stay admin-only inside the route.
@@ -38,7 +39,10 @@ SUPPORT_ROUTES = {
     ("PUT", "/api/admin/saved-replies/x"),
     ("DELETE", "/api/admin/saved-replies/x"),
 }
-CONDITIONALLY_RESTRICTED_SUPPORT_ROUTES = {("GET", "/api/admin/trips/x/messages")}
+CONDITIONALLY_RESTRICTED_SUPPORT_ROUTES = {
+    ("GET", "/api/admin/trips/x/messages"): 403,
+    ("POST", "/api/admin/alerts/x/fee-dispute/resolve"): 422,
+}
 
 
 def _api_routes():
@@ -248,7 +252,7 @@ def test_approved_support_agent_only_reaches_trips_and_alerts(client, support_h)
     for route, code in statuses.items():
         if route in SUPPORT_ROUTES:
             if route in CONDITIONALLY_RESTRICTED_SUPPORT_ROUTES:
-                assert code == 403, f"the placeholder trip has no alert, so access should be refused for {route}"
+                assert code == CONDITIONALLY_RESTRICTED_SUPPORT_ROUTES[route], f"unexpected conditional access for {route}"
             else:
                 assert code != 403, f"support should reach {route}"
         else:

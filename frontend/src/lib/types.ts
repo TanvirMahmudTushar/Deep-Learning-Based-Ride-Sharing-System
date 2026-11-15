@@ -374,6 +374,16 @@ export interface SafetyAlert {
   last_changed_by: string | null;
   notes: AlertNote[];
   escalation: AlertEscalation | null;
+  fee_dispute: FeeDisputeDetails | null;
+}
+
+export interface FeeDisputeDetails {
+  amount: number;
+  status: "owed" | "paid" | "waived" | "credited" | "credit_used" | null;
+  cancel_reason: string | null;
+  accepted_at: string | null;
+  arrived_at: string | null;
+  cancelled_at: string | null;
 }
 
 export interface AlertEscalation {

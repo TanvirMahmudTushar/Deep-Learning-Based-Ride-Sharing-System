@@ -38,6 +38,7 @@ from app.schemas import (
     AdminAccountTripPageOut,
     AlertEscalateIn,
     AlertEscalationResolveIn,
+    FeeDisputeResolveIn,
     AlertStatusIn,
     PricingRuleIn,
     RiderBlockOut,
@@ -744,6 +745,7 @@ def _escalation_out(db: DB, escalation: AlertEscalation | None) -> dict | None:
 def _alert_out(db: DB, a: SafetyAlert) -> dict:
     rider_profile = a.trip.rider.profile if a.trip.rider else None
     last_changed = _person(db, a.reviewed_by)
+    fee_dispute = a.alert_type == "report" and a.details.get("category") == "fee"
     return {
         "id": a.id,
         "trip_id": a.trip_id,
@@ -770,6 +772,18 @@ def _alert_out(db: DB, a: SafetyAlert) -> dict:
         "last_changed_by": last_changed["name"] if last_changed else None,
         "notes": [_note_out(n) for n in a.notes],
         "escalation": _escalation_out(db, a.escalations[0] if a.escalations else None),
+        "fee_dispute": (
+            {
+                "amount": a.trip.cancel_fee,
+                "status": a.trip.cancel_fee_status,
+                "cancel_reason": a.trip.cancel_reason,
+                "accepted_at": iso_utc(a.trip.accepted_at),
+                "arrived_at": iso_utc(a.trip.arrived_at),
+                "cancelled_at": iso_utc(a.trip.completed_at),
+            }
+            if fee_dispute
+            else None
+        ),
     }
 
 
@@ -843,6 +857,15 @@ def set_alert_status(alert_id: str, body: AlertStatusIn, db: DB, staff: Staff):
     alert = _alert_or_404(db, alert_id)
     if body.status != "open" and _active_escalation(alert):
         raise HTTPException(status.HTTP_409_CONFLICT, "Resolve the admin escalation before changing this alert's status")
+    if (
+        alert.alert_type == "report"
+        and alert.details.get("category") == "fee"
+        and alert.status == "closed"
+        and body.status != "closed"
+    ):
+        raise HTTPException(status.HTTP_409_CONFLICT, "A resolved fee dispute cannot be reopened")
+    if body.status != "open" and alert.alert_type == "report" and alert.details.get("category") == "fee" and alert.status != "closed":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Resolve this fee dispute with a passenger reply")
     changed = alert.status != body.status
     alert.status = body.status
     alert.reviewed_by = staff.id
@@ -850,6 +873,41 @@ def set_alert_status(alert_id: str, body: AlertStatusIn, db: DB, staff: Staff):
         alert.resolution_note = body.resolution_note.strip() or None
     notice = ("Update on your report", f"Your report is now: {REPORT_STATUS_LABEL[body.status].lower()}.") if changed else None
     _alert_changed(db, alert, notice)
+    db.commit()
+    return _alert_out(db, alert)
+
+
+@router.post("/alerts/{alert_id}/fee-dispute/resolve")
+def resolve_fee_dispute(alert_id: str, body: FeeDisputeResolveIn, db: DB, staff: Staff):
+    alert = _alert_or_404(db, alert_id)
+    if alert.alert_type != "report" or alert.details.get("category") != "fee":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "This action is only available for fee disputes")
+    if alert.status == "closed":
+        raise HTTPException(status.HTTP_409_CONFLICT, "This fee dispute has already been resolved")
+
+    trip = alert.trip
+    if trip.status != "cancelled" or trip.cancel_fee is None or trip.cancel_fee <= 0:
+        raise HTTPException(status.HTTP_409_CONFLICT, "This trip has no late-cancellation fee")
+    if trip.cancel_fee_status not in ("owed", "paid"):
+        raise HTTPException(status.HTTP_409_CONFLICT, "This fee is no longer owed or paid")
+
+    reply = body.reply.strip()
+    if not reply:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "A reply to the passenger is required")
+    if body.decision == "waive":
+        try:
+            cancel_fees.waive(db, trip)
+        except ValueError as e:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(e))
+        reply = f"Fee waived. {reply}"
+
+    note = AlertNote(alert_id=alert.id, author_id=staff.id, body=reply, for_passenger=True)
+    alert.notes.append(note)
+    alert.status = "closed"
+    alert.reviewed_by = staff.id
+    alert.resolution_note = reply
+    db.flush()
+    _alert_changed(db, alert, ("Fee dispute update", reply))
     db.commit()
     return _alert_out(db, alert)
 
