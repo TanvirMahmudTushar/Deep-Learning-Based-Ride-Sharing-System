@@ -409,6 +409,13 @@ export interface StaffTripDetail {
   alerts: SafetyAlert[];
 }
 
+export interface StaffTripMessage {
+  id: string;
+  sender_role: "user" | "rider";
+  body: string;
+  created_at: string;
+}
+
 export interface TripPage {
   trips: Trip[];
   has_more: boolean;

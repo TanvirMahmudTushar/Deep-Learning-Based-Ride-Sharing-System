@@ -8,6 +8,7 @@ from app.realtime import ADMINS, SUPPORT_EVENTS, hub
 from app.routers import ws as ws_router
 
 from .test_auth import _register
+from .test_passenger_features import _book, _finish, _passenger
 
 
 def _h(token: str) -> dict:
@@ -112,6 +113,49 @@ def test_trip_detail_has_route_payment_and_alerts_but_no_earnings(client, suppor
         assert body["trip"]["payment"]["commission"] is None
         assert body["trip"]["payment"]["rider_earning"] is None
     assert client.get("/api/admin/trips/not-a-trip", headers=support_h).status_code == 404
+
+
+def test_staff_can_read_chat_only_for_reported_trips(client, support_h, admin_h, rider_h):
+    passenger_h = _passenger(client, "support.chat@example.com")
+    trip = _book(client, passenger_h, rider_h)
+    passenger_message = client.post(
+        f"/api/trips/{trip['id']}/messages",
+        headers=passenger_h,
+        json={"body": "The pickup point was changed"},
+    )
+    rider_message = client.post(
+        f"/api/rider/trips/{trip['id']}/messages",
+        headers=rider_h,
+        json={"body": "I am at the updated location"},
+    )
+    assert passenger_message.status_code == rider_message.status_code == 201
+    _finish(client, trip["id"], rider_h)
+    assert client.post(
+        f"/api/trips/{trip['id']}/report",
+        headers=passenger_h,
+        json={"category": "rider_behaviour", "note": "Pickup disagreement"},
+    ).status_code == 201
+
+    path = f"/api/admin/trips/{trip['id']}/messages"
+    response = client.get(path, headers=support_h)
+    assert response.status_code == 200
+    assert client.get(path, headers=admin_h).status_code == 200
+    assert [(message["sender_role"], message["body"]) for message in response.json()] == [
+        ("user", "The pickup point was changed"),
+        ("rider", "I am at the updated location"),
+    ]
+    assert all(message["created_at"] and not message["mine"] for message in response.json())
+    assert client.post(path, headers=support_h, json={"body": "Staff reply"}).status_code == 405
+
+    assert client.get(path, headers=passenger_h).status_code == 403
+    assert client.get(path, headers=rider_h).status_code == 403
+
+    unreported_trip = _finish(
+        client,
+        _book(client, passenger_h, rider_h)["id"],
+        rider_h,
+    )
+    assert client.get(f"/api/admin/trips/{unreported_trip['id']}/messages", headers=support_h).status_code == 403
 
 
 # --- #25 search and filters --------------------------------------------------------------
