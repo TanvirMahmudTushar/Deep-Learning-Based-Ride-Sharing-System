@@ -82,8 +82,12 @@ def test_report_after_trip(client, user_h, admin_h):
     resp = client.post(f"/api/trips/{done['id']}/report", headers=user_h, json={"category": "lost_item", "note": "Left my umbrella"})
     assert resp.status_code == 201
     assert client.post(f"/api/trips/{done['id']}/report", headers=user_h, json={"category": "nope", "note": "x"}).status_code == 422
-    reports = [a for a in client.get("/api/admin/alerts", headers=admin_h).json() if a["alert_type"] == "report"]
-    assert reports[0]["details"]["category"] == "lost_item"
+    report = next(
+        a
+        for a in client.get("/api/admin/alerts", headers=admin_h).json()
+        if a["alert_type"] == "report" and a["trip_id"] == done["id"]
+    )
+    assert report["details"]["category"] == "lost_item"
 
 
 def test_profile_and_password(client):
@@ -112,3 +116,4 @@ def test_create_schema_adds_new_nullable_columns(tmp_path, monkeypatch):
     assert "fare_breakdown_json" in cols  # nullable column added in place
     assert "status" not in cols  # NOT NULL columns are never added to existing tables
     assert inspect(engine).has_table("saved_places")  # missing tables are created
+    assert inspect(engine).has_table("alert_escalations")

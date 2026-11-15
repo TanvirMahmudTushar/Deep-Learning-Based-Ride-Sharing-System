@@ -23,6 +23,7 @@ SUPPORT_ROUTES = {
     ("GET", "/api/admin/trips/live"),
     ("GET", "/api/admin/trips/recent"),
     ("GET", "/api/admin/alerts"),
+    ("POST", "/api/admin/alerts/x/escalate"),
     ("POST", "/api/admin/alerts/x/summarize"),
     ("POST", "/api/admin/alerts/x/status"),
     ("GET", "/api/admin/alerts/summary"),
@@ -101,6 +102,13 @@ def test_rider_block_reasons_are_admin_only(client, user_h, rider_h, support_h, 
     for headers in (user_h, rider_h, support_h):
         assert client.get(path, headers=headers).status_code == 403
     assert client.get(path, headers=admin_h).status_code == 404
+
+
+def test_support_can_escalate_but_only_admin_can_resolve(client, support_h, admin_h):
+    path = "/api/admin/alerts/not-an-alert"
+    assert client.post(f"{path}/escalate", headers=support_h, json={"reason": "Needs admin review"}).status_code == 404
+    assert client.post(f"{path}/escalation/resolve", headers=support_h, json={"note": "Handled"}).status_code == 403
+    assert client.post(f"{path}/escalation/resolve", headers=admin_h, json={"note": "Handled"}).status_code == 404
 
 
 def test_nobody_can_sign_up_as_admin(client):

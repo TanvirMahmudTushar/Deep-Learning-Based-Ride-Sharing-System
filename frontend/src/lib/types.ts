@@ -373,6 +373,17 @@ export interface SafetyAlert {
   assigned_to: { id: string; name: string } | null;
   last_changed_by: string | null;
   notes: AlertNote[];
+  escalation: AlertEscalation | null;
+}
+
+export interface AlertEscalation {
+  reason: string;
+  escalated_by: { id: string; name: string };
+  escalated_at: string;
+  outcome: string | null;
+  resolved_by: { id: string; name: string } | null;
+  resolved_at: string | null;
+  active: boolean;
 }
 
 export interface AlertNote {

@@ -3,6 +3,7 @@ case notes and ownership (#26), replies to passengers (#27) and the queue summar
 
 import pytest
 
+from app.routers import admin as admin_router
 from app.realtime import ADMINS, SUPPORT_EVENTS, hub
 from app.routers import ws as ws_router
 
@@ -52,10 +53,12 @@ def test_support_gets_alert_events_but_not_admin_only_ones():
     hub._roles[admin_ws] = ("admin-1", "admin")
     hub._roles[support_ws] = ("agent-1", "support")
     try:
+        assert "alert.updated" in SUPPORT_EVENTS
         for event_type in SUPPORT_EVENTS:
             assert set(hub._targets([ADMINS], event_type)) == {admin_ws, support_ws}
         for event_type in ("payments.changed", "riders.changed", "support.changed", "earnings.updated"):
             assert hub._targets([ADMINS], event_type) == [admin_ws], f"support must not get {event_type}"
+        assert hub._targets([ADMINS], "alert.escalated") == [admin_ws]
     finally:
         hub._roles.pop(admin_ws, None)
         hub._roles.pop(support_ws, None)
@@ -234,3 +237,94 @@ def test_open_sos_alerts_come_first(client, support_h):
     alerts = client.get("/api/admin/alerts", headers=support_h).json()
     is_open_sos = [a["alert_type"] == "sos" and a["status"] == "open" for a in alerts]
     assert is_open_sos == sorted(is_open_sos, reverse=True)
+
+
+def test_escalated_alert_stays_in_support_queue_until_admin_handles_it(client, support_h, admin_h, user_h, monkeypatch):
+    trip = _report(client, user_h, "Escalation test")
+    alert = _alert_for(client, support_h, trip["id"], "Escalation test")
+    emitted = []
+    original_emit = admin_router.emit
+
+    def capture_emit(db, audience, event_type, **kwargs):
+        emitted.append((audience, event_type, kwargs))
+        return original_emit(db, audience, event_type, **kwargs)
+
+    monkeypatch.setattr(admin_router, "emit", capture_emit)
+    escalated = client.post(
+        f"/api/admin/alerts/{alert['id']}/escalate",
+        headers=support_h,
+        json={"reason": "Third safety report this week"},
+    )
+
+    assert escalated.status_code == 200, escalated.text
+    active = escalated.json()["escalation"]
+    assert active["active"] is True
+    assert active["reason"] == "Third safety report this week"
+    assert active["escalated_by"]["name"] == "Demo Support Agent"
+    assert active["escalated_at"]
+    assert escalated.json()["status"] == "open"
+    notice = next(event for event in emitted if event[1] == "alert.escalated")
+    assert notice[0] == ADMINS
+    assert notice[2]["notify"][0] == "Support case escalated"
+    assert "Demo Support Agent" in notice[2]["notify"][1]
+    assert "Third safety report this week" in notice[2]["notify"][1]
+    assert notice[2]["alert_id"] == alert["id"]
+
+    queue = client.get("/api/admin/alerts?status_filter=open", headers=support_h).json()
+    assert queue[0]["id"] == alert["id"]
+    assert queue[0]["escalation"]["active"] is True
+    assert (
+        client.post(
+            f"/api/admin/alerts/{alert['id']}/status",
+            headers=support_h,
+            json={"status": "closed", "resolution_note": "Closing this would lose the escalation"},
+        ).status_code
+        == 409
+    )
+    assert client.post(f"/api/admin/alerts/{alert['id']}/notes", headers=support_h, json={"body": "Still following up"}).status_code == 201
+    assert (
+        client.post(
+            f"/api/admin/alerts/{alert['id']}/notes",
+            headers=support_h,
+            json={"body": "We're checking with our safety team.", "for_passenger": True},
+        ).status_code
+        == 201
+    )
+    passenger_reports = client.get(f"/api/trips/{trip['id']}/reports", headers=user_h).json()
+    report = next(r for r in passenger_reports if r["note"] == "Escalation test")
+    assert [reply["body"] for reply in report["replies"]] == ["We're checking with our safety team."]
+
+    denied = client.post(
+        f"/api/admin/alerts/{alert['id']}/escalation/resolve",
+        headers=support_h,
+        json={"note": "Admin decision"},
+    )
+    assert denied.status_code == 403
+    resolved = client.post(
+        f"/api/admin/alerts/{alert['id']}/escalation/resolve",
+        headers=admin_h,
+        json={"note": "Rider account suspended for safety review"},
+    )
+    assert resolved.status_code == 200, resolved.text
+    outcome = resolved.json()["escalation"]
+    assert outcome["active"] is False
+    assert outcome["outcome"] == "Rider account suspended for safety review"
+    assert outcome["resolved_by"]["name"] == "Platform Admin"
+    assert outcome["resolved_at"]
+    assert resolved.json()["status"] == "open"
+    assert emitted[-1][1] == "alert.updated"
+    assert emitted[-1][2]["alert_id"] == alert["id"]
+
+    visible_to_agent = client.get("/api/admin/alerts?status_filter=open", headers=support_h).json()
+    agent_alert = next(a for a in visible_to_agent if a["id"] == alert["id"])
+    assert agent_alert["escalation"]["outcome"] == "Rider account suspended for safety review"
+    assert any(n["body"] == "Still following up" for n in agent_alert["notes"])
+
+
+def test_escalation_reason_and_resolution_note_are_required(client, support_h, admin_h, user_h):
+    trip = _report(client, user_h, "Required escalation text")
+    alert = _alert_for(client, support_h, trip["id"], "Required escalation text")
+    path = f"/api/admin/alerts/{alert['id']}"
+    assert client.post(f"{path}/escalate", headers=support_h, json={"reason": "   "}).status_code == 422
+    assert client.post(f"{path}/escalate", headers=support_h, json={"reason": "Needs admin"}).status_code == 200
+    assert client.post(f"{path}/escalation/resolve", headers=admin_h, json={"note": "   "}).status_code == 422
