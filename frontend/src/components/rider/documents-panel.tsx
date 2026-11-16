@@ -22,7 +22,7 @@ export const HINT: Record<DocumentType, string> = {
   license: "Both sides readable, not expired",
   insurance: "Valid vehicle insurance policy certificate",
   registration: "Vehicle registration certificate (blue book / smart card)",
-  photo: "Mandatory: clear photo or selfie of your face, no sunglasses",
+  photo: "A clear photo or selfie of your face, no sunglasses",
   vehicle_photo: "The whole vehicle with the number plate readable",
 };
 
@@ -100,9 +100,7 @@ export function DocumentsPanel() {
 
   return (
     <div className="space-y-3">
-      <p className="text-sm text-muted-foreground">
-        Documents are optional. If you add them, an admin may review them. JPG, PNG, WebP or PDF.
-      </p>
+      <p className="text-sm text-muted-foreground">JPG, PNG, WebP or PDF, up to the size limit shown when you upload.</p>
       {data.required.map(({ doc_type, label, document: doc }) => {
         const st = doc ? STATUS[doc.status] : null;
         return (
@@ -118,7 +116,7 @@ export function DocumentsPanel() {
                 </Badge>
               ) : (
                 <Badge variant="outline" className="text-muted-foreground">
-                  Missing
+                  Not added
                 </Badge>
               )}
             </div>

@@ -14,7 +14,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, fetcher } from "@/lib/api";
-import { formatPercent, timeAgo, VEHICLE_COLOR } from "@/lib/format";
+import { useServerHealth } from "@/lib/server";
+import { formatPercent, timeAgo, VEHICLE_COLOR, plural } from "@/lib/format";
 import { Stat } from "@/components/ride-bits";
 import type { AdminStats, DemandModelComparisonEntry, Forecasts, ModelEvaluation, ModelInfo, SimulatorStatus, VehicleType } from "@/lib/types";
 
@@ -62,7 +63,8 @@ export function DemandTab() {
   const { data: models } = useSWR<ModelInfo[]>("/api/models", fetcher);
   const { data: stats } = useSWR<AdminStats>("/api/admin/stats", fetcher, { refreshInterval: 10000 });
   const { data: evaluation } = useSWR<ModelEvaluation>("/api/admin/model-evaluation", fetcher, { refreshInterval: 60000 });
-  const { data: simulatorStatus, mutate: mutateSimulator } = useSWR<SimulatorStatus>("/api/admin/simulator", fetcher, {
+  const { data: health } = useServerHealth();
+  const { data: simulatorStatus, mutate: mutateSimulator } = useSWR<SimulatorStatus>(health?.simulator ? "/api/admin/simulator" : null, fetcher, {
     refreshInterval: 5000,
   });
   const [refreshing, setRefreshing] = useState(false);
@@ -399,12 +401,12 @@ export function DemandTab() {
                   </TableCell>
                   <TableCell className="tabular-nums">
                     {etaBaselineMetrics
-                      ? `${etaBaselineMetrics.mae_min ?? "—"} / ${etaBaselineMetrics.rmse_min ?? "—"} min · ${etaBaselineMetrics.samples} trips`
+                      ? `${etaBaselineMetrics.mae_min ?? "—"} / ${etaBaselineMetrics.rmse_min ?? "—"} min · ${plural(etaBaselineMetrics.samples, "trip")}`
                       : "—"}
                   </TableCell>
                   <TableCell className="tabular-nums">
                     {etaRecordedMetrics
-                      ? `${etaRecordedMetrics.mae_min ?? "—"} / ${etaRecordedMetrics.rmse_min ?? "—"} min · ${etaRecordedMetrics.samples} trips`
+                      ? `${etaRecordedMetrics.mae_min ?? "—"} / ${etaRecordedMetrics.rmse_min ?? "—"} min · ${plural(etaRecordedMetrics.samples, "trip")}`
                       : "—"}
                     {evaluation && (
                       <div className="text-xs text-muted-foreground">
@@ -479,76 +481,79 @@ export function DemandTab() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2"><Gauge className="size-4" /> Trip simulator controls</CardTitle>
-          <CardDescription>Updates take effect on the next simulator tick; anomaly rate applies when trip plans are created.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <Badge variant={simulatorStatus?.running ? "secondary" : "outline"}>
-              {simulatorStatus?.running ? <Play aria-hidden /> : <Pause aria-hidden />}
-              {simulatorStatus ? (simulatorStatus.running ? "Running" : "Paused") : "Loading status"}
-            </Badge>
-            <span className="text-sm text-muted-foreground">
-              {simulatorStatus?.active_simulated_trips ?? "—"} active simulated trips
-            </span>
-          </div>
-          {simulatorValues ? (
-            <div className="grid gap-5 md:grid-cols-2">
-              <label className="space-y-2 text-sm">
-                <span className="flex items-center justify-between">
-                  Simulation speed-up <strong>{simulatorValues.speedup}x</strong>
-                </span>
-                <input
-                  aria-label="Simulation speed-up"
-                  className="w-full accent-primary"
-                  type="range"
-                  min="1"
-                  max="10"
-                  step="1"
-                  value={simulatorValues.speedup}
-                  disabled={!simulatorStatus || savingSimulator}
-                  onChange={(event) =>
-                    setSimulatorDraft({
-                      speedup: Number(event.currentTarget.value),
-                      anomaly_rate: simulatorValues.anomaly_rate,
-                    })
-                  }
-                />
-              </label>
-              <label className="space-y-2 text-sm">
-                <span className="flex items-center justify-between">
-                  Anomaly rate <strong>{Math.round(simulatorValues.anomaly_rate * 100)}%</strong>
-                </span>
-                <input
-                  aria-label="Anomaly rate"
-                  className="w-full accent-primary"
-                  type="range"
-                  min="0"
-                  max="50"
-                  step="1"
-                  value={Math.round(simulatorValues.anomaly_rate * 100)}
-                  disabled={!simulatorStatus || savingSimulator}
-                  onChange={(event) =>
-                    setSimulatorDraft({
-                      speedup: simulatorValues.speedup,
-                      anomaly_rate: Number(event.currentTarget.value) / 100,
-                    })
-                  }
-                />
-              </label>
+      {/* Simulated trips only exist in demo mode, so the controls are hidden in real mode. */}
+      {health?.simulator && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2"><Gauge className="size-4" /> Trip simulator controls</CardTitle>
+            <CardDescription>Updates take effect on the next simulator tick; anomaly rate applies when trip plans are created.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <Badge variant={simulatorStatus?.running ? "secondary" : "outline"}>
+                {simulatorStatus?.running ? <Play aria-hidden /> : <Pause aria-hidden />}
+                {simulatorStatus ? (simulatorStatus.running ? "Running" : "Paused") : "Loading status"}
+              </Badge>
+              <span className="text-sm text-muted-foreground">
+                {simulatorStatus?.active_simulated_trips ?? "—"} active simulated trips
+              </span>
             </div>
-          ) : (
-            <Skeleton className="h-16 w-full" />
-          )}
-          <div className="flex justify-end">
-            <Button onClick={applySimulatorControls} disabled={!simulatorDraft || savingSimulator}>
-              {savingSimulator && <Loader2 className="animate-spin" />} Apply controls
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+            {simulatorValues ? (
+              <div className="grid gap-5 md:grid-cols-2">
+                <label className="space-y-2 text-sm">
+                  <span className="flex items-center justify-between">
+                    Simulation speed-up <strong>{simulatorValues.speedup}x</strong>
+                  </span>
+                  <input
+                    aria-label="Simulation speed-up"
+                    className="w-full accent-primary"
+                    type="range"
+                    min="1"
+                    max="10"
+                    step="1"
+                    value={simulatorValues.speedup}
+                    disabled={!simulatorStatus || savingSimulator}
+                    onChange={(event) =>
+                      setSimulatorDraft({
+                        speedup: Number(event.currentTarget.value),
+                        anomaly_rate: simulatorValues.anomaly_rate,
+                      })
+                    }
+                  />
+                </label>
+                <label className="space-y-2 text-sm">
+                  <span className="flex items-center justify-between">
+                    Anomaly rate <strong>{Math.round(simulatorValues.anomaly_rate * 100)}%</strong>
+                  </span>
+                  <input
+                    aria-label="Anomaly rate"
+                    className="w-full accent-primary"
+                    type="range"
+                    min="0"
+                    max="50"
+                    step="1"
+                    value={Math.round(simulatorValues.anomaly_rate * 100)}
+                    disabled={!simulatorStatus || savingSimulator}
+                    onChange={(event) =>
+                      setSimulatorDraft({
+                        speedup: simulatorValues.speedup,
+                        anomaly_rate: Number(event.currentTarget.value) / 100,
+                      })
+                    }
+                  />
+                </label>
+              </div>
+            ) : (
+              <Skeleton className="h-16 w-full" />
+            )}
+            <div className="flex justify-end">
+              <Button onClick={applySimulatorControls} disabled={!simulatorDraft || savingSimulator}>
+                {savingSimulator && <Loader2 className="animate-spin" />} Apply controls
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

@@ -28,17 +28,17 @@ export function DocumentsScreen({ onBack }: { onBack: () => void }) {
         <Button variant="ghost" size="icon" onClick={close} aria-label="Back">
           <ChevronLeft />
         </Button>
-        <h1 className="text-base font-semibold">Documents &amp; Verification</h1>
+        <h1 className="text-base font-semibold">Documents</h1>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-4">
         <div className="mx-auto w-full max-w-lg space-y-4">
           <div className="space-y-1">
             <h2 className="flex items-center gap-2 text-sm font-semibold">
-              <FileCheck2 className="size-4 text-muted-foreground" /> Required Documents
+              <FileCheck2 className="size-4 text-muted-foreground" /> Documents (optional)
             </h2>
             <p className="text-xs text-muted-foreground">
-              Keep your official documents up to date. Verified documents are required to go online and receive rides.
+              Documents are optional. If you add your licence, insurance, registration or a photo, an admin may review them.
             </p>
           </div>
           <DocumentsPanel />

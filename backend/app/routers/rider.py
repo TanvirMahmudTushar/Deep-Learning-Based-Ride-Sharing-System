@@ -2,8 +2,9 @@
 
 from collections import defaultdict
 from datetime import timedelta
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 
 from app.brta import normalize_plate
@@ -267,13 +268,18 @@ def auto_drive(trip_id: str, body: AutoDriveIn, db: DB, rider: CurrentRider):
 
 
 @router.get("/trips", response_model=list[TripOut])
-def history(db: DB, rider: CurrentRider, limit: int = 20):
-    trips = db.scalars(select(Trip).where(Trip.rider_id == rider.id).order_by(Trip.requested_at.desc()).limit(min(limit, 100)))
+def history(db: DB, rider: CurrentRider, limit: Annotated[int, Query(ge=1, le=100)] = 20):
+    trips = db.scalars(select(Trip).where(Trip.rider_id == rider.id).order_by(Trip.requested_at.desc()).limit(limit))
     return [trip_out(db, t, include_route=False, for_rider=True) for t in trips]
 
 
 @router.get("/demand-hints")
-def demand_hints(db: DB, rider: CurrentRider, lat: float | None = None, lng: float | None = None):
+def demand_hints(
+    db: DB,
+    rider: CurrentRider,
+    lat: Annotated[float | None, Query(ge=-90, le=90)] = None,
+    lng: Annotated[float | None, Query(ge=-180, le=180)] = None,
+):
     """Next-hour expected request density and supply per zone for this rider's vehicle type."""
     demand.ensure_fresh(db)
     vt = rider.vehicle.vehicle_type if rider.vehicle else "bike"

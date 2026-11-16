@@ -16,7 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, fetcher } from "@/lib/api";
-import { formatDateTime, formatPercent, formatTaka, VEHICLE_LABEL } from "@/lib/format";
+import { formatDateTime, formatPercent, formatTaka, VEHICLE_LABEL, plural } from "@/lib/format";
 import type { AdminAccount, AdminAccountPage, AdminAccountTripPage, AdminRider, RiderBlock } from "@/lib/types";
 import { useLiveInterval } from "@/lib/realtime";
 
@@ -87,7 +87,7 @@ function AccountDetailsDialog({ account, onOpenChange }: { account: AdminAccount
                 <CardTitle className="text-base">Trip history</CardTitle>
                 <CardDescription>
                   Cancellation rate is account-initiated cancellations divided by trips associated with this account.
-                  {history ? ` · ${history.total} trips` : ""}
+                  {history ? ` · ${plural(history.total, "trip")}` : ""}
                 </CardDescription>
               </CardHeader>
               {error && <p role="alert" className="px-4 pb-3 text-sm text-destructive">Could not load trip history: {error.message}</p>}

@@ -13,11 +13,12 @@ import { FinishedPanel, TrackingPanel } from "@/components/passenger/tracking-pa
 import { TripHistory } from "@/components/trip-history";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, fetcher } from "@/lib/api";
-import { VEHICLE_COLOR } from "@/lib/format";
+import { VEHICLE_COLOR, VEHICLE_LABEL } from "@/lib/format";
 import { toTuple } from "@/lib/geo";
 import { clearPrefill, readPrefill } from "@/lib/prefill";
 import { useLiveInterval } from "@/lib/realtime";
-import type { BookingSuggestion, Estimate, SavedPlace, Trip, VehicleType, Zone } from "@/lib/types";
+import { useGeolocation } from "@/lib/use-geolocation";
+import type { BookingSuggestion, Estimate, NearbyRider, SavedPlace, Trip, VehicleType, Zone } from "@/lib/types";
 
 const ROUTE_COLOR = "#e8e8e3";
 
@@ -64,6 +65,13 @@ function PassengerPortal() {
   } = useSWR(estimateKey, estimateFetcher, { keepPreviousData: true, refreshInterval: 30000, revalidateOnFocus: false });
   // The previous route's fares stay up while a new estimate loads, but never next to an error for the new route.
   const estimate = estimateError ? undefined : lastEstimate;
+
+  // Riders who are online and free around the pickup, or around the passenger until a pickup is chosen.
+  // Nothing pushes "a rider came online" to passengers, so this is polled.
+  const geo = useGeolocation(!active && !finishedId);
+  const around = pickup ?? (geo.fix ? { lat: geo.fix.lat, lng: geo.fix.lng } : null);
+  const nearbyKey = !active && !finishedId && around ? `/api/trips/nearby-riders?lat=${around.lat.toFixed(4)}&lng=${around.lng.toFixed(4)}` : null;
+  const { data: nearby = [] } = useSWR<NearbyRider[]>(nearbyKey, fetcher, { refreshInterval: 5000, keepPreviousData: true });
 
   function pick(which: "pickup" | "drop", p: PlacePoint) {
     if (which === "pickup") {
@@ -160,8 +168,16 @@ function PassengerPortal() {
     if (pickup) markers.push({ id: "pickup", kind: "pickup", position: toTuple(pickup), label: pickup.label });
     if (drop) markers.push({ id: "drop", kind: "drop", position: toTuple(drop), label: drop.label });
     if (estimate && pickup && drop) lines.push({ id: "route", points: estimate.route, color: ROUTE_COLOR });
+    nearby.forEach((r, i) =>
+      markers.push({ id: `near-${i}`, kind: "rider", position: [r.lat, r.lng], vehicleType: r.vehicle_type, label: `${VEHICLE_LABEL[r.vehicle_type]} · ${r.distance_km.toFixed(1)} km away` }),
+    );
     fitTo = [pickup, drop].filter(Boolean).map((p) => toTuple(p!));
     fitKey = `${pickup?.lat},${pickup?.lng}|${drop?.lat},${drop?.lng}`;
+    // Nothing chosen yet: centre on where the passenger is.
+    if (fitTo.length === 0 && geo.fix) {
+      fitTo = [[geo.fix.lat, geo.fix.lng]];
+      fitKey = "me";
+    }
   }
 
   return (

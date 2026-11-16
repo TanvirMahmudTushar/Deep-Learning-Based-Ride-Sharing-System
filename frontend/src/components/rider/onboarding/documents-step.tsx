@@ -78,7 +78,7 @@ export function DocumentsStep({ onNext }: { onNext: () => void }) {
                     <span>{label}</span>
                     {isPhoto && (
                       <Badge variant="outline" className="border-primary/40 bg-primary/10 px-1.5 py-0 text-[10px] text-primary">
-                        Mandatory
+                        Becomes your profile photo
                       </Badge>
                     )}
                   </div>

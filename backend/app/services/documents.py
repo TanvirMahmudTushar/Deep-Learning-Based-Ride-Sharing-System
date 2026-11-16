@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import DOCUMENT_TYPES, Rider, RiderDocument
+from app.models import Rider, RiderDocument
 
 DOC_LABEL = {
     "license": "Driving licence",

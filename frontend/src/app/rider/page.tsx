@@ -21,7 +21,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { SPRING_BOUNCY, SPRING_UI } from "@/components/ui/motion";
 import { Switch } from "@/components/ui/switch";
 import { api, fetcher } from "@/lib/api";
-import { formatTaka, VEHICLE_COLOR } from "@/lib/format";
+import { formatTaka, VEHICLE_COLOR, plural } from "@/lib/format";
 import { haversineKm, toTuple } from "@/lib/geo";
 import { useLiveInterval } from "@/lib/realtime";
 import { useServerHealth } from "@/lib/server";
@@ -140,6 +140,18 @@ function RiderPortal() {
     }, intervalTime);
     return () => clearInterval(id);
   }, [sharing, gpsWanted, active]);
+
+  // With a manual position there is no GPS stream, so keep re-sending the chosen spot. Without this the
+  // backend sees the rider go quiet and drops them from matching and from passengers' maps after two minutes.
+  const spotLat = me?.lat;
+  const spotLng = me?.lng;
+  useEffect(() => {
+    if (!sharing || !manual || active?.auto_drive || spotLat == null || spotLng == null) return;
+    const id = setInterval(() => {
+      api("/api/rider/location", { json: { lat: spotLat, lng: spotLng } }).catch(() => undefined);
+    }, active ? 7000 : HEARTBEAT_MS);
+    return () => clearInterval(id);
+  }, [sharing, manual, active, spotLat, spotLng]);
 
   const offerId = offer?.trip.id;
   const [seenOfferId, setSeenOfferId] = useState<string | undefined>();
@@ -382,7 +394,7 @@ function RiderPortal() {
                     />
                     <Stat
                       label="Completed Today"
-                      value={`${me.trips_today ?? 0} rides`}
+                      value={plural(me.trips_today ?? 0, "ride")}
                       hint={`${me.trips_completed} lifetime`}
                     />
                   </div>

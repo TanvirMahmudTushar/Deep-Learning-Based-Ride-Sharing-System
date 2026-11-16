@@ -304,3 +304,45 @@ def test_support_agent_can_work_an_alert(client, support_h, user_h, admin_h):
     resp = client.post(f"/api/admin/alerts/{alert['id']}/status", headers=support_h, json={"status": "reviewed"})
     assert resp.status_code == 200
     assert resp.json()["status"] == "reviewed"
+
+
+# --- small input checks ----------------------------------------------------------------------
+
+
+def _signup_body(**overrides) -> dict:
+    return {"full_name": "Valid Name", "email": "valid@example.com", "phone": "+8801712345678", "password": "a-good-password", **overrides}
+
+
+@pytest.mark.parametrize("phone", ["abcdef", "12345", "+88-", "01712 34x678", "+" + "1" * 40])
+def test_sign_up_rejects_phone_numbers_nobody_could_dial(client, phone):
+    resp = client.post("/api/auth/register", json=_signup_body(email=f"bad.phone.{abs(hash(phone))}@example.com", phone=phone))
+    assert resp.status_code == 422, resp.text
+
+
+@pytest.mark.parametrize("phone", ["+8801712345678", "01712345678", "+880 1712-345678"])
+def test_sign_up_accepts_normal_phone_numbers(client, phone):
+    resp = client.post("/api/auth/register", json=_signup_body(email=f"ok.phone.{abs(hash(phone))}@example.com", phone=phone))
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["profile"]["phone"] == phone.strip()
+
+
+def test_a_name_of_only_spaces_is_not_a_name(client, user_h):
+    assert client.post("/api/auth/register", json=_signup_body(email="blank.name@example.com", full_name="    ")).status_code == 422
+    assert client.patch("/api/auth/me", headers=user_h, json={"full_name": "   ", "phone": "+8801712345678"}).status_code == 422
+    assert client.patch("/api/auth/me", headers=user_h, json={"full_name": "  Demo Passenger  ", "phone": "+8801712345678"}).json()["full_name"] == "Demo Passenger"
+
+
+def test_history_lists_reject_nonsense_paging(client, user_h, rider_h):
+    for path in ("/api/trips?limit=-1", "/api/trips?limit=0", "/api/trips?offset=-1", "/api/trips?limit=1000"):
+        assert client.get(path, headers=user_h).status_code == 422, path
+    assert client.get("/api/rider/trips?limit=-1", headers=rider_h).status_code == 422
+    assert client.get("/api/rider/demand-hints?lat=999&lng=0", headers=rider_h).status_code == 422
+    assert client.get("/api/trips?limit=5&offset=0", headers=user_h).status_code == 200
+
+
+def test_new_password_has_to_differ_from_the_current_one(client):
+    token = client.post("/api/auth/register", json=_signup_body(email="same.password@example.com")).json()["token"]
+    h = {"Authorization": f"Bearer {token}"}
+    same = client.post("/api/auth/password", headers=h, json={"current_password": "a-good-password", "new_password": "a-good-password"})
+    assert same.status_code == 400 and "different" in same.json()["detail"]
+    assert client.post("/api/auth/password", headers=h, json={"current_password": "a-good-password", "new_password": "another-good-one"}).status_code == 200
