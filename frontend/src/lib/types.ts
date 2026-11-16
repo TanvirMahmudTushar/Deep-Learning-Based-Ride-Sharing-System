@@ -83,6 +83,14 @@ export interface Quote {
   breakdown: FareBreakdown;
 }
 
+/** A free rider near the passenger: position and vehicle type only, no personal details. */
+export interface NearbyRider {
+  vehicle_type: VehicleType;
+  lat: number;
+  lng: number;
+  distance_km: number;
+}
+
 export interface Estimate {
   pickup_address: string;
   drop_address: string;

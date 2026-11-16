@@ -51,6 +51,11 @@ next-env.d.ts
 frontend/AGENTS.md
 
 # Trained model artifacts and datasets (large; share separately)
+*.parquet
+*.pbf
+*.osm
+*.csv
+!**/fixtures/*.csv
 *.pt
 *.pth
 *.onnx

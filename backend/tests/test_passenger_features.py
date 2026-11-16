@@ -244,3 +244,44 @@ def test_assistant_answers_where_the_rider_is_and_explains_cancelling(client, ri
     client.post(f"/api/trips/{trip['id']}/cancel", headers=p, json={"reason": "other"})
     none = client.post("/api/assistant/chat", headers=p, json={"messages": [{"role": "user", "content": "how long until pickup"}]}).json()
     assert "don't have a rider" in none["reply"]
+
+
+# --- nearby riders on the passenger's map ------------------------------------------------------
+
+
+def test_passenger_sees_a_rider_who_comes_online_nearby(client, rider_h):
+    _free_the_demo_rider(client, rider_h)  # the demo rider is now the only rider online
+    passenger = _passenger(client, "nearby.passenger@example.com")
+
+    near = client.get("/api/trips/nearby-riders", params=GULSHAN, headers=passenger)
+    assert near.status_code == 200, near.text
+    riders = near.json()
+    assert len(riders) == 1
+    # Position and vehicle type only: nothing that identifies the rider.
+    assert set(riders[0]) == {"vehicle_type", "lat", "lng", "distance_km"}
+    assert riders[0]["vehicle_type"] == "bike"
+    assert abs(riders[0]["lat"] - RIDER_START["lat"]) < 1e-3 and abs(riders[0]["lng"] - RIDER_START["lng"]) < 1e-3
+
+    # The map and the "riders nearby" count in the fare quote agree.
+    quotes = client.post("/api/trips/estimate", headers=passenger, json={"pickup": GULSHAN, "drop": DHANMONDI}).json()["quotes"]
+    assert {q["vehicle_type"]: q["available_riders"] for q in quotes}["bike"] == 1
+
+    # A passenger on the other side of the city doesn't see them.
+    assert client.get("/api/trips/nearby-riders", params={"lat": 23.90, "lng": 90.30}, headers=passenger).json() == []
+
+    # Gone once the rider goes offline, or is busy with a trip.
+    client.post("/api/rider/online", headers=rider_h, json={"is_online": False})
+    assert client.get("/api/trips/nearby-riders", params=GULSHAN, headers=passenger).json() == []
+    _free_the_demo_rider(client, rider_h)
+    booked = client.post("/api/trips", headers=passenger, json={"pickup": GULSHAN, "drop": DHANMONDI, "vehicle_type": "bike"})
+    assert booked.status_code == 201, booked.text
+    other = _passenger(client, "nearby.other@example.com")
+    assert client.get("/api/trips/nearby-riders", params=GULSHAN, headers=other).json() == []  # offered, so not free
+    client.post(f"/api/trips/{booked.json()['id']}/cancel", headers=passenger)
+    assert len(client.get("/api/trips/nearby-riders", params=GULSHAN, headers=other).json()) == 1
+
+
+def test_only_passengers_can_ask_for_nearby_riders(client, rider_h, admin_h):
+    assert client.get("/api/trips/nearby-riders", params=GULSHAN).status_code == 401
+    assert client.get("/api/trips/nearby-riders", params=GULSHAN, headers=rider_h).status_code == 403
+    assert client.get("/api/trips/nearby-riders", params=GULSHAN, headers=admin_h).status_code == 403

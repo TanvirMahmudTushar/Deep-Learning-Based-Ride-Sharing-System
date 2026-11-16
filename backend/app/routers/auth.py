@@ -105,6 +105,8 @@ def update_me(body: ProfileUpdateIn, user: CurrentUser, db: DB):
 def change_password(body: PasswordChangeIn, user: CurrentUser, db: DB):
     if not verify_password(body.current_password, user.password_hash):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Current password is wrong")
+    if verify_password(body.new_password, user.password_hash):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Choose a password different from your current one")
     user.password_hash = hash_password(body.new_password)
     db.commit()
     # Older tokens stop working now; this one keeps the current device logged in.
