@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, fetcher } from "@/lib/api";
-import { formatDateTime, formatTaka } from "@/lib/format";
+import { formatDateTime, formatTaka, plural } from "@/lib/format";
 import { useLiveInterval } from "@/lib/realtime";
 import type { AdminCancelFee, PaymentsOverview } from "@/lib/types";
 
@@ -108,7 +108,7 @@ export function PaymentsTab() {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label="Fares collected today" value={formatTaka(data.today.gross)} hint={`${data.today.trips} trips · ${formatTaka(data.today.commission)} commission`} />
+        <Stat label="Fares collected today" value={formatTaka(data.today.gross)} hint={`${plural(data.today.trips, "trip")} · ${formatTaka(data.today.commission)} commission`} />
         <Stat label="Last 7 days" value={formatTaka(data.week.gross)} hint={`${formatTaka(data.week.commission)} commission`} />
         <Stat label="This month" value={formatTaka(data.month.gross)} hint={`${formatTaka(data.month.commission)} commission`} />
         <Stat label="Commission outstanding" value={formatTaka(data.commission_outstanding)} hint="Held by riders as cash" />
@@ -169,7 +169,7 @@ export function PaymentsTab() {
                     {b.is_simulated && <Bot className="size-3.5 text-muted-foreground" aria-label="Simulated rider" />}
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    {b.vehicle_type && <VehicleTag type={b.vehicle_type} className="text-xs" />} {b.collected_trips} trips
+                    {b.vehicle_type && <VehicleTag type={b.vehicle_type} className="text-xs" />} {plural(b.collected_trips, "trip")}
                     {b.pending_confirmations > 0 && ` · ${b.pending_confirmations} unconfirmed`}
                   </div>
                 </TableCell>

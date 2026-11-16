@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
-import { FileCheck2, FileWarning, Loader2, LocateFixed, LocateOff, Lock, MapPin, RefreshCw, ShieldAlert } from "lucide-react";
+import { FileCheck2, Loader2, LocateFixed, LocateOff, Lock, MapPin, RefreshCw, ShieldAlert } from "lucide-react";
 import { PortalShell } from "@/components/app-shell";
 import { RideMap, type MapCircle, type MapLine, type MapMarker } from "@/components/map/ride-map";
 import { BottomSheet } from "@/components/rider/bottom-sheet";
@@ -21,7 +21,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { SPRING_BOUNCY, SPRING_UI } from "@/components/ui/motion";
 import { Switch } from "@/components/ui/switch";
 import { api, fetcher } from "@/lib/api";
-import { formatTaka, VEHICLE_COLOR } from "@/lib/format";
+import { formatTaka, VEHICLE_COLOR, plural } from "@/lib/format";
 import { haversineKm, toTuple } from "@/lib/geo";
 import { useLiveInterval } from "@/lib/realtime";
 import { useServerHealth } from "@/lib/server";
@@ -86,7 +86,7 @@ function RiderPortal() {
   const [manual, setManual] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(true);
   const [selectedZone, setSelectedZone] = useState<RiderDemandZone | null>(null);
-  const [blocked, setBlocked] = useState<{ title: string; message: string; toDocuments: boolean } | null>(null);
+  const [blocked, setBlocked] = useState<{ title: string; message: string } | null>(null);
   const interval = useLiveInterval(3000, 30000);
   const { data: health } = useServerHealth();
   const { data: me, mutate: refreshMe } = useSWR<RiderMe>("/api/rider/me", fetcher, { refreshInterval: interval });
@@ -98,8 +98,10 @@ function RiderPortal() {
 
   // ---- device GPS -------------------------------------------------------------------------
   const verified = me?.status === "verified";
-  const needsOnboarding = !!me && !verified && (!me.vehicle || !me.license_no);
-  const lockedOut = !!me && !verified;
+  // No admin verification: a rider only needs a vehicle to start, and is locked out only if suspended.
+  const suspended = me?.status === "suspended";
+  const needsOnboarding = !!me && !suspended && (!me.vehicle || !me.license_no);
+  const lockedOut = !!me && (suspended || needsOnboarding);
 
   useEffect(() => {
     if (needsOnboarding) {
@@ -138,6 +140,18 @@ function RiderPortal() {
     }, intervalTime);
     return () => clearInterval(id);
   }, [sharing, gpsWanted, active]);
+
+  // With a manual position there is no GPS stream, so keep re-sending the chosen spot. Without this the
+  // backend sees the rider go quiet and drops them from matching and from passengers' maps after two minutes.
+  const spotLat = me?.lat;
+  const spotLng = me?.lng;
+  useEffect(() => {
+    if (!sharing || !manual || active?.auto_drive || spotLat == null || spotLng == null) return;
+    const id = setInterval(() => {
+      api("/api/rider/location", { json: { lat: spotLat, lng: spotLng } }).catch(() => undefined);
+    }, active ? 7000 : HEARTBEAT_MS);
+    return () => clearInterval(id);
+  }, [sharing, manual, active, spotLat, spotLng]);
 
   const offerId = offer?.trip.id;
   const [seenOfferId, setSeenOfferId] = useState<string | undefined>();
@@ -182,29 +196,17 @@ function RiderPortal() {
     void refreshCollect();
   };
 
-  const canGoOnline = !!me && me.status === "verified" && (me.is_simulated || me.documents_ready);
+  const canGoOnline = !!me && me.status === "verified";
 
-  function goToDocuments() {
-    setBlocked(null);
-    openProfile("documents");
-  }
-
-  /** Going online needs a verified account with approved documents; otherwise explain and send them to Documents. */
+  /** Going online needs a verified account; otherwise explain why. Documents are optional. */
   function requestOnline(online: boolean) {
     if (online && me && !canGoOnline) {
       if (me.status === "suspended") {
-        setBlocked({ title: "Account suspended", message: "Your account is suspended, so you can't go online. Contact support to restore access.", toDocuments: false });
-      } else if (!me.documents_ready) {
-        setBlocked({
-          title: "Documents not approved yet",
-          message: `You can only go online once all your documents are approved. Still needed: ${me.missing_documents.join(", ") || "approval of your uploads"}. Finish uploading, then wait for verification.`,
-          toDocuments: true,
-        });
+        setBlocked({ title: "Account suspended", message: "Your account is suspended, so you can't go online. Contact support to restore access." });
       } else {
         setBlocked({
           title: "Waiting for verification",
-          message: "Your documents are approved. An admin still needs to verify your account before you can go online. Check Documents in your profile for updates.",
-          toDocuments: true,
+          message: "An admin still needs to verify your account before you can go online. You'll get a notice as soon as it's done.",
         });
       }
       return;
@@ -374,22 +376,6 @@ function RiderPortal() {
             {!me && <Loader2 className="mx-auto size-5 animate-spin text-muted-foreground" />}
             {me && (
               <>
-                {me.status === "pending" && (
-                  <Alert>
-                    <FileWarning />
-                    <AlertTitle>Waiting for verification</AlertTitle>
-                    <AlertDescription>
-                      {me.documents_ready
-                        ? "Your documents are approved. An admin will verify your account shortly."
-                        : `Upload and get these approved: ${me.missing_documents.join(", ")}.`}
-                      {!me.documents_ready && (
-                        <Button size="sm" variant="link" className="h-auto p-0" onClick={() => openProfile("documents")}>
-                          Go to documents
-                        </Button>
-                      )}
-                    </AlertDescription>
-                  </Alert>
-                )}
                 {me.status === "suspended" && (
                   <Alert variant="destructive">
                     <AlertTitle>Account suspended</AlertTitle>
@@ -408,7 +394,7 @@ function RiderPortal() {
                     />
                     <Stat
                       label="Completed Today"
-                      value={`${me.trips_today ?? 0} rides`}
+                      value={plural(me.trips_today ?? 0, "ride")}
                       hint={`${me.trips_completed} lifetime`}
                     />
                   </div>
@@ -448,7 +434,7 @@ function RiderPortal() {
         </BottomSheet>
       </div>
 
-      {/* Lockout overlay until rider passes verification */}
+      {/* Lockout overlay while the account is suspended or has no vehicle yet */}
       <AnimatePresence>
         {lockedOut && me && (
           <motion.div
@@ -480,56 +466,45 @@ function RiderPortal() {
                 </motion.span>
                 <div className="min-w-0 space-y-1">
                   <h2 className="text-lg font-bold">
-                    {me.status === "suspended" ? "Account suspended" : "You haven't been verified yet"}
+                    {me.status === "suspended" ? "Account suspended" : "Add your vehicle"}
                   </h2>
                   <p className="text-sm text-muted-foreground">
                     {me.status === "suspended"
                       ? "Your rider account is currently suspended. Contact support to restore access."
-                      : me.documents_ready
-                        ? "All your documents are approved. An admin will finish your background verification shortly."
-                        : "Complete your vehicle details and upload all required documents. The rider app unlocks once you're verified."}
+                      : "Add your vehicle details to start taking trips. Documents are optional."}
                   </p>
                 </div>
               </div>
 
-              {me.status === "pending" && !me.documents_ready && me.missing_documents.length > 0 && (
-                <div className="rounded-xl border border-amber-400/25 bg-amber-400/5 p-3 text-xs">
-                  <div className="mb-1.5 font-semibold text-amber-200">Pending documents:</div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {me.missing_documents.map((doc) => (
-                      <Badge key={doc} variant="outline" className="border-amber-400/30 bg-amber-400/10 text-amber-200">
-                        {doc}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
-
               <div className="flex flex-col gap-3 pt-1 sm:flex-row">
-                <Button type="button" className="h-12 min-h-12 w-full text-base sm:w-auto sm:flex-1" onClick={() => router.push("/rider/onboarding")}>
-                  <FileCheck2 /> Vehicle &amp; Documents
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-12 min-h-12 w-full text-base sm:w-auto sm:flex-1"
-                  disabled={refreshingStatus}
-                  onClick={() => {
-                    setRefreshingStatus(true);
-                    void refreshMe()
-                      .then((updated) => {
-                        if (updated?.status === "verified") {
-                          toast.success("Account verified! Welcome to Cholo.");
-                        } else {
-                          toast.info("Still waiting for admin verification");
-                        }
-                      })
-                      .finally(() => setRefreshingStatus(false));
-                  }}
-                >
-                  <RefreshCw className={refreshingStatus ? "animate-spin" : undefined} />
-                  {refreshingStatus ? "Checking…" : "Check Status"}
-                </Button>
+                {me.status !== "suspended" && (
+                  <Button type="button" className="h-12 min-h-12 w-full text-base sm:w-auto sm:flex-1" onClick={() => router.push("/rider/onboarding")}>
+                    <FileCheck2 /> Add vehicle details
+                  </Button>
+                )}
+                {me.status === "suspended" && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-12 min-h-12 w-full text-base sm:w-auto sm:flex-1"
+                    disabled={refreshingStatus}
+                    onClick={() => {
+                      setRefreshingStatus(true);
+                      void refreshMe()
+                        .then((updated) => {
+                          if (updated?.status === "suspended") {
+                            toast.info("Your account is still suspended");
+                          } else {
+                            toast.success("Your account is active again");
+                          }
+                        })
+                        .finally(() => setRefreshingStatus(false));
+                    }}
+                  >
+                    <RefreshCw className={refreshingStatus ? "animate-spin" : undefined} />
+                    {refreshingStatus ? "Checking…" : "Check Status"}
+                  </Button>
+                )}
               </div>
             </motion.div>
           </motion.div>
@@ -549,7 +524,6 @@ function RiderPortal() {
             <Button variant="outline" onClick={() => setBlocked(null)}>
               Close
             </Button>
-            {blocked?.toDocuments && <Button onClick={goToDocuments}>Go to documents</Button>}
           </DialogFooter>
         </DialogContent>
       </Dialog>

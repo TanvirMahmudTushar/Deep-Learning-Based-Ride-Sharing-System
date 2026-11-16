@@ -36,7 +36,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetcher } from "@/lib/api";
-import { formatPercent, formatTaka, VEHICLE_COLOR } from "@/lib/format";
+import { formatPercent, formatTaka, VEHICLE_COLOR, plural } from "@/lib/format";
 import { useNotificationPermission } from "@/lib/notifications";
 import { useAuthFileUrl } from "@/lib/server";
 import { clearSession } from "@/lib/session";
@@ -46,7 +46,7 @@ import type { RiderEarnings, RiderMe, Trip, VehicleChange } from "@/lib/types";
 export const OPEN_PROFILE_EVENT = "rider:open-profile";
 
 const STATUS_BADGE: Record<RiderMe["status"], { label: string; className: string }> = {
-  verified: { label: "Verified", className: "border-emerald-400/30 bg-emerald-400/10 text-emerald-200" },
+  verified: { label: "Active", className: "border-emerald-400/30 bg-emerald-400/10 text-emerald-200" },
   pending: { label: "Pending verification", className: "border-amber-400/30 bg-amber-400/10 text-amber-200" },
   suspended: { label: "Suspended", className: "border-red-400/30 bg-red-400/10 text-red-200" },
 };
@@ -219,7 +219,7 @@ export function RiderProfile({ onClose, initialSection }: { onClose: () => void;
               {/* Lifetime Performance Overview (verified riders only) */}
               {isVerified && (
                 <div className="grid grid-cols-2 gap-2">
-                  <Stat label="Total completed" value={`${me.trips_completed} trips`} />
+                  <Stat label="Total completed" value={plural(me.trips_completed, "trip")} />
                   <Stat label="Rating" value={<RatingText rating={me.rating} count={me.rating_count} />} />
                   <Stat label="Cancel rate" value={formatPercent(me.cancel_rate)} hint="Lower rates rank you higher" />
                   <Stat
@@ -256,9 +256,6 @@ export function RiderProfile({ onClose, initialSection }: { onClose: () => void;
                       value={
                         <span className="flex items-center gap-1.5">
                           {me.license_no}
-                          <Badge variant="outline" className="px-1 py-0 text-[10px] text-muted-foreground">
-                            Verified
-                          </Badge>
                         </span>
                       }
                     />
@@ -361,12 +358,12 @@ export function RiderProfile({ onClose, initialSection }: { onClose: () => void;
                       <Stat
                         label="Last 7 days"
                         value={earnings ? formatTaka(earnings.week.earnings) : "—"}
-                        hint={earnings ? `${earnings.week.trips} trips` : undefined}
+                        hint={earnings ? plural(earnings.week.trips, "trip") : undefined}
                       />
                       <Stat
                         label="This month"
                         value={earnings ? formatTaka(earnings.month.earnings) : "—"}
-                        hint={earnings ? `${earnings.month.trips} trips` : undefined}
+                        hint={earnings ? plural(earnings.month.trips, "trip") : undefined}
                       />
                     </div>
 
@@ -387,7 +384,7 @@ export function RiderProfile({ onClose, initialSection }: { onClose: () => void;
                   </Section>
 
                   {/* Section 4: Documents (Now a menu item navigating to DocumentsScreen) */}
-                  <Section id="documents" icon={<FileCheck2 />} title="Documents &amp; Verification">
+                  <Section id="documents" icon={<FileCheck2 />} title="Documents">
                     <button
                       type="button"
                       onClick={() => setActiveSubscreen("documents")}
@@ -399,25 +396,11 @@ export function RiderProfile({ onClose, initialSection }: { onClose: () => void;
                         </span>
                         <div>
                           <div className="text-sm font-medium">Licence &amp; Identity Documents</div>
-                          <div className="text-xs text-muted-foreground">
-                            {me.documents_ready
-                              ? "All required documents are approved"
-                              : me.missing_documents.length > 0
-                                ? `Missing: ${me.missing_documents.join(", ")}`
-                                : "Under admin review"}
-                          </div>
+                          <div className="text-xs text-muted-foreground">Optional. Add them any time.</div>
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5">
-                        {me.documents_ready ? (
-                          <Badge variant="outline" className="border-emerald-400/30 bg-emerald-400/10 text-emerald-200">
-                            Approved
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="border-amber-400/30 bg-amber-400/10 text-amber-200">
-                            Action Needed
-                          </Badge>
-                        )}
+                        <Badge variant="outline">Optional</Badge>
                         <ChevronRight className="size-4 text-muted-foreground" />
                       </div>
                     </button>

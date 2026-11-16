@@ -1,7 +1,9 @@
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, Field, PlainSerializer
+import re
+
+from pydantic import AfterValidator, BaseModel, Field, PlainSerializer, StringConstraints
 from pydantic_core import PydanticCustomError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -40,33 +42,33 @@ def _fits_bcrypt(password: str) -> str:
 
 NewPassword = Annotated[str, Field(min_length=8, max_length=72), AfterValidator(_fits_bcrypt)]
 
+# Surrounding spaces are removed before the length check, so "  " can't pass as a name.
+PersonName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=120)]
+
+_PHONE = re.compile(r"^\+?\d[\d\s-]{4,28}\d$")
+
+
+def _valid_phone(phone: str) -> str:
+    phone = phone.strip()
+    if not _PHONE.match(phone):
+        raise PydanticCustomError("invalid_phone", "Enter a valid phone number, like +8801712345678")
+    return phone
+
+
+# Riders call passengers and passengers call riders, so a phone number has to be dialable.
+PhoneNumber = Annotated[str, Field(max_length=32), AfterValidator(_valid_phone)]
+
 
 class RegisterIn(BaseModel):
-    full_name: str = Field(min_length=2, max_length=120)
+    full_name: PersonName
     email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=160)
-    phone: str = Field(min_length=6, max_length=32)
+    phone: PhoneNumber
     password: NewPassword
     role: Literal["user", "rider", "support"] = "user"
-    otp: str | None = Field(default=None, min_length=4, max_length=10)
     license_no: str | None = Field(default=None, max_length=40)
     vehicle_type: VehicleType | None = None
     plate_no: str | None = Field(default=None, max_length=32)
     vehicle_model: str | None = Field(default=None, max_length=60)
-
-
-class OtpRequestIn(BaseModel):
-    email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=160)
-    phone: str = Field(min_length=6, max_length=32)
-
-
-class OtpRequestOut(BaseModel):
-    ok: bool
-    message: str
-
-
-class OtpVerifyIn(BaseModel):
-    phone: str = Field(min_length=6, max_length=32)
-    otp: str = Field(min_length=4, max_length=10)
 
 
 class LoginIn(BaseModel):
@@ -81,7 +83,6 @@ class ProfileOut(BaseModel):
     phone: str
     role: str
     approval_status: str | None = None
-    phone_verified: bool = False
     avatar_url: str | None = None
 
 
@@ -214,6 +215,15 @@ class EstimateOut(BaseModel):
     route: list[list[float]]
     route_source: str
     quotes: list[QuoteOut]
+
+
+class NearbyRiderOut(BaseModel):
+    """A free rider close to the passenger. Position and vehicle type only: no name, plate or id."""
+
+    vehicle_type: VehicleType
+    lat: float
+    lng: float
+    distance_km: float
 
 
 class TripCreate(BaseModel):
@@ -438,15 +448,15 @@ class SavedPlaceOut(BaseModel):
 
 
 class ProfileUpdateIn(BaseModel):
-    full_name: str = Field(min_length=2, max_length=120)
-    phone: str = Field(min_length=6, max_length=32)
+    full_name: PersonName
+    phone: PhoneNumber
 
 
 class RiderContactIn(BaseModel):
     """What a rider may change themselves. Name and licence are tied to verified documents, so they can't."""
 
     email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=160)
-    phone: str = Field(min_length=6, max_length=32)
+    phone: PhoneNumber
     # Required only when the email (the login) changes.
     current_password: str | None = None
 

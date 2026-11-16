@@ -15,7 +15,6 @@ export interface Profile {
   role: Role;
   /** Support agents only. */
   approval_status?: "pending" | "approved" | "revoked" | null;
-  phone_verified?: boolean;
   avatar_url?: string | null;
 }
 
@@ -82,6 +81,14 @@ export interface Quote {
   zone_name: string;
   reason: string;
   breakdown: FareBreakdown;
+}
+
+/** A free rider near the passenger: position and vehicle type only, no personal details. */
+export interface NearbyRider {
+  vehicle_type: VehicleType;
+  lat: number;
+  lng: number;
+  distance_km: number;
 }
 
 export interface Estimate {

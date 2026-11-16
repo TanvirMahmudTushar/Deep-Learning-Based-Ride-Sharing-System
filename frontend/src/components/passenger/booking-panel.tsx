@@ -232,7 +232,7 @@ export function BookingPanel(props: Props) {
                   <TrendingUp className="size-3" /> Demand {selected.demand_level} · ~{selected.expected_requests} requests next hour
                 </span>
                 <span className="inline-flex items-center gap-1">
-                  <Users className="size-3" /> {selected.available_riders} {VEHICLE_LABEL[selected.vehicle_type]} riders nearby
+                  <Users className="size-3" /> {selected.available_riders} {VEHICLE_LABEL[selected.vehicle_type]} {selected.available_riders === 1 ? "rider" : "riders"} nearby
                 </span>
               </div>
               <p className="text-xs text-muted-foreground">{VEHICLE_BLURB[selected.vehicle_type]}</p>

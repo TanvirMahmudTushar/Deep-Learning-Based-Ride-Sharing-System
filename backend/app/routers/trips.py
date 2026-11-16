@@ -1,14 +1,16 @@
 """Passenger endpoints: estimate, book, track, cancel, rate, emergency alerts and problem reports."""
 
-from fastapi import APIRouter, HTTPException, status
+from typing import Annotated
+
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
 
 from app.config import settings
 
 from app.models import VEHICLE_TYPES, Rating, SafetyAlert, Trip
-from app.schemas import CancelIn, EstimateIn, EstimateOut, MessageIn, QuoteOut, RateIn, ReportIn, SosIn, TripCreate, TripOut, iso_utc, trip_out
+from app.schemas import CancelIn, EstimateIn, EstimateOut, MessageIn, NearbyRiderOut, QuoteOut, RateIn, ReportIn, SosIn, TripCreate, TripOut, iso_utc, trip_out
 from app.security import DB, Passenger
-from app.services import alerts, cancel_fees, messages, pricing
+from app.services import alerts, availability, cancel_fees, messages, pricing, rider_prefs
 from app.services import trips as trip_service
 from app.services.routing import get_route
 from app.services.zones import describe_point
@@ -40,6 +42,34 @@ def estimate(body: EstimateIn, db: DB, user: Passenger):
     )
 
 
+@router.get("/nearby-riders", response_model=list[NearbyRiderOut])
+def nearby_riders(
+    db: DB,
+    user: Passenger,
+    lat: Annotated[float, Query(ge=-90, le=90)],
+    lng: Annotated[float, Query(ge=-180, le=180)],
+):
+    """Online, verified, free riders within the supply radius of a point, for the passenger's map.
+
+    The same rule the fare quote uses to count "riders nearby", so the map and the count agree.
+    Riders the passenger blocked are left out, since they would never be offered the trip.
+    """
+    point = (lat, lng)
+    blocked = rider_prefs.blocked_ids(db, user.id)
+    out = []
+    for vehicle_type in VEHICLE_TYPES:
+        for r in availability.free_riders_near(db, point, vehicle_type, pricing.SUPPLY_RADIUS_KM, exclude=blocked):
+            out.append(
+                NearbyRiderOut(
+                    vehicle_type=vehicle_type,
+                    lat=round(r.current_lat, 5),
+                    lng=round(r.current_lng, 5),
+                    distance_km=round(availability.distance_to(r, point), 2),
+                )
+            )
+    return sorted(out, key=lambda x: x.distance_km)
+
+
 @router.post("", response_model=TripOut, status_code=status.HTTP_201_CREATED)
 def create(body: TripCreate, db: DB, user: Passenger):
     trip = trip_service.create_trip(
@@ -64,11 +94,17 @@ def active(db: DB, user: Passenger):
 
 
 @router.get("", response_model=list[TripOut])
-def history(db: DB, user: Passenger, limit: int = 20, offset: int = 0, status_filter: str | None = None):
+def history(
+    db: DB,
+    user: Passenger,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    status_filter: str | None = None,
+):
     q = select(Trip).where(Trip.user_id == user.id)
     if status_filter:
         q = q.where(Trip.status == status_filter)
-    trips = db.scalars(q.order_by(Trip.requested_at.desc()).offset(max(offset, 0)).limit(min(limit, 100)))
+    trips = db.scalars(q.order_by(Trip.requested_at.desc()).offset(offset).limit(limit))
     return [trip_out(db, t, include_route=False) for t in trips]
 
 

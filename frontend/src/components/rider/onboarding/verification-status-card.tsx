@@ -35,21 +35,21 @@ export function VerificationStatusCard({
   const suspended = me.status === "suspended";
 
   const steps = [
-    { label: "Account & Phone OTP", done: true, detail: "Verified" },
+    { label: "Account Created", done: true, detail: "Done" },
     {
       label: "Vehicle Details",
       done: hasVehicle,
       detail: me.vehicle ? `${VEHICLE_LABEL[me.vehicle.vehicle_type]} · ${me.vehicle.plate_no}` : "Pending",
     },
     {
-      label: "Documents Uploaded",
+      label: "Documents (optional)",
       done: allUploaded,
-      detail: me.documents_ready ? "All approved" : `${uploadedCount}/${totalDocs} uploaded`,
+      detail: `${uploadedCount}/${totalDocs} uploaded`,
     },
     {
-      label: "Background & Admin Verification",
+      label: "Account Active",
       done: verified,
-      detail: verified ? "Verified" : suspended ? "Suspended" : "In review",
+      detail: suspended ? "Suspended" : "Active",
     },
   ];
 
@@ -94,7 +94,7 @@ export function VerificationStatusCard({
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-base font-semibold">
-              {verified ? "Background verification complete" : suspended ? "Account suspended" : "Verification in progress"}
+              {verified ? "You're all set" : suspended ? "Account suspended" : "Verification in progress"}
             </h3>
             <Badge variant="outline" className="capitalize">
               {me.status}
@@ -102,10 +102,10 @@ export function VerificationStatusCard({
           </div>
           <p className="text-xs text-muted-foreground">
             {verified
-              ? "Your vehicle and documents are approved. You can now unlock the rider app and start accepting trips."
+              ? "No admin check is needed. Add your vehicle and you can go online and start accepting trips."
               : suspended
                 ? "Your account has been suspended. Please contact support."
-                : "Until an admin completes your background & document check, the rider app remains locked."}
+                : "Add your vehicle details to start."}
           </p>
         </div>
       </div>

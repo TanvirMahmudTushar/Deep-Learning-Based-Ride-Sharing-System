@@ -33,7 +33,6 @@ export function DocumentsStep({ onNext }: { onNext: () => void }) {
   }
 
   const uploadedCount = data.required.filter((r) => r.document !== null).length;
-  const photoDoc = data.required.find((r) => r.doc_type === "photo")?.document ?? null;
 
   function refreshAll() {
     void mutate();
@@ -49,7 +48,7 @@ export function DocumentsStep({ onNext }: { onNext: () => void }) {
       className="space-y-4"
     >
       <div className="flex items-center justify-between rounded-xl border bg-muted/30 px-3.5 py-2.5 text-xs">
-        <span className="text-muted-foreground">Upload licence, insurance, registration &amp; clear face selfie</span>
+        <span className="text-muted-foreground">Optional: licence, insurance, registration &amp; face selfie</span>
         <span className="font-semibold">
           {uploadedCount}/{data.required.length} uploaded
         </span>
@@ -79,7 +78,7 @@ export function DocumentsStep({ onNext }: { onNext: () => void }) {
                     <span>{label}</span>
                     {isPhoto && (
                       <Badge variant="outline" className="border-primary/40 bg-primary/10 px-1.5 py-0 text-[10px] text-primary">
-                        Mandatory
+                        Becomes your profile photo
                       </Badge>
                     )}
                   </div>
@@ -135,11 +134,7 @@ export function DocumentsStep({ onNext }: { onNext: () => void }) {
         })}
       </div>
 
-      {!photoDoc && (
-        <p className="text-center text-xs text-amber-300">Please take a selfie or upload a clear face photo before continuing.</p>
-      )}
-
-      <Button type="button" size="lg" className="h-11 w-full" disabled={!photoDoc} onClick={onNext}>
+      <Button type="button" size="lg" className="h-11 w-full" onClick={onNext}>
         Check Verification Status
         <ArrowRight />
       </Button>

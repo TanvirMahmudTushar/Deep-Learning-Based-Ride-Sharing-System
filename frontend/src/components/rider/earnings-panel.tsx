@@ -5,7 +5,7 @@ import { Stat, VehicleTag } from "@/components/ride-bits";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetcher } from "@/lib/api";
-import { formatDateTime, formatTaka } from "@/lib/format";
+import { formatDateTime, formatTaka, plural } from "@/lib/format";
 import type { PaymentRow, RiderEarnings } from "@/lib/types";
 
 const PAYMENT_BADGE: Record<PaymentRow["status"], string> = {
@@ -24,9 +24,9 @@ export function EarningsPanel() {
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-3 gap-2">
-        <Stat label="Today" value={formatTaka(data.today.earnings)} hint={`${data.today.trips} trips`} />
-        <Stat label="7 days" value={formatTaka(data.week.earnings)} hint={`${data.week.trips} trips`} />
-        <Stat label="This month" value={formatTaka(data.month.earnings)} hint={`${data.month.trips} trips`} />
+        <Stat label="Today" value={formatTaka(data.today.earnings)} hint={plural(data.today.trips, "trip")} />
+        <Stat label="7 days" value={formatTaka(data.week.earnings)} hint={plural(data.week.trips, "trip")} />
+        <Stat label="This month" value={formatTaka(data.month.earnings)} hint={plural(data.month.trips, "trip")} />
       </div>
 
       {daily.length > 0 && (

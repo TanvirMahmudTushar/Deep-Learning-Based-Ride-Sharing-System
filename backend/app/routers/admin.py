@@ -6,7 +6,7 @@ Live trips, recent trips and safety alerts also serve approved support agents (`
 import json
 from collections import defaultdict
 from datetime import UTC, date, datetime, time, timedelta
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
@@ -33,7 +33,6 @@ from app.models import (
     Vehicle,
 )
 from app.schemas import (
-    AdminAccountOut,
     AdminAccountPageOut,
     AdminAccountTripPageOut,
     AlertEscalateIn,
@@ -664,12 +663,11 @@ def recent_trips(
     vehicle_type: Literal["bike", "cng", "car"] | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
-    offset: int = 0,
-    limit: int = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ):
     """Trips newest first. `q` matches the passenger's name, the rider's name or the plate number;
     dates are Dhaka calendar days, both inclusive."""
-    limit, offset = max(1, min(limit, 200)), max(0, offset)
     stmt = select(Trip)
     if q and q.strip():
         term = f"%{q.strip().lower()}%"

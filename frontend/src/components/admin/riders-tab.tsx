@@ -16,7 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, fetcher } from "@/lib/api";
-import { formatDateTime, formatPercent, formatTaka, VEHICLE_LABEL } from "@/lib/format";
+import { formatDateTime, formatPercent, formatTaka, VEHICLE_LABEL, plural } from "@/lib/format";
 import type { AdminAccount, AdminAccountPage, AdminAccountTripPage, AdminRider, RiderBlock } from "@/lib/types";
 import { useLiveInterval } from "@/lib/realtime";
 
@@ -87,7 +87,7 @@ function AccountDetailsDialog({ account, onOpenChange }: { account: AdminAccount
                 <CardTitle className="text-base">Trip history</CardTitle>
                 <CardDescription>
                   Cancellation rate is account-initiated cancellations divided by trips associated with this account.
-                  {history ? ` · ${history.total} trips` : ""}
+                  {history ? ` · ${plural(history.total, "trip")}` : ""}
                 </CardDescription>
               </CardHeader>
               {error && <p role="alert" className="px-4 pb-3 text-sm text-destructive">Could not load trip history: {error.message}</p>}
@@ -374,7 +374,7 @@ export function RidersTab() {
                             {account.vehicle && <div className="text-xs text-muted-foreground">{account.vehicle.model} · {account.vehicle.plate_no}</div>}
                             <div className="font-mono text-xs text-muted-foreground">Licence {account.license_no}</div>
                             <div className="text-xs text-muted-foreground">
-                              {account.is_online ? (account.busy ? "On a trip" : "Online") : "Offline"} · {account.documents_ready ? "Documents ready" : "Documents incomplete"}
+                              {account.is_online ? (account.busy ? "On a trip" : "Online") : "Offline"}
                             </div>
                             <RatingText rating={account.rating} count={account.rating_count} />
                           </>
@@ -530,7 +530,7 @@ function RiderVerificationDirectory() {
               {rider.vehicle_change_pending && <Badge variant="outline">Vehicle change pending</Badge>}
               {rider.status === "pending" && (
                 <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <Clock3 className="size-3.5" /> {rider.documents_ready ? "Documents approved" : "Documents to review"}
+                  <Clock3 className="size-3.5" /> Awaiting verification
                 </p>
               )}
               <div className="grid grid-cols-2 gap-3 border-y py-3 text-sm">
@@ -601,7 +601,7 @@ function RiderVerificationDirectory() {
                   <TableCell>
                     <Badge variant="outline" className={STATUS_STYLE[rider.status]}>{rider.status}</Badge>
                     {rider.vehicle_change_pending && <div className="mt-1 text-xs text-amber-300">Vehicle change pending</div>}
-                    {rider.status === "pending" && <div className="mt-1 text-xs text-muted-foreground">{rider.documents_ready ? "Documents approved" : "Documents to review"}</div>}
+                    {rider.status === "pending" && <div className="mt-1 text-xs text-muted-foreground">Awaiting verification</div>}
                   </TableCell>
                   <TableCell>{rider.is_online ? (rider.busy ? "On a trip" : "Online") : "Offline"}</TableCell>
                   <TableCell>

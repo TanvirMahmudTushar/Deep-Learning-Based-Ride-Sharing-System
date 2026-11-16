@@ -133,7 +133,7 @@ export function ChangeVehicleScreen({
           model: model.trim(),
         },
       });
-      toast.success("Vehicle change request created. Please upload the required documents.");
+      toast.success("Vehicle change request sent to the admin.");
       await refreshChange();
       await onSuccess();
     } catch (err) {
@@ -182,11 +182,11 @@ export function ChangeVehicleScreen({
           {/* Important Info Notice */}
           <Alert className="border-amber-400/30 bg-amber-400/5">
             <AlertTriangle className="size-4 text-amber-300" />
-            <AlertTitle className="text-amber-200">Re-verification Required</AlertTitle>
+            <AlertTitle className="text-amber-200">Admin approval needed</AlertTitle>
             <AlertDescription className="text-xs text-muted-foreground">
               A vehicle’s plate and registration are tied together. Changing details replaces your vehicle.
-              The change won’t apply immediately: you must upload the new registration certificate and photo
-              for admin approval. Until approved, you may continue driving your current verified vehicle.
+              The change won’t apply immediately: an admin approves it first, and adding the new registration
+              certificate and a photo helps. Until approved, you keep driving your current vehicle.
             </AlertDescription>
           </Alert>
 
@@ -289,12 +289,12 @@ export function ChangeVehicleScreen({
               {change.documents_complete ? (
                 <div className="flex items-center gap-2 rounded-lg bg-emerald-500/10 p-3 text-xs text-emerald-300 border border-emerald-500/20">
                   <CheckCircle2 className="size-4 shrink-0" />
-                  All required documents uploaded. Waiting for admin verification.
+                  Documents uploaded. Waiting for admin verification.
                 </div>
               ) : (
                 <div className="flex items-center gap-2 rounded-lg bg-amber-500/10 p-3 text-xs text-amber-300 border border-amber-500/20">
                   <AlertCircle className="size-4 shrink-0" />
-                  Please upload both registration and vehicle photo above so admins can review.
+                  Registration and vehicle photo are optional, but they help the admin review.
                 </div>
               )}
 
@@ -370,7 +370,7 @@ export function ChangeVehicleScreen({
 
               <Button type="submit" disabled={submitting} className="w-full">
                 {submitting ? <Loader2 className="animate-spin" /> : <Plus className="size-4" />}
-                Submit &amp; Proceed to Upload Papers
+                Submit for approval
               </Button>
             </form>
           )}
