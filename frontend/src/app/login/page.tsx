@@ -41,6 +41,7 @@ function LoginForm() {
   const { data: health } = useServerHealth();
 
   async function login(e: string, p: string) {
+    if (busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -48,6 +49,9 @@ function LoginForm() {
       saveSession(await api<AuthResponse>("/api/auth/login", { json: { email: e, password: p } }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
+    } finally {
+      // Release the button on success too: the login screen can be revisited through
+      // client-side navigation with its state intact, leaving it stuck otherwise.
       setBusy(false);
     }
   }
