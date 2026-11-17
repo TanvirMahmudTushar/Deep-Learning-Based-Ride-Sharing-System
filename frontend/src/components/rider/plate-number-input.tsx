@@ -11,6 +11,9 @@ import { BRTA_CLASS_CODES, BRTA_REGIONS, formatPlate, parsePlate, type BrtaRegio
 import { cn } from "@/lib/utils";
 import type { VehicleType } from "@/lib/types";
 
+/** Radix Select disallows empty-string item values, so use a sentinel for the blank option. */
+const BLANK_CLASS = "__none__";
+
 const BN_DIGITS: Record<string, string> = {
   "0": "০",
   "1": "১",
@@ -50,9 +53,10 @@ export function PlateNumberInput({
   const inputId = useId();
   const parsed = useMemo(() => parsePlate(value || "", vehicleType), [value, vehicleType]);
 
-  const [region, setRegion] = useState(parsed.region);
-  const [classCodeState, setClassCode] = useState(parsed.classCode);
-  const [number6, setNumber6] = useState(parsed.number6);
+  // Nothing is selected until the rider picks it (or an existing plate is being edited).
+  const [region, setRegion] = useState(value ? parsed.region : "");
+  const [classCodeState, setClassCode] = useState(value ? parsed.classCode : "");
+  const [number6, setNumber6] = useState(value ? parsed.number6 : "");
 
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -68,19 +72,23 @@ export function PlateNumberInput({
       setRegion(p.region);
       setClassCode(p.classCode);
       setNumber6(p.number6);
+    } else {
+      setRegion("");
+      setClassCode("");
+      setNumber6("");
     }
   }
 
-  // The class has to be valid for the vehicle type; if it isn't, fall back to the first valid one.
-  const classIsValid = availableClasses.some((c) => c.code === classCodeState);
+  // An empty class means "nothing selected yet". A chosen class must be valid for the vehicle type.
+  const classIsValid = !classCodeState || availableClasses.some((c) => c.code === classCodeState);
   const classCode = classIsValid ? classCodeState : (availableClasses[0]?.code ?? classCodeState);
 
-  // Tell the parent about the corrected plate.
+  // Tell the parent about the corrected plate only when a chosen class had to be fixed.
   useEffect(() => {
-    if (!classIsValid && availableClasses[0]) {
+    if (classCodeState && !classIsValid && availableClasses[0]) {
       onChange?.(formatPlate(region, classCode, number6));
     }
-  }, [classIsValid, availableClasses, classCode, region, number6, onChange]);
+  }, [classCodeState, classIsValid, availableClasses, classCode, region, number6, onChange]);
 
   const filteredRegions = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -90,21 +98,21 @@ export function PlateNumberInput({
     );
   }, [searchQuery]);
 
-  const currentRegion = BRTA_REGIONS.find((r) => r.code === region) || BRTA_REGIONS[0];
-  const currentClass = availableClasses.find((c) => c.code === classCode) || availableClasses[0];
+  const currentRegion = BRTA_REGIONS.find((r) => r.code === region) || null;
+  const currentClass = availableClasses.find((c) => c.code === classCode) || null;
 
-  function handleRegionSelect(r: BrtaRegion) {
-    setRegion(r.code);
+  function handleRegionSelect(r: BrtaRegion | null) {
+    const code = r?.code ?? "";
+    setRegion(code);
     setSelectorOpen(false);
     setSearchQuery("");
-    const nextPlate = formatPlate(r.code, classCode, number6);
-    onChange?.(nextPlate);
+    onChange?.(formatPlate(code, classCode, number6));
   }
 
   function handleClassSelect(cCode: string) {
-    setClassCode(cCode);
-    const nextPlate = formatPlate(region, cCode, number6);
-    onChange?.(nextPlate);
+    const next = cCode === BLANK_CLASS ? "" : cCode;
+    setClassCode(next);
+    onChange?.(formatPlate(region, next, number6));
   }
 
   function handleNumberChange(raw: string) {
@@ -114,13 +122,17 @@ export function PlateNumberInput({
       formatted = `${digits.slice(0, 2)}-${digits.slice(2)}`;
     }
     setNumber6(formatted);
-    const nextPlate = formatPlate(region, classCode, formatted);
-    onChange?.(nextPlate);
+    onChange?.(formatPlate(region, classCode, formatted));
   }
 
   const fullPlate = formatPlate(region, classCode, number6);
-  const bnLine1 = `${currentRegion.bengali}-${currentClass?.bengali || ""}`.trim();
-  const bnLine2 = toBengaliDigits(number6 || "১১-২৪০৮");
+  const hasRegionOrClass = !!(currentRegion || currentClass);
+  const bnLine1 = hasRegionOrClass
+    ? [currentRegion?.bengali, currentClass?.bengali].filter(Boolean).join("-")
+    : "— — —";
+  const hasNumber = number6.length > 0;
+  const bnLine2 = hasNumber ? toBengaliDigits(number6) : "— — — —";
+  const previewReady = !!currentRegion && !!currentClass && hasNumber;
 
   return (
     <div className={cn("space-y-3", className)}>
@@ -137,8 +149,8 @@ export function PlateNumberInput({
             onClick={() => setSelectorOpen(true)}
             className="h-10 w-full justify-between px-3 text-left font-normal"
           >
-            <span className="truncate text-xs sm:text-sm">
-              {currentRegion.code} ({currentRegion.bengali})
+            <span className={cn("truncate text-xs sm:text-sm", !currentRegion && "text-muted-foreground")}>
+              {currentRegion ? `${currentRegion.code} (${currentRegion.bengali})` : "Select region"}
             </span>
             <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
           </Button>
@@ -147,11 +159,12 @@ export function PlateNumberInput({
         {/* Dropdown 2: Vehicle Class Code */}
         <div className="space-y-1.5 sm:col-span-3">
           <Label className="text-xs text-muted-foreground">Class</Label>
-          <Select value={classCode} onValueChange={handleClassSelect}>
+          <Select value={classCode || BLANK_CLASS} onValueChange={handleClassSelect}>
             <SelectTrigger className="h-10 w-full">
-              <SelectValue />
+              <SelectValue placeholder="Select..." />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value={BLANK_CLASS}>Select...</SelectItem>
               {availableClasses.map((c) => (
                 <SelectItem key={c.code} value={c.code}>
                   {c.code} ({c.bengali})
@@ -192,23 +205,34 @@ export function PlateNumberInput({
             className="absolute top-2 right-4 size-2.5 rounded-full border border-zinc-400 bg-gradient-to-br from-zinc-100 to-zinc-300 shadow-[inset_0_1px_1px_rgba(255,255,255,0.9)]"
           />
 
-          {/* Line 1: Region and class identifier */}
+          {/* Line 1: Region and class identifier, blank until both are selected */}
           <div
             style={{ fontFamily: 'var(--font-solaiman-lipi), "SolaimanLipi", sans-serif' }}
-            className="font-solaiman-lipi text-center font-bold text-black tracking-normal text-2xl sm:text-[1.75rem] leading-[1.15]"
+            className={cn(
+              "font-solaiman-lipi text-center font-bold text-black tracking-normal text-2xl sm:text-[1.75rem] leading-[1.15]",
+              !currentRegion && "text-zinc-400",
+            )}
           >
             {bnLine1}
           </div>
 
-          {/* Line 2: Six-digit number in Bengali */}
+          {/* Line 2: Six-digit number in Bengali, or a neutral placeholder while empty */}
           <div
             style={{ fontFamily: 'var(--font-solaiman-lipi), "SolaimanLipi", sans-serif' }}
-            className="font-solaiman-lipi text-center font-bold text-black tracking-wider text-2xl sm:text-[1.75rem] leading-[1.15]"
+            className={cn(
+              "font-solaiman-lipi text-center font-bold text-black tracking-wider text-2xl sm:text-[1.75rem] leading-[1.15]",
+              !hasNumber && "text-zinc-400",
+            )}
           >
             {bnLine2}
           </div>
         </div>
       </div>
+      {!previewReady && (
+        <p className="text-center text-xs text-muted-foreground">
+          Select the region and class, then enter the plate number to preview it here.
+        </p>
+      )}
 
       {/* Searchable Region Dialog */}
       <Dialog open={selectorOpen} onOpenChange={setSelectorOpen}>
@@ -239,6 +263,17 @@ export function PlateNumberInput({
             </div>
 
             <div className="max-h-72 overflow-y-auto overscroll-contain rounded-lg border divide-y">
+              <button
+                type="button"
+                onClick={() => handleRegionSelect(null)}
+                className={cn(
+                  "flex w-full items-center justify-between px-3.5 py-2.5 text-left text-xs transition-colors hover:bg-muted/60 sm:text-sm",
+                  !region && "bg-primary/10 font-semibold text-primary",
+                )}
+              >
+                Select region
+                {!region && <Check className="size-4 text-primary" />}
+              </button>
               {filteredRegions.length === 0 ? (
                 <div className="p-4 text-center text-xs text-muted-foreground">
                   No matching region found.

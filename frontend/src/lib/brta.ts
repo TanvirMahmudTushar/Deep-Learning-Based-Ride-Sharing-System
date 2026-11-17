@@ -155,7 +155,7 @@ export function parsePlate(
 export function formatPlate(region: string, classCode: string, number6: string): string {
   const digits = number6.replace(/\D/g, "").slice(0, 6);
   const formattedNum = digits.length > 2 ? `${digits.slice(0, 2)}-${digits.slice(2)}` : digits;
-  if (!formattedNum) return "";
+  if (!region.trim() || !classCode.trim() || !formattedNum) return "";
   return `${region.trim().toUpperCase()} ${classCode.trim().toUpperCase()}-${formattedNum}`;
 }
 
