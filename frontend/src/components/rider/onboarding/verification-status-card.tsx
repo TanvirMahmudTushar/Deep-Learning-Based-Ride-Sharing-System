@@ -35,7 +35,7 @@ export function VerificationStatusCard({
   const suspended = me.status === "suspended";
 
   const steps = [
-    { label: "Account Created", done: true, detail: "Done" },
+    { label: "Account & Phone OTP", done: true, detail: "Verified" },
     {
       label: "Vehicle Details",
       done: hasVehicle,

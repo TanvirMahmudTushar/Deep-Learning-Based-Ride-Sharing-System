@@ -15,6 +15,7 @@ export interface Profile {
   role: Role;
   /** Support agents only. */
   approval_status?: "pending" | "approved" | "revoked" | null;
+  phone_verified?: boolean;
   avatar_url?: string | null;
 }
 
