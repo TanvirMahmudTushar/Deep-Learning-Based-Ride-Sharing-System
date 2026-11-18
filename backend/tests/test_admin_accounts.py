@@ -94,7 +94,7 @@ def test_admin_accounts_search_stats_history_and_status_actions(client, admin_h)
     rider_search = client.get(
         "/api/admin/accounts",
         headers=admin_h,
-        params={"search": "ACCOUNT-TEST-LICENSE", "role_filter": "rider", "status_filter": "verified"},
+        params={"search": "ACCOUNT-TEST-LICENSE", "role_filter": "rider", "status_filter": "pending"},
     )
     assert rider_search.status_code == 200, rider_search.text
     rider_account = rider_search.json()["items"][0]
@@ -127,7 +127,7 @@ def test_admin_accounts_search_stats_history_and_status_actions(client, admin_h)
     assert client.post("/api/auth/login", json={"email": "account.rider@example.com", "password": "secret123"}).status_code == 403
     reactivated = client.post(f"/api/admin/accounts/{rider_profile_id}/reactivate", headers=admin_h)
     assert reactivated.status_code == 200
-    assert reactivated.json()["status"] == "verified"
+    assert reactivated.json()["status"] == "pending"
 
     with SessionLocal() as db:
         db.execute(delete(Trip).where((Trip.user_id == passenger_id) | (Trip.rider_id == rider_id)))

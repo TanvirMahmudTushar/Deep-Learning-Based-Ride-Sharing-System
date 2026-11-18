@@ -47,9 +47,9 @@ export function VerificationStatusCard({
       detail: `${uploadedCount}/${totalDocs} uploaded`,
     },
     {
-      label: "Account Active",
+      label: "Admin Verification",
       done: verified,
-      detail: suspended ? "Suspended" : "Active",
+      detail: verified ? "Verified" : suspended ? "Suspended" : "In review",
     },
   ];
 
@@ -94,7 +94,7 @@ export function VerificationStatusCard({
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-base font-semibold">
-              {verified ? "You're all set" : suspended ? "Account suspended" : "Verification in progress"}
+              {verified ? "Background verification complete" : suspended ? "Account suspended" : "Verification in progress"}
             </h3>
             <Badge variant="outline" className="capitalize">
               {me.status}
@@ -102,10 +102,10 @@ export function VerificationStatusCard({
           </div>
           <p className="text-xs text-muted-foreground">
             {verified
-              ? "No admin check is needed. Add your vehicle and you can go online and start accepting trips."
+              ? "Your account is verified. You can now unlock the rider app and start accepting trips."
               : suspended
                 ? "Your account has been suspended. Please contact support."
-                : "Add your vehicle details to start."}
+                : "Until an admin verifies your account, the rider app remains locked."}
           </p>
         </div>
       </div>

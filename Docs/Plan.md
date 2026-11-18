@@ -42,7 +42,7 @@ Real-time events only mean "something changed, fetch it again". For example, `tr
 | Role | How the account is created | Opens | Can't open |
 | --- | --- | --- | --- |
 | Passenger (`user`) | Signs up at `/register` | `/user` | `/rider`, `/admin`, `/support` |
-| Rider (`rider`) | Signs up at `/register`, adds a vehicle, and can go online straight away | `/rider` | `/user`, `/admin`, `/support` |
+| Rider (`rider`) | Signs up at `/register`, then needs admin verification before going online | `/rider` | `/user`, `/admin`, `/support` |
 | Admin (`admin`) | No sign-up. The first admin comes from `ADMIN_EMAIL` and `ADMIN_PASSWORD` in `.env` on a database with no admin yet | `/admin` | `/user`, `/rider`, `/support` |
 | Support agent (`support`) | Signs up at `/register` and has access straight away | `/support` | `/user`, `/rider`, `/admin` |
 
@@ -60,7 +60,7 @@ Support agents help people with problems, so they can see other people's trips. 
 
 ## How a rider gets ready to take trips
 
-Riders need no admin verification or documents in the MVP: a new rider is verified automatically and can go online once they have a vehicle. Riders can still upload documents, and admins can still review them or suspend riders. Changing to a new vehicle still needs an admin to approve the request.
+A passenger can only be matched with a rider after an admin has verified that rider. Documents are optional in the MVP: riders can upload them, and admins can review them, but nothing is blocked on them.
 
 ```mermaid
 sequenceDiagram
@@ -74,6 +74,8 @@ sequenceDiagram
     API-->>Admin: riders.changed
     Admin->>API: Approve or reject each document
   end
+  Admin->>API: Verify rider (no documents needed)
+  API-->>Rider: profile.updated, "You're verified"
   Rider->>API: Go online and share location
 ```
 
@@ -170,7 +172,7 @@ A trip can't be cancelled once it's `ongoing`. A rider can't go offline during a
 | Rider goes off route or stops too long during a trip | Admin gets a safety alert | `alert.new` |
 | Rider records cash | Passenger is told; admin's payments update | `trip.updated`, `payments.changed` |
 | Rider uploads a document | Admin's review queue updates | `riders.changed` |
-| Admin reviews documents or suspends a rider | Rider is told | `profile.updated` |
+| Admin reviews documents, verifies or suspends a rider | Rider is told | `profile.updated` |
 | Admin changes pricing rules | New fares and commission apply to new bookings | None; it shows on the next quote |
 | Admin records a settlement | Rider's commission owed goes down | `earnings.updated` |
 | Support agent signs up | Admin's Support tab updates and shows a notice | `support.changed` |
@@ -277,17 +279,18 @@ npm run dev
 **Which mode to use**
 
 - **`DEMO_MODE=true`** is the quickest. It adds demo accounts with one-click buttons on the login page, simulated riders, 14 days of fake trips and the trip simulator. It writes this data to your local database, so use a separate database if you want to keep yours clean.
-- **`DEMO_MODE=false`** starts with no riders, so booking fails with "No riders available" until a rider has signed up, added a vehicle and gone online.
+- **`DEMO_MODE=false`** starts with no riders, so booking fails with "No riders available" until a real rider is verified and online.
 
 **Testing a full ride by yourself**
 
 The login is stored per browser, so two tabs in the same browser share one account. Use a different browser or profile for each role, such as a normal window, an incognito window and a second browser.
 
 1. **Rider:** sign up and add vehicle details. Documents are optional.
-2. **Rider:** go online. If your browser can't get GPS, turn on manual position and set it on the map.
-3. **Passenger:** book the same vehicle type, with a pickup within 8 km of the rider.
-4. **Rider:** accept, start and complete the trip, then record the cash.
-5. **Admin:** watch the live map, alerts and payments as it happens.
+2. **Admin:** verify the rider.
+3. **Rider:** go online. If your browser can't get GPS, turn on manual position and set it on the map.
+4. **Passenger:** book the same vehicle type, with a pickup within 8 km of the rider.
+5. **Rider:** accept, start and complete the trip, then record the cash.
+6. **Admin:** watch the live map, alerts and payments as it happens.
 
 To test support, sign up on the **Support staff** tab. Demo mode also has an agent on the login page.
 

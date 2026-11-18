@@ -103,8 +103,8 @@ def update_contact(body: RiderContactIn, db: DB, rider: CurrentRider):
 
 @router.post("/onboarding/vehicle", response_model=RiderMe)
 def save_onboarding_vehicle(body: RiderOnboardingVehicleIn, db: DB, rider: CurrentRider):
-    if rider.vehicle is not None and rider.status == "verified":
-        raise HTTPException(status.HTTP_409_CONFLICT, "Riders who already have a vehicle must submit a vehicle change request")
+    if rider.status == "verified":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Verified riders must submit a vehicle change request")
     plate = normalize_plate(body.plate_no, body.vehicle_type)
     taken = db.scalar(
         select(Vehicle.id).where(Vehicle.plate_no == plate, Vehicle.retired_at.is_(None), Vehicle.rider_id != rider.id)
@@ -121,7 +121,6 @@ def save_onboarding_vehicle(body: RiderOnboardingVehicleIn, db: DB, rider: Curre
             model=body.model.strip(),
             color=body.color.strip(),
             registration_no=body.registration_no.strip().upper(),
-            verified=rider.status == "verified",
         )
         db.add(v)
     else:

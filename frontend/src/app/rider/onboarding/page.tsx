@@ -34,14 +34,13 @@ function OnboardingContent() {
   const { data: me, mutate } = useSWR<RiderMe>("/api/rider/me", fetcher, { refreshInterval: interval });
   const [step, setStep] = useState<Step | null>(null);
 
-  // Riders need no admin verification, so once there's a vehicle the rider app is ready.
-  const ready = !!me && me.status !== "suspended" && !!me.vehicle && !!me.license_no;
-
   useEffect(() => {
-    if (ready) router.replace("/rider");
-  }, [ready, router]);
+    if (me?.status === "verified") {
+      router.replace("/rider");
+    }
+  }, [me?.status, router]);
 
-  if (!me || ready) {
+  if (!me || me.status === "verified") {
     return (
       <div className="flex flex-1 items-center justify-center">
         <Loader2 className="size-6 animate-spin text-muted-foreground" />
@@ -50,7 +49,7 @@ function OnboardingContent() {
   }
 
   const hasVehicle = !!me.vehicle && !!me.license_no;
-  const activeStep: Step = step ?? (hasVehicle ? "status" : "vehicle");
+  const activeStep: Step = step ?? (hasVehicle ? "documents" : "vehicle");
 
   return (
     <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-6">
