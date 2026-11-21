@@ -165,7 +165,7 @@ def request_vehicle_change(body: VehicleChangeIn, db: DB, rider: CurrentRider):
 
 
 @router.post("/rider/vehicle-change/documents")
-async def upload_vehicle_change_document(
+def upload_vehicle_change_document(
     db: DB,
     rider: CurrentRider,
     doc_type: Annotated[Literal["registration", "vehicle_photo"], Form()],
@@ -176,7 +176,12 @@ async def upload_vehicle_change_document(
         raise HTTPException(status.HTTP_409_CONFLICT, "Start a vehicle change first")
 
     limit = int(settings.max_upload_mb * 1024 * 1024)
-    data = await file.read(limit + 1)
+    data = file.file.read(limit + 1)
+    if len(data) > limit:
+        raise HTTPException(
+            status.HTTP_413_CONTENT_TOO_LARGE,
+            f"Files must be under {settings.max_upload_mb:g} MB",
+        )
     stored = docs.store_bytes(data, file.content_type or "")
 
     old = _change_docs(db, change).get(doc_type)
