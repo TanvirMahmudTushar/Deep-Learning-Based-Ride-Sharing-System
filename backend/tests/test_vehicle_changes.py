@@ -235,3 +235,86 @@ def test_vehicle_change_websocket_live_push(client, admin_h):
         admin_update = admin_ws.receive_json()
         assert admin_update["type"] == "riders.changed"
 
+
+def test_vehicle_change_document_upload_limits_and_validation(client, monkeypatch):
+    from app.config import settings
+
+    rider_reg = client.post(
+        "/api/auth/register",
+        json={
+            "full_name": "Doc Limit Rider",
+            "email": "doclimit@example.com",
+            "phone": "+8801777777777",
+            "password": "password123",
+            "role": "rider",
+            "license_no": "DK-VC-3",
+            "vehicle_type": "bike",
+            "plate_no": "DHAKA METRO-HA 77-8899",
+            "vehicle_model": "Bajaj Pulsar",
+        },
+    ).json()
+    rider_h = {"Authorization": f"Bearer {rider_reg['token']}"}
+
+    submit_resp = client.post(
+        "/api/rider/vehicle-change",
+        headers=rider_h,
+        json={
+            "vehicle_type": "bike",
+            "plate_no": "DHAKA METRO-HA 99-0011",
+            "model": "TVS Apache",
+        },
+    )
+    assert submit_resp.status_code == 201, submit_resp.text
+
+    # Oversized upload returns 413 without persisting
+    monkeypatch.setattr(settings, "max_upload_mb", 0.001)  # ~1048 bytes
+    oversized = b"\x89PNG\r\n\x1a\n" + b"0" * 2048
+    over_resp = client.post(
+        "/api/rider/vehicle-change/documents",
+        headers=rider_h,
+        data={"doc_type": "registration"},
+        files={"file": ("big.png", oversized, "image/png")},
+    )
+    assert over_resp.status_code == 413, over_resp.text
+    assert "under" in over_resp.json()["detail"].lower()
+
+    # Restore limit for content-type & magic-byte validation
+    monkeypatch.setattr(settings, "max_upload_mb", 5.0)
+
+    bad_type = client.post(
+        "/api/rider/vehicle-change/documents",
+        headers=rider_h,
+        data={"doc_type": "registration"},
+        files={"file": ("notes.txt", b"hello", "text/plain")},
+    )
+    assert bad_type.status_code == 422, bad_type.text
+
+    bad_magic = client.post(
+        "/api/rider/vehicle-change/documents",
+        headers=rider_h,
+        data={"doc_type": "registration"},
+        files={"file": ("fake.png", b"not-a-png", "image/png")},
+    )
+    assert bad_magic.status_code == 422, bad_magic.text
+
+    # Valid upload succeeds and persists file
+    png = placeholder_png("registration")
+    ok_resp = client.post(
+        "/api/rider/vehicle-change/documents",
+        headers=rider_h,
+        data={"doc_type": "registration"},
+        files={"file": ("registration.png", png, "image/png")},
+    )
+    assert ok_resp.status_code == 200, ok_resp.text
+    reg_entry = next(d for d in ok_resp.json()["documents"] if d["doc_type"] == "registration")
+    reg_doc = reg_entry["document"]
+    assert reg_doc is not None
+    assert reg_doc["original_name"] == "registration.png"
+    assert reg_doc["content_type"] == "image/png"
+    assert reg_doc["size_bytes"] == len(png)
+
+    file_resp = client.get(f"/api/documents/{reg_doc['id']}/file", headers=rider_h)
+    assert file_resp.status_code == 200
+    assert file_resp.content == png
+
+
