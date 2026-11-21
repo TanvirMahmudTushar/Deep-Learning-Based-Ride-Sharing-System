@@ -29,6 +29,7 @@ class Profile(Base):
     account_status: Mapped[str | None] = mapped_column(String(10), default="active")
     # Support agents only: pending until an admin approves, revoked if access is removed.
     approval_status: Mapped[str | None] = mapped_column(String(10))  # pending, approved, revoked
+    phone_verified: Mapped[bool | None] = mapped_column(Boolean, default=False)
     avatar_doc_id: Mapped[str | None] = mapped_column(String(36))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 

@@ -2,9 +2,10 @@ from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
 
 from app.brta import normalize_plate
+from app.config import settings
 from app.models import Profile, Rider, Vehicle
 from app.realtime import ADMINS, emit
-from app.schemas import AuthOut, LoginIn, PasswordChangeIn, ProfileOut, ProfileUpdateIn, RegisterIn
+from app.schemas import AuthOut, LoginIn, OtpRequestIn, OtpRequestOut, OtpVerifyIn, PasswordChangeIn, ProfileOut, ProfileUpdateIn, RegisterIn
 from app.security import DB, CurrentUser, account_is_suspended, create_token, hash_password, verify_password
 from app.services import login_throttle
 
@@ -19,8 +20,25 @@ def profile_out(p: Profile) -> ProfileOut:
         phone=p.phone,
         role=p.role,
         approval_status=p.approval_status,
+        phone_verified=bool(p.phone_verified),
         avatar_url=f"/api/documents/{p.avatar_doc_id}/file" if p.avatar_doc_id else None,
     )
+
+
+@router.post("/otp/request", response_model=OtpRequestOut)
+def request_otp(body: OtpRequestIn, db: DB):
+    email = body.email.strip().lower()
+    if db.scalar(select(Profile.id).where(Profile.email == email)):
+        raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email already exists")
+    # Testing-mode OTP: always accepts settings.default_test_otp ("000000").
+    return OtpRequestOut(ok=True, message=f"Verification code sent to {body.phone.strip()}")
+
+
+@router.post("/otp/verify", response_model=OtpRequestOut)
+def verify_otp(body: OtpVerifyIn):
+    if body.otp.strip() != settings.default_test_otp:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid verification code. Please check and try again.")
+    return OtpRequestOut(ok=True, message="Phone number verified")
 
 
 @router.post("/register", response_model=AuthOut, status_code=status.HTTP_201_CREATED)
@@ -28,6 +46,8 @@ def register(body: RegisterIn, db: DB):
     email = body.email.strip().lower()
     if db.scalar(select(Profile.id).where(Profile.email == email)):
         raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email already exists")
+    if body.otp is not None and body.otp.strip() != settings.default_test_otp:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid verification code")
 
     vehicle_fields = (body.license_no, body.vehicle_type, body.plate_no, body.vehicle_model)
     has_any_vehicle = any(vehicle_fields)
@@ -42,14 +62,14 @@ def register(body: RegisterIn, db: DB):
         role=body.role,
         # Support agents get access straight away; an admin can still remove it later.
         approval_status="approved" if body.role == "support" else None,
+        phone_verified=body.otp is not None,
     )
     db.add(profile)
     db.flush()
     if body.role == "support":
         emit(db, ADMINS, "support.changed", notify=("New support agent", f"{profile.full_name} signed up as a support agent."))
     if body.role == "rider":
-        # No admin verification: riders can go online as soon as they have a vehicle.
-        rider = Rider(profile_id=profile.id, license_no=(body.license_no or "").strip(), status="verified")
+        rider = Rider(profile_id=profile.id, license_no=(body.license_no or "").strip(), status="pending")
         db.add(rider)
         db.flush()
         if all(vehicle_fields):
@@ -59,7 +79,6 @@ def register(body: RegisterIn, db: DB):
                     vehicle_type=body.vehicle_type,
                     plate_no=normalize_plate(body.plate_no, body.vehicle_type),
                     model=body.vehicle_model.strip(),
-                    verified=True,
                 )
             )
     db.commit()

@@ -65,10 +65,26 @@ class RegisterIn(BaseModel):
     phone: PhoneNumber
     password: NewPassword
     role: Literal["user", "rider", "support"] = "user"
+    otp: str | None = Field(default=None, min_length=4, max_length=10)
     license_no: str | None = Field(default=None, max_length=40)
     vehicle_type: VehicleType | None = None
     plate_no: str | None = Field(default=None, max_length=32)
     vehicle_model: str | None = Field(default=None, max_length=60)
+
+
+class OtpRequestIn(BaseModel):
+    email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=160)
+    phone: str = Field(min_length=6, max_length=32)
+
+
+class OtpRequestOut(BaseModel):
+    ok: bool
+    message: str
+
+
+class OtpVerifyIn(BaseModel):
+    phone: str = Field(min_length=6, max_length=32)
+    otp: str = Field(min_length=4, max_length=10)
 
 
 class LoginIn(BaseModel):
@@ -83,6 +99,7 @@ class ProfileOut(BaseModel):
     phone: str
     role: str
     approval_status: str | None = None
+    phone_verified: bool = False
     avatar_url: str | None = None
 
 
