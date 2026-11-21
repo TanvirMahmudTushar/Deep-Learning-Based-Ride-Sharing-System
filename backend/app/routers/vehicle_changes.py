@@ -152,12 +152,13 @@ def request_vehicle_change(body: VehicleChangeIn, db: DB, rider: CurrentRider):
     db.add(change)
     # Documents are optional, so the admin can review the request as soon as it exists.
     emit(
+        db,
         ADMINS,
         "riders.changed",
-        notify={
-            "title": "Vehicle change to review",
-            "body": f"{rider.profile.full_name} submitted a new vehicle.",
-        },
+        notify=(
+            "Vehicle change to review",
+            f"{rider.profile.full_name} submitted a new vehicle.",
+        ),
     )
     db.commit()
     return change_out(db, change)
@@ -175,8 +176,8 @@ async def upload_vehicle_change_document(
         raise HTTPException(status.HTTP_409_CONFLICT, "Start a vehicle change first")
 
     limit = int(settings.max_upload_mb * 1024 * 1024)
-    data = await file.read()
-    stored = docs.store_bytes(data, doc_type, file.content_type, limit=limit)
+    data = await file.read(limit + 1)
+    stored = docs.store_bytes(data, file.content_type or "")
 
     old = _change_docs(db, change).get(doc_type)
     if old:
@@ -187,9 +188,9 @@ async def upload_vehicle_change_document(
         rider_id=rider.id,
         vehicle_change_id=change.id,
         doc_type=doc_type,
-        stored_name=stored.name,
+        stored_name=stored,
         original_name=(file.filename or "")[:200],
-        content_type=stored.content_type,
+        content_type=file.content_type,
         size_bytes=len(data),
     )
     db.add(doc)
@@ -198,15 +199,16 @@ async def upload_vehicle_change_document(
     out = change_out(db, change)
     if out["documents_complete"]:
         emit(
+            db,
             ADMINS,
             "riders.changed",
-            notify={
-                "title": "Vehicle change to review",
-                "body": f"{rider.profile.full_name} submitted a new vehicle.",
-            },
+            notify=(
+                "Vehicle change to review",
+                f"{rider.profile.full_name} submitted a new vehicle.",
+            ),
         )
     else:
-        emit(ADMINS, "riders.changed")
+        emit(db, ADMINS, "riders.changed")
     db.commit()
     return out
 
@@ -217,7 +219,7 @@ def cancel_vehicle_change(db: DB, rider: CurrentRider):
     if not change:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No vehicle change in progress")
     _cancel(db, change)
-    emit(ADMINS, "riders.changed")
+    emit(db, ADMINS, "riders.changed")
     db.commit()
 
 
@@ -256,10 +258,10 @@ def review_vehicle_change(
         change.review_note = note
         change.reviewed_by = admin.id
         change.reviewed_at = now
-        notify = {
-            "title": "Vehicle change rejected",
-            "body": note,
-        }
+        notify = (
+            "Vehicle change rejected",
+            note,
+        )
     else:
         taken = db.scalar(
             select(Vehicle.id).where(
@@ -300,13 +302,13 @@ def review_vehicle_change(
         change.review_note = note or None
         change.reviewed_by = admin.id
         change.reviewed_at = now
-        notify = {
-            "title": "New vehicle approved",
-            "body": f"You're now driving {change.model} · {change.plate_no}.",
-        }
+        notify = (
+            "New vehicle approved",
+            f"You're now driving {change.model} · {change.plate_no}.",
+        )
 
-    emit(rider.profile_id, "profile.updated", notify=notify)
-    emit(ADMINS, "riders.changed")
+    emit(db, rider.profile_id, "profile.updated", notify=notify)
+    emit(db, ADMINS, "riders.changed")
     db.commit()
     db.refresh(change)
     return change_out(db, change)
