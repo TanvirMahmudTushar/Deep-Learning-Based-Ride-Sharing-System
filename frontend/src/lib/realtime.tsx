@@ -27,7 +27,7 @@ const EVENT_KEYS: Record<string, string[]> = {
   "live.changed": ["/api/admin/trips/live", "/api/admin/stats", "/api/admin/forecasts"],
   "alert.new": ["/api/admin/alerts", "/api/admin/stats"],
   "riders.changed": ["/api/admin/riders", "/api/admin/accounts", "/api/admin/stats"],
-  "profile.updated": ["/api/rider/me", "/api/rider/documents"],
+  "profile.updated": ["/api/rider/me", "/api/rider/documents", "/api/rider/vehicle-change"],
   "earnings.updated": ["/api/rider/earnings", "/api/rider/me"],
   "payments.changed": ["/api/admin/payments", "/api/admin/stats"],
   "support.changed": ["/api/admin/support-agents", "/api/admin/stats"],
