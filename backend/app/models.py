@@ -457,6 +457,8 @@ class VehicleChange(Base):
     vehicle_type: Mapped[str] = mapped_column(String(8))
     plate_no: Mapped[str] = mapped_column(String(32))
     model: Mapped[str] = mapped_column(String(60))
+    color: Mapped[str | None] = mapped_column(String(32))
+    registration_no: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(10), default="pending")  # pending, approved, rejected, cancelled
     review_note: Mapped[str | None] = mapped_column(String(300))
     reviewed_by: Mapped[str | None] = mapped_column(ForeignKey("profiles.id"))

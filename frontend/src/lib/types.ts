@@ -742,6 +742,8 @@ export interface VehicleChange {
   vehicle_type: VehicleType;
   plate_no: string;
   model: string;
+  color: string | null;
+  registration_no: string | null;
   status: "pending" | "approved" | "rejected";
   review_note: string | null;
   created_at: string | null;

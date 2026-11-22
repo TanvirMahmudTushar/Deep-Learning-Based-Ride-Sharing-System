@@ -7,7 +7,6 @@ retired (its row stays, since past trips reference it) and the new one becomes a
 
 from typing import Annotated, Literal
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
-from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.brta import normalize_plate
@@ -16,22 +15,12 @@ from app.db import utcnow
 from app.models import VEHICLE_CHANGE_DOC_TYPES, Rider, RiderDocument, Vehicle, VehicleChange
 from app.realtime import ADMINS, emit
 from app.routers.documents import doc_out
-from app.schemas import VehicleType, iso_utc
-from app.security import DB, Admin, CurrentRider
+from app.schemas import VehicleChangeIn, VehicleChangeReviewIn, iso_utc
+from app.security import DB, Admin, CurrentRider, account_is_suspended
 from app.services import documents as docs
+from app.services import trips as trip_service
 
 router = APIRouter(prefix="/api", tags=["vehicle-changes"])
-
-
-class VehicleChangeIn(BaseModel):
-    vehicle_type: VehicleType
-    plate_no: str = Field(min_length=2, max_length=32)
-    model: str = Field(min_length=2, max_length=60)
-
-
-class VehicleChangeReviewIn(BaseModel):
-    status: Literal["approved", "rejected"]
-    note: str = Field(default="", max_length=300)
 
 
 def _change_docs(db: DB, change: VehicleChange) -> dict[str, RiderDocument]:
@@ -71,6 +60,8 @@ def change_out(db: DB, change: VehicleChange) -> dict:
         "vehicle_type": change.vehicle_type,
         "plate_no": change.plate_no,
         "model": change.model,
+        "color": change.color,
+        "registration_no": change.registration_no,
         "status": change.status,
         "review_note": change.review_note,
         "created_at": iso_utc(change.created_at),
@@ -95,11 +86,25 @@ def _pending_change(db: DB, rider_id: str) -> VehicleChange | None:
     )
 
 
-def _cancel(db: DB, change: VehicleChange) -> None:
-    for d in _change_docs(db, change).values():
-        docs.delete_file(d)
+def _cancel(db: DB, change: VehicleChange) -> list[RiderDocument]:
+    superseded = list(_change_docs(db, change).values())
+    for d in superseded:
         db.delete(d)
     change.status = "cancelled"
+    return superseded
+
+
+def _require_verified_rider(rider: Rider) -> None:
+    if rider.status == "suspended" or account_is_suspended(rider.profile):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Your account is suspended. Contact support.",
+        )
+    if rider.status != "verified":
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Only verified riders can submit a vehicle change request",
+        )
 
 
 def pending_change_rider_ids(db: DB) -> set[str]:
@@ -119,6 +124,7 @@ def my_vehicle_change(db: DB, rider: CurrentRider):
 
 @router.post("/rider/vehicle-change", status_code=status.HTTP_201_CREATED)
 def request_vehicle_change(body: VehicleChangeIn, db: DB, rider: CurrentRider):
+    _require_verified_rider(rider)
     plate = normalize_plate(body.plate_no, body.vehicle_type)
     if rider.vehicle and rider.vehicle.plate_no.strip().upper() == plate:
         raise HTTPException(
@@ -139,14 +145,22 @@ def request_vehicle_change(body: VehicleChangeIn, db: DB, rider: CurrentRider):
         )
 
     old = _pending_change(db, rider.id)
-    if old:
-        _cancel(db, old)
+    superseded_docs = _cancel(db, old) if old else []
+
+    color = body.color.strip() if body.color and body.color.strip() else None
+    registration_no = (
+        body.registration_no.strip().upper()
+        if body.registration_no and body.registration_no.strip()
+        else None
+    )
 
     change = VehicleChange(
         rider_id=rider.id,
         vehicle_type=body.vehicle_type,
         plate_no=plate,
         model=body.model.strip(),
+        color=color,
+        registration_no=registration_no,
         status="pending",
     )
     db.add(change)
@@ -161,6 +175,8 @@ def request_vehicle_change(body: VehicleChangeIn, db: DB, rider: CurrentRider):
         ),
     )
     db.commit()
+    for d in superseded_docs:
+        docs.delete_file(d)
     return change_out(db, change)
 
 
@@ -171,6 +187,7 @@ def upload_vehicle_change_document(
     doc_type: Annotated[Literal["registration", "vehicle_photo"], Form()],
     file: UploadFile = File(...),
 ):
+    _require_verified_rider(rider)
     change = _pending_change(db, rider.id)
     if not change:
         raise HTTPException(status.HTTP_409_CONFLICT, "Start a vehicle change first")
@@ -186,7 +203,6 @@ def upload_vehicle_change_document(
 
     old = _change_docs(db, change).get(doc_type)
     if old:
-        docs.delete_file(old)
         db.delete(old)
 
     doc = RiderDocument(
@@ -214,7 +230,14 @@ def upload_vehicle_change_document(
         )
     else:
         emit(db, ADMINS, "riders.changed")
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        (docs.upload_root() / stored).unlink(missing_ok=True)
+        raise
+    if old:
+        docs.delete_file(old)
     return out
 
 
@@ -223,9 +246,11 @@ def cancel_vehicle_change(db: DB, rider: CurrentRider):
     change = _pending_change(db, rider.id)
     if not change:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No vehicle change in progress")
-    _cancel(db, change)
+    superseded_docs = _cancel(db, change)
     emit(db, ADMINS, "riders.changed")
     db.commit()
+    for d in superseded_docs:
+        docs.delete_file(d)
 
 
 @router.get("/admin/riders/{rider_id}/vehicle-change")
@@ -268,6 +293,11 @@ def review_vehicle_change(
             note,
         )
     else:
+        if trip_service.active_trip_for_rider(db, rider.id):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Cannot approve vehicle change while the rider has an active trip",
+            )
         taken = db.scalar(
             select(Vehicle.id).where(
                 Vehicle.plate_no == change.plate_no,
@@ -296,6 +326,8 @@ def review_vehicle_change(
             vehicle_type=change.vehicle_type,
             plate_no=change.plate_no,
             model=change.model,
+            color=change.color,
+            registration_no=change.registration_no,
             verified=True,
         )
         db.add(new_v)

@@ -108,6 +108,8 @@ export function ChangeVehicleScreen({
   const [vehicleType, setVehicleType] = useState<VehicleType>(me.vehicle?.vehicle_type ?? "bike");
   const [plateNo, setPlateNo] = useState("");
   const [model, setModel] = useState("");
+  const [color, setColor] = useState("");
+  const [registrationNo, setRegistrationNo] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
 
@@ -131,6 +133,8 @@ export function ChangeVehicleScreen({
           vehicle_type: vehicleType,
           plate_no: plateNo.trim().toUpperCase(),
           model: model.trim(),
+          color: color.trim(),
+          registration_no: registrationNo.trim().toUpperCase(),
         },
       });
       toast.success("Vehicle change request sent to the admin.");
@@ -205,8 +209,18 @@ export function ChangeVehicleScreen({
                   />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-semibold">{me.vehicle.model}</div>
-                  <div className="truncate text-xs text-muted-foreground">Plate: {me.vehicle.plate_no}</div>
+                  <div className="text-sm font-semibold break-words">
+                    {me.vehicle.model}
+                    {me.vehicle.color ? ` · ${me.vehicle.color}` : ""}
+                  </div>
+                  <div className="text-xs text-muted-foreground break-words">
+                    Plate: {me.vehicle.plate_no}
+                  </div>
+                  {me.vehicle.registration_no && (
+                    <div className="text-xs text-muted-foreground break-words">
+                      Reg: {me.vehicle.registration_no}
+                    </div>
+                  )}
                 </div>
                 <VehicleTag type={me.vehicle.vehicle_type} />
               </div>
@@ -240,8 +254,18 @@ export function ChangeVehicleScreen({
                   />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">{change.model}</div>
-                  <div className="truncate text-xs text-muted-foreground">Plate: {change.plate_no}</div>
+                  <div className="text-sm font-medium break-words">
+                    {change.model}
+                    {change.color ? ` · ${change.color}` : ""}
+                  </div>
+                  <div className="text-xs text-muted-foreground break-words">
+                    Plate: {change.plate_no}
+                  </div>
+                  {change.registration_no && (
+                    <div className="text-xs text-muted-foreground break-words">
+                      Reg: {change.registration_no}
+                    </div>
+                  )}
                 </div>
                 <VehicleTag type={change.vehicle_type} />
               </div>
@@ -345,15 +369,31 @@ export function ChangeVehicleScreen({
                 </Select>
               </div>
 
-              <div className="space-y-1.5">
-                <Label htmlFor="new-vehicle-model">Vehicle Model / Make</Label>
-                <Input
-                  id="new-vehicle-model"
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  placeholder="e.g. Yamaha FZ-S / Bajaj RE / Toyota Axio"
-                  required
-                />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="new-vehicle-model">Vehicle Model / Make</Label>
+                  <Input
+                    id="new-vehicle-model"
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    placeholder="e.g. Yamaha FZ-S"
+                    minLength={2}
+                    maxLength={60}
+                    required
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="new-vehicle-color">Vehicle Color</Label>
+                  <Input
+                    id="new-vehicle-color"
+                    value={color}
+                    onChange={(e) => setColor(e.target.value)}
+                    placeholder="e.g. Matte Black"
+                    minLength={2}
+                    maxLength={32}
+                    required
+                  />
+                </div>
               </div>
 
               <div className="space-y-1.5">
@@ -366,6 +406,19 @@ export function ChangeVehicleScreen({
                 <p className="text-xs text-muted-foreground">
                   Must be unique and match official registration papers.
                 </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="new-vehicle-registration-no">Registration Number</Label>
+                <Input
+                  id="new-vehicle-registration-no"
+                  value={registrationNo}
+                  onChange={(e) => setRegistrationNo(e.target.value)}
+                  placeholder="e.g. REG-2026-8899"
+                  minLength={3}
+                  maxLength={64}
+                  required
+                />
               </div>
 
               <Button type="submit" disabled={submitting} className="w-full">
