@@ -98,7 +98,8 @@ function RiderPortal() {
 
   // ---- device GPS -------------------------------------------------------------------------
   const verified = me?.status === "verified";
-  const needsOnboarding = !!me && !verified && (!me.vehicle || !me.license_no);
+  const incomplete = !!me && (!me.vehicle || !me.license_no?.trim());
+  const needsOnboarding = !!me && !verified && incomplete;
   const lockedOut = !!me && !verified;
 
   useEffect(() => {
@@ -185,7 +186,7 @@ function RiderPortal() {
     const ro = new ResizeObserver(measure);
     ro.observe(body);
     return () => ro.disconnect();
-  }, [clampToIdlePrompt, me?.is_online, geo.status, manual]);
+  }, [clampToIdlePrompt, incomplete, me?.is_online, geo.status, manual]);
 
   const refreshAll = () => {
     void refreshMe();
@@ -194,17 +195,22 @@ function RiderPortal() {
     void refreshCollect();
   };
 
-  const canGoOnline = !!me && me.status === "verified";
+  const canGoOnline = !!me && verified && !incomplete;
 
-  /** Going online needs a verified account; otherwise explain why. Documents are optional. */
+  /** Going online needs a verified account with vehicle and licence details; otherwise explain why. */
   function requestOnline(online: boolean) {
     if (online && me && !canGoOnline) {
       if (me.status === "suspended") {
         setBlocked({ title: "Account suspended", message: "Your account is suspended, so you can't go online. Contact support to restore access." });
-      } else {
+      } else if (!verified) {
         setBlocked({
           title: "Waiting for verification",
           message: "An admin still needs to verify your account before you can go online. You'll get a notice as soon as it's done.",
+        });
+      } else {
+        setBlocked({
+          title: "Finish vehicle & licence setup",
+          message: "Add your vehicle and driving licence details before going online.",
         });
       }
       return;
@@ -331,7 +337,15 @@ function RiderPortal() {
               online={me.is_online}
               busy={toggling}
               disabled={!!active}
-              hint={active ? "Finish your current trip to go offline" : !canGoOnline ? "Verification required to go online" : undefined}
+              hint={
+                active
+                  ? "Finish your current trip to go offline"
+                  : incomplete
+                    ? "Finish vehicle & licence setup to go online"
+                    : !canGoOnline
+                      ? "Verification required to go online"
+                      : undefined
+              }
               onChange={requestOnline}
             />
           </div>
@@ -389,6 +403,23 @@ function RiderPortal() {
                     <AlertDescription>Contact support to restore access.</AlertDescription>
                   </Alert>
                 )}
+                {incomplete && (
+                  <Alert className="border-amber-500/40 bg-amber-500/10">
+                    <FileWarning className="text-amber-400" />
+                    <AlertTitle>Finish vehicle &amp; licence setup</AlertTitle>
+                    <AlertDescription className="space-y-3">
+                      <p>Add your vehicle and driving licence details before you can get verified or go online.</p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="h-10 w-full sm:w-auto"
+                        onClick={() => (verified ? openProfile("vehicle") : router.push("/rider/onboarding"))}
+                      >
+                        <FileCheck2 /> {verified ? "Add Vehicle & Licence" : "Finish Setup"}
+                      </Button>
+                    </AlertDescription>
+                  </Alert>
+                )}
                 {verified && <GpsStatus status={geo.status} fix={geo.fix} manual={manual} onManual={setManual} />}
 
                 {/* Instantaneous data modules for rider home screen */}
@@ -421,7 +452,7 @@ function RiderPortal() {
                     <Loader2 className="size-4 animate-spin" /> Waiting for trip requests near you…
                   </div>
                 )}
-                {!me.is_online && verified && !active && (
+                {!me.is_online && verified && !incomplete && !active && (
                   <p className="text-sm text-muted-foreground">
                     Go online to receive requests for <VehicleTag type={me.vehicle?.vehicle_type ?? "bike"} className="inline-flex" /> rides.
                   </p>
@@ -473,12 +504,18 @@ function RiderPortal() {
                 </motion.span>
                 <div className="min-w-0 space-y-1">
                   <h2 className="text-lg font-bold">
-                    {me.status === "suspended" ? "Account suspended" : "You haven't been verified yet"}
+                    {me.status === "suspended"
+                      ? "Account suspended"
+                      : incomplete
+                        ? "Finish vehicle & licence setup"
+                        : "You haven't been verified yet"}
                   </h2>
                   <p className="text-sm text-muted-foreground">
                     {me.status === "suspended"
                       ? "Your rider account is currently suspended. Contact support to restore access."
-                      : "Add your vehicle details. The rider app unlocks once an admin verifies you. Documents are optional."}
+                      : incomplete
+                        ? "Add your vehicle and driving licence details so an admin can verify your account and you can go online."
+                        : "Add your vehicle details. The rider app unlocks once an admin verifies you. Documents are optional."}
                   </p>
                 </div>
               </div>
@@ -523,8 +560,23 @@ function RiderPortal() {
             <DialogTitle className="text-lg">{blocked?.title}</DialogTitle>
             <DialogDescription>{blocked?.message}</DialogDescription>
           </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setBlocked(null)}>
+          <DialogFooter className="flex-col gap-2 sm:flex-row">
+            {incomplete && (
+              <Button
+                className="w-full sm:w-auto"
+                onClick={() => {
+                  setBlocked(null);
+                  if (verified) {
+                    openProfile("vehicle");
+                  } else {
+                    router.push("/rider/onboarding");
+                  }
+                }}
+              >
+                <FileCheck2 /> {verified ? "Add Vehicle & Licence" : "Finish Setup"}
+              </Button>
+            )}
+            <Button variant="outline" className="w-full sm:w-auto" onClick={() => setBlocked(null)}>
               Close
             </Button>
           </DialogFooter>
