@@ -10,7 +10,7 @@ The stored score is left as computed, so model evaluation is not affected.
 """
 
 from sqlalchemy import case, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.config import settings
 from app.db import utcnow
@@ -82,12 +82,31 @@ def offer_next(db: Session, trip: Trip) -> bool:
     """Offer the trip to the best remaining candidate. Returns False when nobody is left."""
     # A rider blocked after the ranking was made (from another trip) is skipped too.
     busy = (availability.busy_rider_ids(db) - {trip.offered_rider_id}) | rider_prefs.blocked_ids(db, trip.user_id)
+    pickup = (trip.pickup_lat, trip.pickup_lng)
+    now = utcnow()
     for attempt in range(2):
         candidates = db.scalars(
             select(MatchScore).where(MatchScore.trip_id == trip.id, MatchScore.status == "candidate").order_by(MatchScore.rank)
         ).all()
+        candidate_ids = [ms.rider_id for ms in candidates if ms.rider_id not in busy]
+        riders_by_id = (
+            {
+                r.id: r
+                for r in db.scalars(
+                    select(Rider)
+                    .where(Rider.id.in_(candidate_ids))
+                    .options(selectinload(Rider.vehicles), selectinload(Rider.profile))
+                    .execution_options(populate_existing=True)
+                ).unique()
+            }
+            if candidate_ids
+            else {}
+        )
         for ms in candidates:
-            if ms.rider_id in busy:
+            rider = riders_by_id.get(ms.rider_id)
+            if ms.rider_id in busy or not availability.is_rider_eligible(
+                rider, pickup, trip.vehicle_type_requested, settings.match_radius_km, now=now
+            ):
                 ms.status = "expired"
                 continue
             ms.status = "offered"
@@ -95,7 +114,6 @@ def offer_next(db: Session, trip: Trip) -> bool:
             trip.offered_at = utcnow()
             trip.pickup_eta_min = ms.pickup_eta_min
             db.flush()
-            rider = db.get(Rider, ms.rider_id)
             emit(
                 db,
                 rider.profile_id,
