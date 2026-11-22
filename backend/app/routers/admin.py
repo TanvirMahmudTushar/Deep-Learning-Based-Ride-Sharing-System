@@ -558,6 +558,11 @@ def verify_rider(rider_id: str, db: DB, admin: Admin):
     rider = _rider_or_404(db, rider_id)
     if account_is_suspended(rider.profile):
         raise HTTPException(status.HTTP_409_CONFLICT, "Reactivate this account before verifying the rider")
+    if rider.vehicle is None or not (rider.license_no or "").strip():
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Rider must complete vehicle and driving licence details before verification",
+        )
     ready, missing = documents.verification_ready(db, rider)
     if not ready:
         raise HTTPException(status.HTTP_409_CONFLICT, "Approve these documents first: " + ", ".join(missing))

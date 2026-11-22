@@ -177,7 +177,17 @@ def test_document_upload_review_and_access(client, admin_h, rider_h):
 
 
 def test_riders_need_no_documents_to_be_verified_or_go_online(client, admin_h):
-    body = {"full_name": "No Docs", "email": "nodocs.rider@example.com", "phone": "+8801788888888", "password": "a-good-password", "role": "rider"}
+    body = {
+        "full_name": "No Docs",
+        "email": "nodocs.rider@example.com",
+        "phone": "+8801788888888",
+        "password": "a-good-password",
+        "role": "rider",
+        "license_no": "DK-NODOCS-1",
+        "vehicle_type": "bike",
+        "plate_no": "dhaka metro-la 77-8899",
+        "vehicle_model": "Hero Splendor",
+    }
     token = client.post("/api/auth/register", json=body).json()["token"]
     h = {"Authorization": f"Bearer {token}"}
     me = client.get("/api/rider/me", headers=h).json()

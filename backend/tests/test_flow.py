@@ -3,7 +3,7 @@ from datetime import timedelta
 from sqlalchemy import select, update
 
 from app.config import settings
-from app.db import SessionLocal
+from app.db import SessionLocal, utcnow
 from app.models import Rider, SafetyAlert, Trip
 from app.services import simulator
 from app.services import predictors
@@ -423,4 +423,70 @@ def test_trip_navigation_status_steps_and_tracking(client, user_h, rider_h):
     completed = client.post(f"/api/rider/trips/{trip_id}/complete", headers=rider_h).json()
     assert completed["status"] == "completed"
     assert completed["completed_at"] is not None
+
+
+def test_incomplete_rider_cannot_verify_or_go_online(client, admin_h):
+    reg = client.post(
+        "/api/auth/register",
+        json={
+            "full_name": "Incomplete Rider",
+            "email": "incomplete.rider@example.com",
+            "phone": "+8801711111111",
+            "password": "secret123",
+            "role": "rider",
+        },
+    )
+    assert reg.status_code == 201, reg.text
+    rider_h = {"Authorization": f"Bearer {reg.json()['token']}"}
+    rider_id = client.get("/api/rider/me", headers=rider_h).json()["id"]
+
+    # Admin cannot verify a rider missing vehicle and license_no
+    v_resp = client.post(f"/api/admin/riders/{rider_id}/verify", headers=admin_h)
+    assert v_resp.status_code == 409
+    assert "vehicle" in v_resp.json()["detail"].lower()
+
+    # Rider completes onboarding vehicle + license_no
+    onboard = client.post(
+        "/api/rider/onboarding/vehicle",
+        headers=rider_h,
+        json={
+            "vehicle_type": "bike",
+            "plate_no": "dhaka metro-la 12-3456",
+            "model": "Yamaha FZ-S",
+            "color": "Black",
+            "registration_no": "REG-9301",
+            "license_no": "DK-9301",
+        },
+    )
+    assert onboard.status_code == 200, onboard.text
+
+    # Now admin can verify
+    assert client.post(f"/api/admin/riders/{rider_id}/verify", headers=admin_h).status_code == 200
+
+    # Even if verified, missing/empty license_no or no active vehicle blocks going online
+    with SessionLocal() as db:
+        rider = db.get(Rider, rider_id)
+        rider.license_no = "   "
+        db.commit()
+
+    online_no_lic = client.post("/api/rider/online", headers=rider_h, json={"is_online": True, "lat": 23.78, "lng": 90.41})
+    assert online_no_lic.status_code == 409
+
+    with SessionLocal() as db:
+        rider = db.get(Rider, rider_id)
+        rider.license_no = "DK-9301"
+        rider.vehicle.retired_at = utcnow()
+        db.commit()
+
+    online_no_veh = client.post("/api/rider/online", headers=rider_h, json={"is_online": True, "lat": 23.78, "lng": 90.41})
+    assert online_no_veh.status_code == 409
+
+    with SessionLocal() as db:
+        rider = db.get(Rider, rider_id)
+        rider.vehicles[0].retired_at = None
+        db.commit()
+
+    assert client.post("/api/rider/online", headers=rider_h, json={"is_online": True, "lat": 23.78, "lng": 90.41}).status_code == 200
+    assert client.post("/api/rider/online", headers=rider_h, json={"is_online": False}).status_code == 200
+
 

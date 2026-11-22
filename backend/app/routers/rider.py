@@ -142,6 +142,11 @@ def set_online(body: OnlineIn, db: DB, rider: CurrentRider):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Your account is suspended. Contact support.")
         if rider.status != "verified":
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Your account is waiting for admin verification")
+        if rider.vehicle is None or not (rider.license_no or "").strip():
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Complete your vehicle and driving licence details before going online",
+            )
         if body.lat is not None and body.lng is not None:
             rider.current_lat, rider.current_lng = body.lat, body.lng
         if rider.current_lat is None:
