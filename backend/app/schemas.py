@@ -188,6 +188,19 @@ class RiderOnboardingVehicleIn(BaseModel):
     license_no: str = Field(min_length=2, max_length=40)
 
 
+class VehicleChangeIn(BaseModel):
+    vehicle_type: VehicleType
+    plate_no: str = Field(min_length=2, max_length=32)
+    model: str = Field(min_length=2, max_length=60)
+    color: str | None = Field(default=None, min_length=2, max_length=32)
+    registration_no: str | None = Field(default=None, min_length=3, max_length=64)
+
+
+class VehicleChangeReviewIn(BaseModel):
+    status: Literal["approved", "rejected"]
+    note: str = Field(default="", max_length=300)
+
+
 class RiderPublic(BaseModel):
     id: str
     full_name: str
