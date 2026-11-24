@@ -345,8 +345,21 @@ export function ActiveTripCard({
             {etaDisplay != null ? ` · ~${formatMinutes(etaDisplay)}` : ""}
           </span>
         </div>
-        <div className="font-medium leading-snug">
-          {stage === "ongoing" ? trip.drop_address : trip.pickup_address}
+        <div className="space-y-1.5">
+          <div className={cn("flex items-start gap-2", stage === "ongoing" ? "text-xs text-muted-foreground" : "text-sm font-medium text-foreground")}>
+            <span className={cn("mt-1.5 size-2 shrink-0 rounded-full", stage === "ongoing" ? "bg-muted-foreground/50" : "bg-foreground")} />
+            <span className="min-w-0 leading-snug">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mr-1.5">Pickup</span>
+              {trip.pickup_address}
+            </span>
+          </div>
+          <div className={cn("flex items-start gap-2", stage === "ongoing" ? "text-sm font-medium text-foreground" : "text-xs text-muted-foreground")}>
+            <MapPin className={cn("mt-0.5 size-3.5 shrink-0", stage === "ongoing" ? "text-primary" : "text-muted-foreground")} />
+            <span className="min-w-0 leading-snug">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mr-1.5">Drop-off</span>
+              {trip.drop_address}
+            </span>
+          </div>
         </div>
 
         {/* Turn-by-Turn External Navigation Links */}
