@@ -262,10 +262,10 @@ export function ActiveTripCard({
   return (
     <div className="space-y-4 rounded-xl border p-4 shadow-sm bg-card">
       {/* 3-Step Navigation Stepper */}
-      <div className="grid grid-cols-3 gap-1.5 text-center text-xs">
+      <div className="grid grid-cols-3 gap-1.5 text-center text-[11px] sm:text-xs">
         <div
           className={cn(
-            "rounded-lg py-1.5 px-1 border transition-all",
+            "flex items-center justify-center whitespace-nowrap rounded-lg border px-1.5 py-1.5 transition-all",
             stage === "to_pickup"
               ? "bg-primary/10 border-primary font-semibold text-primary shadow-xs"
               : trip.arrived_at || stage === "ongoing"
@@ -273,11 +273,11 @@ export function ActiveTripCard({
                 : "border-border/60 text-muted-foreground"
           )}
         >
-          1. Heading to Pickup
+          1. To Pickup
         </div>
         <div
           className={cn(
-            "rounded-lg py-1.5 px-1 border transition-all",
+            "flex items-center justify-center whitespace-nowrap rounded-lg border px-1.5 py-1.5 transition-all",
             stage === "at_pickup"
               ? "bg-emerald-500/15 border-emerald-500 font-semibold text-emerald-400 shadow-xs"
               : stage === "ongoing"
@@ -289,7 +289,7 @@ export function ActiveTripCard({
         </div>
         <div
           className={cn(
-            "rounded-lg py-1.5 px-1 border transition-all",
+            "flex items-center justify-center whitespace-nowrap rounded-lg border px-1.5 py-1.5 transition-all",
             stage === "ongoing"
               ? "bg-primary/10 border-primary font-semibold text-primary shadow-xs"
               : "border-border/60 text-muted-foreground"

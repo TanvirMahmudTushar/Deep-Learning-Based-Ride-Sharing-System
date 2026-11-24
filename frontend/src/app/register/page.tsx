@@ -23,10 +23,10 @@ const OtpVerifyStep = lazy(() => import("@/components/auth/otp-verify-step").the
 
 type SignupRole = "user" | "rider" | "support";
 
-const ROLE_OPTIONS: { value: SignupRole; label: string; icon: typeof User }[] = [
-  { value: "user", label: "I need rides", icon: User },
-  { value: "rider", label: "I want to drive", icon: Bike },
-  { value: "support", label: "Support staff", icon: Headphones },
+const ROLE_OPTIONS: { value: SignupRole; label: string; shortLabel: string; icon: typeof User }[] = [
+  { value: "user", label: "I need rides", shortLabel: "Passenger", icon: User },
+  { value: "rider", label: "I want to drive", shortLabel: "Rider", icon: Bike },
+  { value: "support", label: "Support staff", shortLabel: "Support", icon: Headphones },
 ];
 
 interface DraftAccount {
@@ -146,7 +146,8 @@ function RegisterForm() {
                             />
                           )}
                           <Icon className="relative z-10 size-3.5 shrink-0" />
-                          <span className="relative z-10 truncate">{opt.label}</span>
+                          <span className="relative z-10 whitespace-nowrap text-[11px] sm:hidden">{opt.shortLabel}</span>
+                          <span className="relative z-10 hidden truncate sm:inline">{opt.label}</span>
                         </button>
                       );
                     })}
