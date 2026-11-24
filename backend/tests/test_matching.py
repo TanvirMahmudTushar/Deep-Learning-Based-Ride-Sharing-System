@@ -244,3 +244,118 @@ def test_offer_next_returns_false_and_cancels_when_all_queued_disqualified(clien
         assert scores == {r0_id: "expired", r1_id: "expired", r2_id: "expired"}
 
         db.rollback()
+
+
+def test_accepted_rider_cancel_rematches_to_next_available_rider(client):
+    from app.realtime import _PENDING
+
+    with SessionLocal() as db:
+        passenger = db.scalar(select(Profile).where(Profile.email == "user@ride.local"))
+        assert passenger is not None
+
+        for r in db.scalars(select(Rider).where(Rider.is_online.is_(True))).all():
+            r.is_online = False
+
+        _, r1, _ = _create_rider(db)
+        _, r2, _ = _create_rider(db)
+        r1_id, r2_id = r1.id, r2.id
+
+        trip = Trip(
+            user_id=passenger.id,
+            vehicle_type_requested="bike",
+            pickup_lat=GULSHAN[0],
+            pickup_lng=GULSHAN[1],
+            pickup_address="Gulshan",
+            drop_lat=DHANMONDI[0],
+            drop_lng=DHANMONDI[1],
+            drop_address="Dhanmondi",
+            distance_km=5.0,
+            fare_estimate=120.0,
+            predicted_eta_min=15.0,
+        )
+        db.add(trip)
+        db.flush()
+
+        db.add_all([
+            MatchScore(trip_id=trip.id, rider_id=r1_id, pickup_eta_min=1.0, cancel_probability=0.05, score=1.0, rank=1, status="offered"),
+            MatchScore(trip_id=trip.id, rider_id=r2_id, pickup_eta_min=2.0, cancel_probability=0.05, score=2.0, rank=2, status="candidate"),
+        ])
+        trip.offered_rider_id = r1_id
+        trip.offered_at = utcnow()
+        db.flush()
+
+        trips.accept(db, trip, r1)
+        trips.arrived(db, trip, r1)
+        assert trip.status == "accepted" and trip.arrived_at is not None
+
+        db.info.pop(_PENDING, None)
+        trips.cancel(db, trip, "rider", "Cancelled by rider")
+        db.flush()
+
+        assert trip.status == "requested"
+        assert trip.rider_id is None
+        assert trip.vehicle_id is None
+        assert trip.accepted_at is None
+        assert trip.arrived_at is None
+        assert trip.offered_rider_id == r2_id
+
+        scores = {
+            ms.rider_id: ms.status
+            for ms in db.scalars(select(MatchScore).where(MatchScore.trip_id == trip.id)).all()
+        }
+        assert scores == {r1_id: "declined", r2_id: "offered"}
+
+        pending = db.info.get(_PENDING, [])
+        assert any(
+            passenger.id in targets and msg.get("type") == "trip.updated" and "Finding another rider" in (msg.get("notify") or {}).get("body", "")
+            for targets, msg, _ in pending
+        )
+
+        # Second rider can accept seamlessly.
+        trips.accept(db, trip, r2)
+        assert trip.status == "accepted" and trip.rider_id == r2_id
+
+        db.rollback()
+
+
+def test_accepted_rider_cancel_cancels_booking_when_no_other_rider(client):
+    with SessionLocal() as db:
+        passenger = db.scalar(select(Profile).where(Profile.email == "user@ride.local"))
+        assert passenger is not None
+
+        for r in db.scalars(select(Rider).where(Rider.is_online.is_(True))).all():
+            r.is_online = False
+
+        _, r1, _ = _create_rider(db)
+        r1_id = r1.id
+
+        trip = Trip(
+            user_id=passenger.id,
+            vehicle_type_requested="bike",
+            pickup_lat=GULSHAN[0],
+            pickup_lng=GULSHAN[1],
+            pickup_address="Gulshan",
+            drop_lat=DHANMONDI[0],
+            drop_lng=DHANMONDI[1],
+            drop_address="Dhanmondi",
+            distance_km=5.0,
+            fare_estimate=120.0,
+            predicted_eta_min=15.0,
+        )
+        db.add(trip)
+        db.flush()
+        db.add(MatchScore(trip_id=trip.id, rider_id=r1_id, pickup_eta_min=1.0, cancel_probability=0.05, score=1.0, rank=1, status="offered"))
+        trip.offered_rider_id = r1_id
+        trip.offered_at = utcnow()
+        db.flush()
+
+        trips.accept(db, trip, r1)
+        trips.cancel(db, trip, "rider", "Cancelled by rider")
+        db.flush()
+
+        assert trip.status == "cancelled"
+        assert trip.cancelled_by == "system"
+        assert trip.rider_id is None
+        assert trip.offered_rider_id is None
+
+        db.rollback()

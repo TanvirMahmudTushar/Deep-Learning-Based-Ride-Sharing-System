@@ -116,9 +116,10 @@ def create_trip(
     return trip
 
 
-def advance_offer(db: Session, trip: Trip) -> None:
+def advance_offer(db: Session, trip: Trip, *, notify_passenger: tuple[str, str] | None = None) -> None:
     if matching.offer_next(db, trip):
-        emit(db, trip.user_id, "trip.updated", trip_id=trip.id, status=trip.status)
+        emit(db, trip.user_id, "trip.updated", notify=notify_passenger, trip_id=trip.id, status=trip.status)
+        emit(db, ADMINS, "live.changed", coalesce="admin-live")
     else:
         cancel(db, trip, "system", "No rider accepted the request")
 
@@ -240,6 +241,26 @@ def complete(db: Session, trip: Trip) -> Trip:
 def cancel(db: Session, trip: Trip, by: str, reason: str | None = None) -> Trip:
     if trip.status not in ("requested", "accepted"):
         raise TripError(409, "This trip can no longer be cancelled")
+    if by == "rider" and trip.status == "accepted":
+        cancelling_rider = trip.rider
+        if trip.rider_id:
+            matching.set_offer_status(db, trip, trip.rider_id, "declined")
+        trip.status = "requested"
+        trip.rider_id = None
+        trip.vehicle_id = None
+        trip.accepted_at = None
+        trip.arrived_at = None
+        trip.offered_rider_id = None
+        trip.offered_at = None
+        trip.pickup_eta_min = None
+        trip.sim_progress_km = 0.0
+        trip.auto_drive = False
+        trip.approach = []
+        db.flush()
+        if cancelling_rider:
+            emit(db, cancelling_rider.profile_id, "trip.updated", trip_id=trip.id, status="cancelled")
+        advance_offer(db, trip, notify_passenger=("Rider cancelled", "Finding another rider..."))
+        return trip
     offered = trip.offered_rider_id if trip.status == "requested" else None
     # Work out a late fee before the status changes; earlier fees this ride carried wait for the next one.
     if by == "user":
