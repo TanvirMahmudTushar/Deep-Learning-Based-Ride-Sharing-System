@@ -109,6 +109,11 @@ def test_manual_rider_flow_with_deviation_alert(client, user_h, rider_h, admin_h
     assert resolved["resolution_note"] == "Confirmed safe route and contacted rider."
     assert client.get("/api/admin/alerts", headers=admin_h, params={"status_filter": "resolved"}).json()[0]["id"] == alert["id"]
 
+    client.post("/api/rider/location", headers=rider_h, json={**DHANMONDI, "speed_kmh": 25})
+    with SessionLocal() as db:
+        t = db.get(Trip, trip["id"])
+        t.started_at = t.started_at - timedelta(minutes=1)
+        db.commit()
     done = client.post(f"/api/rider/trips/{trip['id']}/complete", headers=rider_h).json()
     assert done["status"] == "completed"
     payment = done["payment"]
@@ -150,6 +155,7 @@ def test_no_riders_returns_409(client, user_h):
 
 
 def test_long_stop_alert(client, user_h, rider_h, admin_h):
+    client.post("/api/rider/online", headers=rider_h, json={"is_online": True, **GULSHAN})
     trip = client.post("/api/trips", headers=user_h, json={"pickup": GULSHAN, "drop": DHANMONDI, "vehicle_type": "bike"}).json()
     client.post(f"/api/rider/offers/{trip['id']}/accept", headers=rider_h)
     client.post(f"/api/rider/trips/{trip['id']}/start", headers=rider_h)
@@ -163,6 +169,7 @@ def test_long_stop_alert(client, user_h, rider_h, admin_h):
     assert types == {"long_stop"}
     alert = next(a for a in client.get("/api/admin/alerts", headers=admin_h).json() if a["trip_id"] == trip["id"])
     assert alert["severity"] == "moderate"
+    client.post("/api/rider/location", headers=rider_h, json={**DHANMONDI, "speed_kmh": 25})
     client.post(f"/api/rider/trips/{trip['id']}/complete", headers=rider_h)
 
 
@@ -395,7 +402,7 @@ def test_trip_navigation_status_steps_and_tracking(client, user_h, rider_h):
     assert len(accepted["route"]) >= 2
 
     # 2. Live tracking while heading to pickup: GPS ping updates rider location and tracks
-    ping = client.post("/api/rider/location", headers=rider_h, json={"lat": 23.7850, "lng": 90.4150, "speed_kmh": 25.0, "accuracy_m": 5})
+    ping = client.post("/api/rider/location", headers=rider_h, json={"lat": 23.7812, "lng": 90.4150, "speed_kmh": 25.0, "accuracy_m": 5})
     assert ping.status_code == 200
 
     # 3. Arrived step: Rider explicitly marks arrived
@@ -419,7 +426,12 @@ def test_trip_navigation_status_steps_and_tracking(client, user_h, rider_h):
     ping2 = client.post("/api/rider/location", headers=rider_h, json={"lat": 23.7700, "lng": 90.3900, "speed_kmh": 30.0, "accuracy_m": 8})
     assert ping2.status_code == 200
 
-    # 6. Complete trip
+    # 6. Arrive at drop-off and complete trip
+    assert client.post("/api/rider/location", headers=rider_h, json={**DHANMONDI, "speed_kmh": 15.0}).status_code == 200
+    with SessionLocal() as db:
+        t = db.get(Trip, trip_id)
+        t.started_at = t.started_at - timedelta(minutes=1)
+        db.commit()
     completed = client.post(f"/api/rider/trips/{trip_id}/complete", headers=rider_h).json()
     assert completed["status"] == "completed"
     assert completed["completed_at"] is not None
@@ -489,5 +501,46 @@ def test_incomplete_rider_cannot_verify_or_go_online(client, admin_h):
 
     assert client.post("/api/rider/online", headers=rider_h, json={"is_online": True, "lat": 23.78, "lng": 90.41}).status_code == 200
     assert client.post("/api/rider/online", headers=rider_h, json={"is_online": False}).status_code == 200
+
+
+def test_proximity_and_duration_guards_on_trip_transitions(client, user_h, rider_h):
+    with SessionLocal() as db:
+        db.execute(update(Rider).where(Rider.is_simulated.is_(True)).values(is_online=False))
+        db.commit()
+
+    # Rider is online ~2 km away from Gulshan pickup.
+    assert client.post("/api/rider/online", headers=rider_h, json={"is_online": True, "lat": 23.7980, "lng": 90.4150}).status_code == 200
+    trip = client.post("/api/trips", headers=user_h, json={"pickup": GULSHAN, "drop": DHANMONDI, "vehicle_type": "bike"}).json()
+    trip_id = trip["id"]
+    assert client.post(f"/api/rider/offers/{trip_id}/accept", headers=rider_h).status_code == 200
+
+    # Arrived and start are both rejected while far from pickup.
+    far_arrived = client.post(f"/api/rider/trips/{trip_id}/arrived", headers=rider_h)
+    assert far_arrived.status_code == 409 and "closer" in far_arrived.json()["detail"].lower()
+    far_start = client.post(f"/api/rider/trips/{trip_id}/start", headers=rider_h)
+    assert far_start.status_code == 409 and "closer" in far_start.json()["detail"].lower()
+
+    # Move within arrival_radius_m of pickup; arrived and start succeed.
+    assert client.post("/api/rider/location", headers=rider_h, json={**GULSHAN, "speed_kmh": 5.0}).status_code == 200
+    assert client.post(f"/api/rider/trips/{trip_id}/arrived", headers=rider_h).status_code == 200
+    assert client.post(f"/api/rider/trips/{trip_id}/start", headers=rider_h).status_code == 200
+
+    # Complete is rejected while still at pickup (far from drop-off).
+    far_complete = client.post(f"/api/rider/trips/{trip_id}/complete", headers=rider_h)
+    assert far_complete.status_code == 409 and "closer" in far_complete.json()["detail"].lower()
+
+    # Move to drop-off immediately: still rejected due to minimum duration guard.
+    assert client.post("/api/rider/location", headers=rider_h, json={**DHANMONDI, "speed_kmh": 25.0}).status_code == 200
+    instant_complete = client.post(f"/api/rider/trips/{trip_id}/complete", headers=rider_h)
+    assert instant_complete.status_code == 409 and "soon" in instant_complete.json()["detail"].lower()
+
+    # Once elapsed time exceeds min_trip_duration_seconds, complete succeeds.
+    with SessionLocal() as db:
+        t = db.get(Trip, trip_id)
+        t.started_at = t.started_at - timedelta(seconds=settings.min_trip_duration_seconds + 5)
+        db.commit()
+    done = client.post(f"/api/rider/trips/{trip_id}/complete", headers=rider_h)
+    assert done.status_code == 200 and done.json()["status"] == "completed"
+    assert client.post(f"/api/rider/trips/{trip_id}/collect", headers=rider_h).status_code == 200
 
 

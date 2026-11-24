@@ -114,6 +114,11 @@ def test_inaccurate_gps_does_not_raise_alerts(client, user_h, rider_h):
     client.post("/api/rider/location", headers=rider_h, json={"lat": 23.80, "lng": 90.36, "speed_kmh": 20, "accuracy_m": 500})
     with SessionLocal() as db:
         assert db.scalar(select(SafetyAlert.id).where(SafetyAlert.trip_id == trip["id"])) is None
+    client.post("/api/rider/location", headers=rider_h, json={**DHANMONDI, "speed_kmh": 25})
+    with SessionLocal() as db:
+        t = db.get(Trip, trip["id"])
+        t.started_at = t.started_at - timedelta(minutes=1)
+        db.commit()
     done = client.post(f"/api/rider/trips/{trip['id']}/complete", headers=rider_h).json()
     assert done["payment"]["status"] == "pending"
     assert done["passenger_phone"] is None  # only shared while the trip is in progress
@@ -215,6 +220,11 @@ def test_fare_report_disputes_pending_payment(client, user_h, rider_h):
     trip = client.post("/api/trips", headers=user_h, json={"pickup": GULSHAN, "drop": DHANMONDI, "vehicle_type": "bike"}).json()
     client.post(f"/api/rider/offers/{trip['id']}/accept", headers=rider_h)
     client.post(f"/api/rider/trips/{trip['id']}/start", headers=rider_h)
+    client.post("/api/rider/location", headers=rider_h, json={**DHANMONDI, "speed_kmh": 25})
+    with SessionLocal() as db:
+        t = db.get(Trip, trip["id"])
+        t.started_at = t.started_at - timedelta(minutes=1)
+        db.commit()
     client.post(f"/api/rider/trips/{trip['id']}/complete", headers=rider_h)
     client.post(f"/api/trips/{trip['id']}/report", headers=user_h, json={"category": "fare", "note": "Rider asked for more than the fare"})
     assert client.get(f"/api/trips/{trip['id']}", headers=user_h).json()["payment"]["status"] == "disputed"
@@ -257,6 +267,11 @@ def test_pending_payment_survives_reload(client, user_h, rider_h):
     trip = client.post("/api/trips", headers=user_h, json={"pickup": GULSHAN, "drop": DHANMONDI, "vehicle_type": "bike"}).json()
     client.post(f"/api/rider/offers/{trip['id']}/accept", headers=rider_h)
     client.post(f"/api/rider/trips/{trip['id']}/start", headers=rider_h)
+    client.post("/api/rider/location", headers=rider_h, json={**DHANMONDI, "speed_kmh": 25})
+    with SessionLocal() as db:
+        t = db.get(Trip, trip["id"])
+        t.started_at = t.started_at - timedelta(minutes=1)
+        db.commit()
     client.post(f"/api/rider/trips/{trip['id']}/complete", headers=rider_h)
     assert client.get("/api/rider/active", headers=rider_h).json() is None
     pending = client.get("/api/rider/pending-payment", headers=rider_h).json()
