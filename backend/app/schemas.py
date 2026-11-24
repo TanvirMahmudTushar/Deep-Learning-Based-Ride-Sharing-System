@@ -360,6 +360,13 @@ def rider_rating(db: Session, rider_id: str) -> tuple[float | None, int]:
     return (round(float(avg), 2) if avg is not None else None), int(count)
 
 
+def passenger_rating(db: Session, user_id: str) -> tuple[float | None, int]:
+    avg, count = db.execute(
+        select(func.avg(Rating.stars), func.count(Rating.id)).join(Trip, Trip.id == Rating.trip_id).where(Trip.user_id == user_id)
+    ).one()
+    return (round(float(avg), 2) if avg is not None else None), int(count)
+
+
 def rider_public(db: Session, rider: Rider, vehicle: Vehicle | None = None) -> RiderPublic:
     rating, count = rider_rating(db, rider.id)
     return RiderPublic(
@@ -393,6 +400,7 @@ def live_eta_min(trip: Trip) -> float | None:
 def trip_out(db: Session, trip: Trip, include_route: bool = True, for_rider: bool = False) -> TripOut:
     """`for_rider` hides passenger-only safety state (an SOS is never shown to the rider)."""
     alert_types = set(db.scalars(select(SafetyAlert.alert_type).where(SafetyAlert.trip_id == trip.id, SafetyAlert.status != "closed")))
+    p_rating, p_rating_count = passenger_rating(db, trip.user_id) if for_rider else (None, 0)
     return TripOut(
         id=trip.id,
         status=trip.status,
@@ -419,6 +427,9 @@ def trip_out(db: Session, trip: Trip, include_route: bool = True, for_rider: boo
         passenger_name=trip.user.full_name,
         # The rider can call the passenger only while the trip is in progress.
         passenger_phone=trip.user.phone if for_rider and trip.status in ("accepted", "ongoing") else None,
+        passenger_photo=f"/api/documents/{trip.user.avatar_doc_id}/file" if for_rider and trip.user.avatar_doc_id else None,
+        passenger_rating=p_rating,
+        passenger_rating_count=p_rating_count,
         payment=(
             PaymentOut(
                 method=trip.payment.method,
