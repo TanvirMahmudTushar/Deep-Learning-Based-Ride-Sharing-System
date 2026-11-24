@@ -93,7 +93,7 @@ def test_report_after_trip(client, user_h, admin_h):
 def test_profile_and_password(client):
     reg = client.post(
         "/api/auth/register",
-        json={"full_name": "Acct Test", "email": "acct@example.com", "phone": "+8801711111111", "password": "first-pass"},
+        json={"full_name": "Acct Test", "email": "acct@example.com", "phone": "+8801711111111", "password": "first-pass", "otp": "000000"},
     ).json()
     h = {"Authorization": f"Bearer {reg['token']}"}
     updated = client.patch("/api/auth/me", headers=h, json={"full_name": "Account Tester", "phone": "+8801722222222"}).json()

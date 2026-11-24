@@ -139,7 +139,7 @@ def test_document_upload_review_and_access(client, admin_h, rider_h):
         "/api/auth/register",
         json={
             "full_name": "Doc Rider", "email": "doc.rider@example.com", "phone": "+8801733333333", "password": "secret123",
-            "role": "rider", "license_no": "DK-77", "vehicle_type": "bike", "plate_no": "DHAKA METRO-HA 11-2222", "vehicle_model": "Yamaha FZ",
+            "role": "rider", "otp": "000000", "license_no": "DK-77", "vehicle_type": "bike", "plate_no": "DHAKA METRO-HA 11-2222", "vehicle_model": "Yamaha FZ",
         },
     ).json()
     h = {"Authorization": f"Bearer {reg['token']}"}
@@ -183,6 +183,7 @@ def test_riders_need_no_documents_to_be_verified_or_go_online(client, admin_h):
         "phone": "+8801788888888",
         "password": "a-good-password",
         "role": "rider",
+        "otp": "000000",
         "license_no": "DK-NODOCS-1",
         "vehicle_type": "bike",
         "plate_no": "dhaka metro-la 77-8899",

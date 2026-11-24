@@ -36,6 +36,7 @@ def test_admin_accounts_search_stats_history_and_status_actions(client, admin_h)
             "email": "account.stats@example.com",
             "phone": "+8801700000011",
             "password": "secret123",
+            "otp": "000000",
         },
     )
     assert passenger_response.status_code == 201, passenger_response.text
@@ -50,6 +51,7 @@ def test_admin_accounts_search_stats_history_and_status_actions(client, admin_h)
             "phone": "+8801700000012",
             "password": "secret123",
             "role": "rider",
+            "otp": "000000",
             "license_no": "ACCOUNT-TEST-LICENSE",
             "vehicle_type": "bike",
             "plate_no": "DHAKA TEST 11-1111",
