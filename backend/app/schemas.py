@@ -48,6 +48,15 @@ PersonName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=
 _PHONE = re.compile(r"^\+?\d[\d\s-]{4,28}\d$")
 
 
+def normalize_phone(phone: str) -> str:
+    compact = re.sub(r"[\s-]+", "", phone.strip())
+    if compact.startswith("0") and len(compact) == 11 and compact.isdigit():
+        return "+88" + compact
+    if compact.startswith("880") and compact.isdigit():
+        return "+" + compact
+    return compact
+
+
 def _valid_phone(phone: str) -> str:
     phone = phone.strip()
     if not _PHONE.match(phone):
@@ -66,15 +75,15 @@ class RegisterIn(BaseModel):
     password: NewPassword
     role: Literal["user", "rider", "support"] = "user"
     otp: str | None = Field(default=None, min_length=4, max_length=10)
-    license_no: str | None = Field(default=None, max_length=40)
+    license_no: Annotated[str | None, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)] = None
     vehicle_type: VehicleType | None = None
-    plate_no: str | None = Field(default=None, max_length=32)
-    vehicle_model: str | None = Field(default=None, max_length=60)
+    plate_no: Annotated[str | None, StringConstraints(strip_whitespace=True, min_length=1, max_length=32)] = None
+    vehicle_model: Annotated[str | None, StringConstraints(strip_whitespace=True, min_length=1, max_length=60)] = None
 
 
 class OtpRequestIn(BaseModel):
     email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=160)
-    phone: str = Field(min_length=6, max_length=32)
+    phone: PhoneNumber
 
 
 class OtpRequestOut(BaseModel):
@@ -83,7 +92,7 @@ class OtpRequestOut(BaseModel):
 
 
 class OtpVerifyIn(BaseModel):
-    phone: str = Field(min_length=6, max_length=32)
+    phone: PhoneNumber
     otp: str = Field(min_length=4, max_length=10)
 
 

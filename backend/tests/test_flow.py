@@ -259,14 +259,14 @@ def test_registered_deep_learning_demand_model_is_used(client, admin_h, monkeypa
 def test_register_rider_needs_verification(client):
     body = {
         "full_name": "New Rider", "email": "new.rider@example.com", "phone": "+8801700000000", "password": "secret123",
-        "role": "rider", "license_no": "DK-1", "vehicle_type": "cng", "plate_no": "dhaka metro-tha 11-1111", "vehicle_model": "Bajaj RE",
+        "role": "rider", "otp": "000000", "license_no": "DK-1", "vehicle_type": "cng", "plate_no": "dhaka metro-tha 11-1111", "vehicle_model": "Bajaj RE",
     }
     resp = client.post("/api/auth/register", json=body)
     assert resp.status_code == 201, resp.text
     h = {"Authorization": f"Bearer {resp.json()['token']}"}
     assert client.post("/api/rider/online", headers=h, json={"is_online": True, "lat": 23.78, "lng": 90.41}).status_code == 403
     assert client.post("/api/auth/register", json=body).status_code == 409
-    incomplete = {**body, "email": "x@example.com", "license_no": None}
+    incomplete = {**body, "email": "x@example.com", "phone": "+8801700000001", "license_no": None}
     assert client.post("/api/auth/register", json=incomplete).status_code == 422
 
 
@@ -431,9 +431,10 @@ def test_incomplete_rider_cannot_verify_or_go_online(client, admin_h):
         json={
             "full_name": "Incomplete Rider",
             "email": "incomplete.rider@example.com",
-            "phone": "+8801711111111",
+            "phone": "+8801711111199",
             "password": "secret123",
             "role": "rider",
+            "otp": "000000",
         },
     )
     assert reg.status_code == 201, reg.text
