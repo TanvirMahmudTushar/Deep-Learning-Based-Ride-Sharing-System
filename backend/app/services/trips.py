@@ -170,12 +170,25 @@ def decline(db: Session, trip: Trip, rider: Rider) -> None:
     advance_offer(db, trip)
 
 
+def _require_proximity(rider: Rider | None, target: Point, max_m: float, action_label: str) -> None:
+    if rider is None or rider.current_lat is None or rider.current_lng is None:
+        raise TripError(409, f"Current location is required before {action_label}")
+    dist_m = haversine_km((rider.current_lat, rider.current_lng), target) * 1000
+    if dist_m > max_m:
+        raise TripError(
+            409,
+            f"Move closer before {action_label} ({dist_m:.0f} m away, must be within {max_m:.0f} m)",
+        )
+
+
 def arrived(db: Session, trip: Trip, rider: Rider | None = None) -> Trip:
     if trip.status != "accepted":
         raise TripError(409, "Only an accepted trip can be marked as arrived")
     if rider and trip.rider_id != rider.id:
         raise TripError(403, "You are not assigned to this trip")
     if trip.arrived_at is None:
+        if not is_simulated(trip):
+            _require_proximity(rider or trip.rider, (trip.pickup_lat, trip.pickup_lng), settings.arrival_radius_m, "marking arrived")
         trip.arrived_at = utcnow()
         db.flush()
         plate = trip.vehicle.plate_no if trip.vehicle else "your rider"
@@ -186,6 +199,8 @@ def arrived(db: Session, trip: Trip, rider: Rider | None = None) -> Trip:
 def start(db: Session, trip: Trip) -> Trip:
     if trip.status != "accepted":
         raise TripError(409, "Only an accepted trip can be started")
+    if not is_simulated(trip):
+        _require_proximity(trip.rider, (trip.pickup_lat, trip.pickup_lng), settings.arrival_radius_m, "starting the trip")
     trip.status = "ongoing"
     trip.started_at = utcnow()
     trip.arrived_at = trip.arrived_at or trip.started_at
@@ -199,6 +214,14 @@ def complete(db: Session, trip: Trip) -> Trip:
     if trip.status != "ongoing":
         raise TripError(409, "Only an ongoing trip can be completed")
     now = utcnow()
+    if not is_simulated(trip):
+        _require_proximity(trip.rider, (trip.drop_lat, trip.drop_lng), settings.dropoff_radius_m, "completing the trip")
+        elapsed_s = (now - trip.started_at).total_seconds() if trip.started_at else 0.0
+        if elapsed_s < settings.min_trip_duration_seconds:
+            raise TripError(
+                409,
+                f"Trip cannot be completed so soon after starting (wait at least {int(settings.min_trip_duration_seconds)}s)",
+            )
     trip.status = "completed"
     trip.completed_at = now
     trip.fare_final = trip.fare_estimate  # fares are fixed up front

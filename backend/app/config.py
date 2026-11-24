@@ -73,6 +73,10 @@ class Settings(BaseSettings):
     gps_max_accuracy_m: float = 75.0
     # Rider within this distance of the pickup counts as "arrived".
     arrival_radius_m: float = 150.0
+    # Rider within this distance of the drop-off may complete a trip.
+    dropoff_radius_m: float = 300.0
+    # Minimum elapsed seconds between trip start and manual completion.
+    min_trip_duration_seconds: float = 15.0
 
     # Cash payments: platform share of each fare when no per-vehicle rate is set.
     default_commission_pct: float = 15.0

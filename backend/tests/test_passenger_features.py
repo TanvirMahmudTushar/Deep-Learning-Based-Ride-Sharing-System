@@ -3,13 +3,14 @@ cancellation reasons and late fees (#5) and the assistant's live answers (#6).""
 
 import csv
 import io
+from datetime import timedelta
 
 import pytest
 from sqlalchemy import update
 
 from app.config import settings
 from app.db import SessionLocal
-from app.models import Rider
+from app.models import Rider, Trip
 
 from .test_auth import _register
 
@@ -32,7 +33,7 @@ def _free_the_demo_rider(client, rider_h) -> None:
     if active and active["status"] == "accepted":
         client.post(f"/api/rider/trips/{active['id']}/cancel", headers=rider_h)
     elif active and active["status"] == "ongoing":
-        client.post(f"/api/rider/trips/{active['id']}/complete", headers=rider_h)
+        _complete_at_dropoff(client, active["id"], rider_h)
     with SessionLocal() as db:
         db.execute(update(Rider).where(Rider.is_simulated.is_(True)).values(is_online=False))
         db.commit()
@@ -49,9 +50,19 @@ def _book(client, passenger_h, rider_h, accept: bool = True) -> dict:
     return client.get(f"/api/trips/{trip['id']}", headers=passenger_h).json()
 
 
+def _complete_at_dropoff(client, trip_id: str, rider_h) -> dict:
+    assert client.post("/api/rider/location", headers=rider_h, json={**DHANMONDI, "speed_kmh": 25}).status_code == 200
+    with SessionLocal() as db:
+        t = db.get(Trip, trip_id)
+        if t and t.started_at:
+            t.started_at = t.started_at - timedelta(minutes=1)
+            db.commit()
+    return client.post(f"/api/rider/trips/{trip_id}/complete", headers=rider_h).json()
+
+
 def _finish(client, trip_id: str, rider_h) -> dict:
     assert client.post(f"/api/rider/trips/{trip_id}/start", headers=rider_h).json()["status"] == "ongoing"
-    return client.post(f"/api/rider/trips/{trip_id}/complete", headers=rider_h).json()
+    return _complete_at_dropoff(client, trip_id, rider_h)
 
 
 @pytest.fixture

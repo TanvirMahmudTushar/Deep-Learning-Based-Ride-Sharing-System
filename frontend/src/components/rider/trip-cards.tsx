@@ -201,6 +201,7 @@ export function ActiveTripCard({
   const [busy, setBusy] = useState(false);
   const [confirmFar, setConfirmFar] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // Status steps:
   // 1. to_pickup (accepted && !trip.arrived_at)
@@ -221,10 +222,19 @@ export function ActiveTripCard({
 
   async function act(path: string, success: string, json?: unknown) {
     setBusy(true);
-    await run(() => api(`/api/rider/trips/${trip.id}/${path}`, json === undefined ? { method: "POST" } : { json }), success);
-    setBusy(false);
-    setConfirmFar(false);
-    onChanged();
+    setActionError(null);
+    try {
+      await api(`/api/rider/trips/${trip.id}/${path}`, json === undefined ? { method: "POST" } : { json });
+      toast.success(success);
+      onChanged();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Something went wrong";
+      setActionError(msg);
+      toast.error(msg);
+    } finally {
+      setBusy(false);
+      setConfirmFar(false);
+    }
   }
 
   function handleAction() {
@@ -399,6 +409,12 @@ export function ActiveTripCard({
             onCheckedChange={(v) => act("auto-drive", v ? "Auto-drive on" : "Auto-drive off", { enabled: v })}
           />
         </div>
+      )}
+
+      {actionError && (
+        <Alert variant="destructive">
+          <AlertDescription className="break-words">{actionError}</AlertDescription>
+        </Alert>
       )}
 
       {confirmFar && (
