@@ -12,7 +12,7 @@ from app.config import settings
 from app.db import local_day_start, utcnow
 from app.geo import haversine_km
 from app.models import DemandForecast, Payment, Profile, Rider, Trip, Vehicle
-from app.schemas import RiderContactIn, RiderOnboardingVehicleIn, AutoDriveIn, LocationIn, MessageIn, OfferOut, OnlineIn, RiderMe, TripOut, iso_utc, rider_rating, trip_out, vehicle_out
+from app.schemas import RiderCancelIn, RiderContactIn, RiderOnboardingVehicleIn, AutoDriveIn, LocationIn, MessageIn, OfferOut, OnlineIn, RiderMe, TripOut, iso_utc, rider_rating, trip_out, vehicle_out
 from app.security import DB, CurrentRider, verify_password
 from app.realtime import ADMINS, emit
 from app.services import availability, demand, documents, messages, payments, pricing, weather
@@ -252,9 +252,29 @@ def send_message(trip_id: str, body: MessageIn, db: DB, rider: CurrentRider):
     return messages.message_out(message, "rider")
 
 
+RIDER_CANCEL_REASON_LABEL = {
+    "passenger_no_show": "Passenger didn't show up",
+    "unreachable_pickup": "Pickup location unreachable",
+    "vehicle_issue": "Vehicle issue",
+    "safety_concern": "Safety concern",
+    "too_many_passengers": "Too many passengers / luggage",
+    "other": "Other reason",
+}
+
+
 @router.post("/trips/{trip_id}/cancel", response_model=TripOut)
-def cancel(trip_id: str, db: DB, rider: CurrentRider):
-    trip = trip_service.cancel(db, _assigned_trip(db, rider, trip_id), "rider", "Cancelled by rider")
+def cancel(trip_id: str, db: DB, rider: CurrentRider, body: RiderCancelIn | None = None):
+    body = body or RiderCancelIn()
+    reason = f"Cancelled by rider: {RIDER_CANCEL_REASON_LABEL[body.reason]}"
+    if body.note.strip():
+        reason = f"{reason} ({body.note.strip()})"
+    trip = trip_service.cancel(
+        db,
+        _assigned_trip(db, rider, trip_id),
+        "rider",
+        reason[:160],
+        reason_code=body.reason,
+    )
     db.commit()
     return trip_out(db, trip, for_rider=True)
 

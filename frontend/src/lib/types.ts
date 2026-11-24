@@ -705,6 +705,14 @@ export interface PaymentsOverview {
 
 export type CancelReason = "changed_plans" | "wait_too_long" | "rider_not_moving" | "wrong_pickup" | "found_other_ride" | "price_too_high" | "other";
 
+export type RiderCancelReason =
+  | "passenger_no_show"
+  | "unreachable_pickup"
+  | "vehicle_issue"
+  | "safety_concern"
+  | "too_many_passengers"
+  | "other";
+
 export interface TripMessage {
   id: string;
   sender_role: "user" | "rider";

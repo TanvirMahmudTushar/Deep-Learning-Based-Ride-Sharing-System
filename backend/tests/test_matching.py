@@ -359,3 +359,112 @@ def test_accepted_rider_cancel_cancels_booking_when_no_other_rider(client):
         assert trip.offered_rider_id is None
 
         db.rollback()
+
+
+def test_rider_cancel_with_structured_reason_and_no_show_exemption(client):
+    with SessionLocal() as db:
+        passenger = db.scalar(select(Profile).where(Profile.email == "user@ride.local"))
+        assert passenger is not None
+
+        for r in db.scalars(select(Rider).where(Rider.is_online.is_(True))).all():
+            r.is_online = False
+
+        _, r1, _ = _create_rider(db)
+        _, r2, _ = _create_rider(db)
+        r1_id, r2_id = r1.id, r2.id
+        baseline_rate = matching.rider_cancel_rates(db, [r1_id]).get(r1_id, 0.05)
+
+        # 1. Premature passenger_no_show (before arrival / wait window) -> penalized ("declined").
+        t1 = Trip(
+            user_id=passenger.id,
+            vehicle_type_requested="bike",
+            pickup_lat=GULSHAN[0],
+            pickup_lng=GULSHAN[1],
+            pickup_address="Gulshan",
+            drop_lat=DHANMONDI[0],
+            drop_lng=DHANMONDI[1],
+            drop_address="Dhanmondi",
+            distance_km=5.0,
+            fare_estimate=120.0,
+            predicted_eta_min=15.0,
+        )
+        db.add(t1)
+        db.flush()
+        db.add_all([
+            MatchScore(trip_id=t1.id, rider_id=r1_id, pickup_eta_min=1.0, cancel_probability=0.05, score=1.0, rank=1, status="offered"),
+            MatchScore(trip_id=t1.id, rider_id=r2_id, pickup_eta_min=2.0, cancel_probability=0.05, score=2.0, rank=2, status="candidate"),
+        ])
+        t1.offered_rider_id = r1_id
+        t1.offered_at = utcnow()
+        db.flush()
+
+        trips.accept(db, t1, r1)
+        trips.cancel(db, t1, "rider", "Cancelled by rider: Passenger didn't show up", reason_code="passenger_no_show")
+        db.flush()
+
+        ms1 = db.scalar(select(MatchScore).where(MatchScore.trip_id == t1.id, MatchScore.rider_id == r1_id))
+        assert ms1.status == "declined"
+        rate_after_premature = matching.rider_cancel_rates(db, [r1_id])[r1_id]
+        assert rate_after_premature > baseline_rate
+
+        # 2. Verified post-arrival passenger_no_show after waiting >= no_show_wait_seconds -> exempt ("no_show").
+        t2 = Trip(
+            user_id=passenger.id,
+            vehicle_type_requested="bike",
+            pickup_lat=GULSHAN[0],
+            pickup_lng=GULSHAN[1],
+            pickup_address="Gulshan",
+            drop_lat=DHANMONDI[0],
+            drop_lng=DHANMONDI[1],
+            drop_address="Dhanmondi",
+            distance_km=5.0,
+            fare_estimate=120.0,
+            predicted_eta_min=15.0,
+        )
+        db.add(t2)
+        db.flush()
+        db.add_all([
+            MatchScore(trip_id=t2.id, rider_id=r1_id, pickup_eta_min=1.0, cancel_probability=0.05, score=1.0, rank=1, status="offered"),
+            MatchScore(trip_id=t2.id, rider_id=r2_id, pickup_eta_min=2.0, cancel_probability=0.05, score=2.0, rank=2, status="candidate"),
+        ])
+        t2.offered_rider_id = r1_id
+        t2.offered_at = utcnow()
+        db.flush()
+
+        trips.accept(db, t2, r1)
+        trips.arrived(db, t2, r1)
+        t2.arrived_at = utcnow() - timedelta(seconds=settings.no_show_wait_seconds + 5)
+        db.flush()
+
+        trips.cancel(db, t2, "rider", "Cancelled by rider: Passenger didn't show up", reason_code="passenger_no_show")
+        db.flush()
+
+        ms2 = db.scalar(select(MatchScore).where(MatchScore.trip_id == t2.id, MatchScore.rider_id == r1_id))
+        assert ms2.status == "no_show"
+        assert matching.rider_cancel_rates(db, [r1_id])[r1_id] == rate_after_premature
+
+        db.rollback()
+
+
+def test_rider_cancel_endpoint_accepts_structured_reasons(client, user_h, rider_h):
+    from sqlalchemy import update
+
+    with SessionLocal() as db:
+        db.execute(update(Rider).where(Rider.is_simulated.is_(True)).values(is_online=False))
+        db.commit()
+
+    assert client.post("/api/rider/online", headers=rider_h, json={"is_online": True, "lat": GULSHAN[0], "lng": GULSHAN[1]}).status_code == 200
+    trip = client.post("/api/trips", headers=user_h, json={"pickup": {"lat": GULSHAN[0], "lng": GULSHAN[1]}, "drop": {"lat": DHANMONDI[0], "lng": DHANMONDI[1]}, "vehicle_type": "bike"}).json()
+    assert client.post(f"/api/rider/offers/{trip['id']}/accept", headers=rider_h).status_code == 200
+
+    bad = client.post(f"/api/rider/trips/{trip['id']}/cancel", headers=rider_h, json={"reason": "invalid_code"})
+    assert bad.status_code == 422
+
+    ok = client.post(
+        f"/api/rider/trips/{trip['id']}/cancel",
+        headers=rider_h,
+        json={"reason": "vehicle_issue", "note": "Flat tire"},
+    )
+    assert ok.status_code == 200, ok.text
+    assert "Vehicle issue" in ok.json()["cancel_reason"]
+    assert "Flat tire" in ok.json()["cancel_reason"]
