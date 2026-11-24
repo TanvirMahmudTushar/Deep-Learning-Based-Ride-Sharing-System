@@ -296,3 +296,23 @@ def test_only_passengers_can_ask_for_nearby_riders(client, rider_h, admin_h):
     assert client.get("/api/trips/nearby-riders", params=GULSHAN).status_code == 401
     assert client.get("/api/trips/nearby-riders", params=GULSHAN, headers=rider_h).status_code == 403
     assert client.get("/api/trips/nearby-riders", params=GULSHAN, headers=admin_h).status_code == 403
+
+
+def test_offer_includes_passenger_rating_for_repeat_passengers(client, rider_h):
+    p = _passenger(client, "repeat.offer.rating@example.com")
+    first = _book(client, p, rider_h, accept=False)
+    offer1 = client.get("/api/rider/offer", headers=rider_h).json()
+    assert offer1 is not None
+    assert offer1["trip"]["passenger_rating"] is None
+    assert offer1["trip"]["passenger_rating_count"] == 0
+
+    assert client.post(f"/api/rider/offers/{first['id']}/accept", headers=rider_h).status_code == 200
+    _finish(client, first["id"], rider_h)
+    assert client.post(f"/api/trips/{first['id']}/rate", headers=p, json={"stars": 4, "comment": "Good"}).status_code == 200
+
+    _book(client, p, rider_h, accept=False)
+    offer2 = client.get("/api/rider/offer", headers=rider_h).json()
+    assert offer2 is not None
+    assert offer2["trip"]["passenger_rating"] == 4.0
+    assert offer2["trip"]["passenger_rating_count"] == 1
+    client.post(f"/api/trips/{offer2['trip']['id']}/cancel", headers=p)

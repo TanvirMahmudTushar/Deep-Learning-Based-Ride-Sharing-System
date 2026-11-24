@@ -113,10 +113,10 @@ export function OfferCard({
           </Avatar>
           <div className="min-w-0">
             <div className="truncate text-base font-semibold">{t.passenger_name}</div>
-            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
               <span className="inline-flex items-center gap-1 text-foreground">
                 <Star className="size-3.5 fill-amber-300 text-amber-300" aria-hidden />
-                {t.passenger_rating != null ? t.passenger_rating.toFixed(1) : "New"}
+                {t.passenger_rating != null ? t.passenger_rating.toFixed(1) : "New passenger"}
                 {t.passenger_rating_count ? <span className="text-muted-foreground">({t.passenger_rating_count})</span> : null}
               </span>
               <span>·</span>
