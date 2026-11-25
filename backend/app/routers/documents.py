@@ -65,12 +65,20 @@ def upload_document(
     data = file.file.read(limit + 1)
     stored = docs.store_bytes(data, file.content_type or "")
 
-    # A new upload replaces earlier unapproved versions of the same document.
-    for old in db.scalars(select(RiderDocument).where(RiderDocument.rider_id == rider.id, RiderDocument.doc_type == doc_type, RiderDocument.status != "approved", RiderDocument.vehicle_change_id.is_(None))):
+    # Replace earlier versions (including approved ones on renewal); remove old files only after commit succeeds.
+    old_docs = db.scalars(
+        select(RiderDocument).where(
+            RiderDocument.rider_id == rider.id,
+            RiderDocument.doc_type == doc_type,
+            RiderDocument.vehicle_change_id.is_(None),
+        )
+    ).all()
+    old_names = [old.stored_name for old in old_docs]
+    for old in old_docs:
         if rider.profile.avatar_doc_id == old.id:
             rider.profile.avatar_doc_id = None
-        docs.delete_file(old)
         db.delete(old)
+
     doc = RiderDocument(
         rider_id=rider.id,
         doc_type=doc_type,
@@ -80,12 +88,23 @@ def upload_document(
         size_bytes=len(data),
     )
     db.add(doc)
-    db.flush()
-    if doc_type == "photo" and use_as_profile_photo:
-        rider.profile.avatar_doc_id = doc.id
-        emit(db, rider.profile_id, "profile.updated")
-    emit(db, ADMINS, "riders.changed")
-    db.commit()
+    try:
+        db.flush()
+        if doc_type == "photo" and use_as_profile_photo:
+            rider.profile.avatar_doc_id = doc.id
+            emit(db, rider.profile_id, "profile.updated")
+        emit(db, ADMINS, "riders.changed")
+        db.commit()
+    except Exception:
+        db.rollback()
+        (docs.upload_root() / stored).unlink(missing_ok=True)
+        raise
+    for name in old_names:
+        if name != stored:
+            try:
+                (docs.upload_root() / name).unlink(missing_ok=True)
+            except OSError:
+                pass
     return doc_out(doc)
 
 
