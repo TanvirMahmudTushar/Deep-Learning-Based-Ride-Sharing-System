@@ -36,7 +36,7 @@ def profile_out(p: Profile) -> ProfileOut:
     )
 
 
-def _phone_taken(db: DB, phone: str, exclude_profile_id: str | None = None) -> bool:
+def phone_taken(db: DB, phone: str, exclude_profile_id: str | None = None) -> bool:
     q = select(Profile.phone).where(Profile.phone != "")
     if exclude_profile_id is not None:
         q = q.where(Profile.id != exclude_profile_id)
@@ -49,7 +49,7 @@ def request_otp(body: OtpRequestIn, db: DB):
     if db.scalar(select(Profile.id).where(Profile.email == email)):
         raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email already exists")
     phone = normalize_phone(body.phone)
-    if _phone_taken(db, phone):
+    if phone_taken(db, phone):
         raise HTTPException(status.HTTP_409_CONFLICT, "An account with this phone number already exists")
     # Testing-mode OTP: always accepts settings.default_test_otp ("000000").
     return OtpRequestOut(ok=True, message=f"Verification code sent to {phone}")
@@ -68,7 +68,7 @@ def register(body: RegisterIn, db: DB):
     if db.scalar(select(Profile.id).where(Profile.email == email)):
         raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email already exists")
     phone = normalize_phone(body.phone)
-    if _phone_taken(db, phone):
+    if phone_taken(db, phone):
         raise HTTPException(status.HTTP_409_CONFLICT, "An account with this phone number already exists")
     if not body.otp or body.otp.strip() != settings.default_test_otp:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or missing verification code")
@@ -146,7 +146,7 @@ def me(user: CurrentUser):
 @router.patch("/me", response_model=ProfileOut)
 def update_me(body: ProfileUpdateIn, user: CurrentUser, db: DB):
     phone = normalize_phone(body.phone)
-    if _phone_taken(db, phone, exclude_profile_id=user.id):
+    if phone_taken(db, phone, exclude_profile_id=user.id):
         raise HTTPException(status.HTTP_409_CONFLICT, "An account with this phone number already exists")
     user.full_name = body.full_name.strip()
     user.phone = phone

@@ -12,7 +12,8 @@ from app.config import settings
 from app.db import local_day_start, utcnow
 from app.geo import haversine_km
 from app.models import DemandForecast, Payment, Profile, Rider, Trip, Vehicle
-from app.schemas import RiderCancelIn, RiderContactIn, RiderOnboardingVehicleIn, AutoDriveIn, LocationIn, MessageIn, OfferOut, OnlineIn, RiderMe, TripOut, iso_utc, live_eta_min, rider_rating, trip_out, vehicle_out
+from app.routers.auth import phone_taken
+from app.schemas import RiderCancelIn, RiderContactIn, RiderOnboardingVehicleIn, AutoDriveIn, LocationIn, MessageIn, OfferOut, OnlineIn, RiderMe, TripOut, iso_utc, live_eta_min, normalize_phone, rider_rating, trip_out, vehicle_out
 from app.security import DB, CurrentRider, verify_password
 from app.realtime import ADMINS, emit
 from app.services import availability, demand, documents, messages, payments, pricing, weather
@@ -92,13 +93,16 @@ def me(db: DB, rider: CurrentRider):
 def update_contact(body: RiderContactIn, db: DB, rider: CurrentRider):
     profile = rider.profile
     email = body.email.strip().lower()
+    phone = normalize_phone(body.phone)
+    if phone_taken(db, phone, exclude_profile_id=profile.id):
+        raise HTTPException(status.HTTP_409_CONFLICT, "An account with this phone number already exists")
     if email != profile.email:
         if not body.current_password or not verify_password(body.current_password, profile.password_hash):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Enter your current password to change your email")
         if db.scalar(select(Profile.id).where(Profile.email == email, Profile.id != profile.id)):
             raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email already exists")
         profile.email = email
-    profile.phone = body.phone.strip()
+    profile.phone = phone
     db.commit()
     return me(db, rider)
 
