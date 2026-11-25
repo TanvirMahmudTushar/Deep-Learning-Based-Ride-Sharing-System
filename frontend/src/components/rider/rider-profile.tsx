@@ -35,7 +35,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { fetcher } from "@/lib/api";
+import { api, fetcher } from "@/lib/api";
 import { formatPercent, formatTaka, VEHICLE_COLOR, plural } from "@/lib/format";
 import { useNotificationPermission } from "@/lib/notifications";
 import { useAuthFileUrl } from "@/lib/server";
@@ -122,6 +122,7 @@ function NotificationRow() {
 export function RiderProfile({ onClose, initialSection }: { onClose: () => void; initialSection?: string }) {
   const router = useRouter();
   const [closing, setClosing] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const [changingPassword, setChangingPassword] = useState(false);
   const [activeSubscreen, setActiveSubscreen] = useState<"edit-personal" | "change-vehicle" | "documents" | "earnings" | null>(
     initialSection === "documents" ? "documents" : initialSection === "earnings" ? "earnings" : null,
@@ -220,13 +221,7 @@ export function RiderProfile({ onClose, initialSection }: { onClose: () => void;
               {isVerified && (
                 <div className="grid grid-cols-2 gap-2">
                   <Stat label="Total completed" value={plural(me.trips_completed, "trip")} />
-                  <Stat label="Rating" value={<RatingText rating={me.rating} count={me.rating_count} />} />
                   <Stat label="Cancel rate" value={formatPercent(me.cancel_rate)} hint="Lower rates rank you higher" />
-                  <Stat
-                    label="Commission due"
-                    value={formatTaka(Math.max(0, me.commission_due))}
-                    hint="Owed to platform"
-                  />
                 </div>
               )}
 
@@ -292,9 +287,15 @@ export function RiderProfile({ onClose, initialSection }: { onClose: () => void;
                               style={{ color: VEHICLE_COLOR[me.vehicle.vehicle_type] }}
                             />
                           </span>
-                          <div className="min-w-0 flex-1">
+                          <div className="min-w-0 flex-1 space-y-0.5">
                             <div className="truncate text-sm font-semibold">{me.vehicle.model}</div>
                             <div className="truncate text-xs text-muted-foreground">Plate: {me.vehicle.plate_no}</div>
+                            {(me.vehicle.color || me.vehicle.registration_no) && (
+                              <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                                {me.vehicle.color && <span>Color: {me.vehicle.color}</span>}
+                                {me.vehicle.registration_no && <span>Reg: {me.vehicle.registration_no}</span>}
+                              </div>
+                            )}
                           </div>
                           <div className="flex shrink-0 flex-col items-end gap-1">
                             <VehicleTag type={me.vehicle.vehicle_type} className="text-xs" />
@@ -433,8 +434,13 @@ export function RiderProfile({ onClose, initialSection }: { onClose: () => void;
                 </div>
                 <Button
                   variant="outline"
+                  disabled={loggingOut}
                   className="w-full text-red-300 hover:text-red-200"
-                  onClick={() => {
+                  onClick={async () => {
+                    setLoggingOut(true);
+                    if (me?.is_online) {
+                      await api("/api/rider/online", { json: { is_online: false } }).catch(() => undefined);
+                    }
                     clearSession();
                     router.replace("/login");
                   }}

@@ -5,23 +5,32 @@ from datetime import timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 
 from app.brta import normalize_plate
 from app.config import settings
 from app.db import local_day_start, utcnow
 from app.geo import haversine_km
-from app.models import DemandForecast, Payment, Profile, Rider, Trip, Vehicle
+from app.models import DemandForecast, MatchScore, Payment, Profile, Rider, Trip, Vehicle
 from app.routers.auth import phone_taken
 from app.schemas import RiderCancelIn, RiderContactIn, RiderOnboardingVehicleIn, AutoDriveIn, LocationIn, MessageIn, OfferOut, OnlineIn, RiderMe, TripOut, iso_utc, live_eta_min, normalize_phone, rider_rating, trip_out, vehicle_out
 from app.security import DB, CurrentRider, verify_password
 from app.realtime import ADMINS, emit
 from app.services import availability, demand, documents, messages, payments, pricing, weather
 from app.services import trips as trip_service
-from app.services.matching import rider_cancel_rates
 from app.services.zones import all_zones
 
 router = APIRouter(prefix="/api/rider", tags=["rider"])
+
+
+def _actual_cancel_rate(db: DB, rider_id: str) -> float:
+    total_trips, cancelled_trips = db.execute(
+        select(func.count(), func.sum(case((Trip.cancelled_by == "rider", 1), else_=0))).where(Trip.rider_id == rider_id)
+    ).one()
+    declined = db.scalar(select(func.count()).where(MatchScore.rider_id == rider_id, MatchScore.status == "declined")) or 0
+    total = int(total_trips or 0) + int(declined)
+    bad = int(cancelled_trips or 0) + int(declined)
+    return round(bad / total, 3) if total > 0 else 0.0
 
 
 def _assigned_trip(db: DB, rider: Rider, trip_id: str) -> Trip:
@@ -79,7 +88,7 @@ def me(db: DB, rider: CurrentRider):
         trips_completed=completed,
         trips_today=trips_today,
         earnings_today=float(earnings or 0),
-        cancel_rate=round(rider_cancel_rates(db, [rider.id]).get(rider.id, 0.05), 3) if is_verified else 0.0,
+        cancel_rate=_actual_cancel_rate(db, rider.id) if is_verified else 0.0,
         is_simulated=rider.is_simulated,
         documents_ready=ready,
         missing_documents=missing,
