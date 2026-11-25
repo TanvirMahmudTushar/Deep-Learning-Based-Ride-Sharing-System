@@ -289,7 +289,10 @@ export function ActiveTripCard({
   }
 
   const gmapsNavUrl = `https://www.google.com/maps/dir/?api=1&destination=${target.lat},${target.lng}&travelmode=driving`;
-  const osmNavUrl = `https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=${position ? `${position.lat},${position.lng}` : ""};${target.lat},${target.lng}`;
+  const osmNavUrl =
+    position && Number.isFinite(position.lat) && Number.isFinite(position.lng)
+      ? `https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=${position.lat},${position.lng};${target.lat},${target.lng}`
+      : `https://www.openstreetmap.org/?mlat=${target.lat}&mlon=${target.lng}#map=16/${target.lat}/${target.lng}`;
 
   const etaDisplay =
     stage === "to_pickup"
