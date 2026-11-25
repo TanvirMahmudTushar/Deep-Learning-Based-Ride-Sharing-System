@@ -145,13 +145,35 @@ export function OfferCard({
         <div className="shrink-0 text-right">
           <div className="text-3xl font-bold leading-none tracking-tight tabular-nums">{formatTaka(t.fare_estimate)}</div>
           <div className="mt-1 text-[11px] text-muted-foreground">
-            {t.price_multiplier > 1 ? (
-              <span className="font-medium text-amber-300">{t.price_multiplier}x surge</span>
+            {offer.estimated_earning != null ? (
+              <span className="font-medium text-emerald-400">Net {formatTaka(offer.estimated_earning)}</span>
             ) : (
-              <span>Cash · {formatKm(t.distance_km)}</span>
+              <span>Gross cash</span>
             )}
           </div>
         </div>
+      </div>
+
+      {/* Trip distance, duration ETA, fee & adjustment summary */}
+      <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+        <span className="rounded-md bg-muted px-2 py-0.5 tabular-nums text-foreground">
+          Trip {formatKm(t.distance_km)} · ~{formatMinutes(t.predicted_eta_min)}
+        </span>
+        {offer.commission_pct != null && (
+          <span className="rounded-md bg-muted px-2 py-0.5 tabular-nums">
+            Fee {offer.commission_pct}%
+          </span>
+        )}
+        {t.price_multiplier > 1 && (
+          <span className="rounded-md bg-amber-500/15 px-2 py-0.5 font-medium text-amber-300 tabular-nums">
+            {t.price_multiplier}x surge
+          </span>
+        )}
+        {!!t.fee_adjustment && (
+          <span className="rounded-md bg-sky-500/15 px-2 py-0.5 font-medium text-sky-300 tabular-nums">
+            {t.fee_adjustment > 0 ? `+${formatTaka(t.fee_adjustment)} carried fee` : `${formatTaka(t.fee_adjustment)} credit`}
+          </span>
+        )}
       </div>
 
       {/* Pickup & Destination */}
@@ -314,8 +336,19 @@ export function ActiveTripCard({
         </div>
       </div>
 
-      <div className="flex items-center justify-between">
-        <TripStatusBadge status={trip.status} />
+      <div className="flex items-center justify-between gap-2">
+        <TripStatusBadge
+          status={trip.status}
+          label={
+            stage === "to_pickup"
+              ? "Heading to pickup"
+              : stage === "at_pickup"
+                ? "At pickup"
+                : stage === "ongoing"
+                  ? "Trip in progress"
+                  : undefined
+          }
+        />
         <span className="text-right">
           <span className="block font-semibold tabular-nums text-base">{formatTaka(Math.max(0, trip.fare_estimate + (trip.fee_adjustment ?? 0)))} cash</span>
           {!!trip.fee_adjustment && (

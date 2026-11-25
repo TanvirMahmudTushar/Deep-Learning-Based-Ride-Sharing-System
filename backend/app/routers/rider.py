@@ -209,11 +209,16 @@ def current_offer(db: DB, rider: CurrentRider):
     now = utcnow()
     expires_at = trip.offered_at + timedelta(seconds=settings.offer_timeout_seconds)
     remaining = max(0.0, (expires_at - now).total_seconds())
+    fare = float(trip.fare_estimate)
+    pct = payments.commission_pct_for(db, trip.vehicle_type_requested)
+    estimated_earning = round(fare - round(fare * pct / 100), 2)
     return OfferOut(
         trip=trip_out(db, trip, for_rider=True),
         expires_at=expires_at,
         remaining_seconds=round(remaining, 2),
         pickup_distance_km=pickup_dist,
+        estimated_earning=estimated_earning,
+        commission_pct=pct,
     )
 
 

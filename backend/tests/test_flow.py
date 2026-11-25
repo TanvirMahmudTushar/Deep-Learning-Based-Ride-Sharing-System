@@ -556,6 +556,8 @@ def test_rider_location_updates_live_eta_and_offer_remaining_seconds(client, use
     offer = client.get("/api/rider/offer", headers=rider_h).json()
     assert offer is not None
     assert 0 < offer["remaining_seconds"] <= settings.offer_timeout_seconds
+    assert offer["estimated_earning"] is not None and offer["estimated_earning"] < offer["trip"]["fare_estimate"]
+    assert offer["commission_pct"] is not None and offer["commission_pct"] > 0
 
     assert client.post(f"/api/rider/offers/{trip_id}/accept", headers=rider_h).status_code == 200
     far_loc = client.post("/api/rider/location", headers=rider_h, json={"lat": 23.8050, "lng": 90.4150}).json()

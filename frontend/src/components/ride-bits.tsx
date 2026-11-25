@@ -42,10 +42,10 @@ const STATUS_STYLE: Record<TripStatus, string> = {
   cancelled: "border-red-400/30 bg-red-400/10 text-red-200",
 };
 
-export function TripStatusBadge({ status }: { status: TripStatus }) {
+export function TripStatusBadge({ status, label }: { status: TripStatus; label?: string }) {
   return (
     <Badge variant="outline" className={STATUS_STYLE[status]}>
-      {STATUS_LABEL[status]}
+      {label ?? STATUS_LABEL[status]}
     </Badge>
   );
 }

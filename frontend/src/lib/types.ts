@@ -196,6 +196,8 @@ export interface Offer {
   expires_at: string;
   remaining_seconds: number;
   pickup_distance_km: number;
+  estimated_earning?: number | null;
+  commission_pct?: number | null;
 }
 
 export interface AdminSupportAgent {
