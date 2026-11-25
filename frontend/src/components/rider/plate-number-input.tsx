@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { BRTA_CLASS_CODES, BRTA_REGIONS, formatPlate, parsePlate, type BrtaRegion } from "@/lib/brta";
+import { BRTA_CLASS_CODES, BRTA_REGIONS, formatPlate, parsePlate, toAsciiDigits, type BrtaRegion } from "@/lib/brta";
 import { cn } from "@/lib/utils";
 import type { VehicleType } from "@/lib/types";
 
@@ -51,31 +51,38 @@ export function PlateNumberInput({
   className?: string;
 }) {
   const inputId = useId();
+  const numberInputRef = useRef<HTMLInputElement>(null);
   const parsed = useMemo(() => parsePlate(value || "", vehicleType), [value, vehicleType]);
 
   // Nothing is selected until the rider picks it (or an existing plate is being edited).
   const [region, setRegion] = useState(value ? parsed.region : "");
   const [classCodeState, setClassCode] = useState(value ? parsed.classCode : "");
   const [number6, setNumber6] = useState(value ? parsed.number6 : "");
+  const [lastEmitted, setLastEmitted] = useState<string | undefined>(value);
+  const [touched, setTouched] = useState(false);
 
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
   const availableClasses = BRTA_CLASS_CODES[vehicleType] || BRTA_CLASS_CODES.bike;
 
-  // Sync state if the external value or vehicle type changes (adjusted during render, not in an effect)
+  // Sync state only on external value changes (never wipe typed segments on vehicleType change or internal echo)
   const [synced, setSynced] = useState({ value, vehicleType });
   if (synced.value !== value || synced.vehicleType !== vehicleType) {
+    const valueChanged = synced.value !== value;
     setSynced({ value, vehicleType });
-    if (value) {
-      const p = parsePlate(value, vehicleType);
-      setRegion(p.region);
-      setClassCode(p.classCode);
-      setNumber6(p.number6);
-    } else {
-      setRegion("");
-      setClassCode("");
-      setNumber6("");
+    if (valueChanged && value !== lastEmitted) {
+      setLastEmitted(value);
+      if (value) {
+        const p = parsePlate(value, vehicleType);
+        setRegion(p.region);
+        setClassCode(p.classCode);
+        setNumber6(p.number6);
+      } else {
+        setRegion("");
+        setClassCode("");
+        setNumber6("");
+      }
     }
   }
 
@@ -83,10 +90,18 @@ export function PlateNumberInput({
   const classIsValid = !classCodeState || availableClasses.some((c) => c.code === classCodeState);
   const classCode = classIsValid ? classCodeState : (availableClasses[0]?.code ?? classCodeState);
 
+  function emitChange(nextRegion: string, nextClass: string, nextNum: string) {
+    const nextPlate = formatPlate(nextRegion, nextClass, nextNum);
+    setLastEmitted(nextPlate);
+    onChange?.(nextPlate);
+  }
+
   // Tell the parent about the corrected plate only when a chosen class had to be fixed.
   useEffect(() => {
     if (classCodeState && !classIsValid && availableClasses[0]) {
-      onChange?.(formatPlate(region, classCode, number6));
+      const nextPlate = formatPlate(region, classCode, number6);
+      setLastEmitted(nextPlate);
+      onChange?.(nextPlate);
     }
   }, [classCodeState, classIsValid, availableClasses, classCode, region, number6, onChange]);
 
@@ -106,24 +121,42 @@ export function PlateNumberInput({
     setRegion(code);
     setSelectorOpen(false);
     setSearchQuery("");
-    onChange?.(formatPlate(code, classCode, number6));
+    emitChange(code, classCode, number6);
   }
 
   function handleClassSelect(cCode: string) {
     const next = cCode === BLANK_CLASS ? "" : cCode;
     setClassCode(next);
-    onChange?.(formatPlate(region, next, number6));
+    emitChange(region, next, number6);
   }
 
   function handleNumberChange(raw: string) {
-    const digits = raw.replace(/\D/g, "").slice(0, 6);
+    const digits = toAsciiDigits(raw).replace(/\D/g, "").slice(0, 6);
     let formatted = digits;
     if (digits.length > 2) {
       formatted = `${digits.slice(0, 2)}-${digits.slice(2)}`;
     }
     setNumber6(formatted);
-    onChange?.(formatPlate(region, classCode, formatted));
+    emitChange(region, classCode, formatted);
   }
+
+  const digits = toAsciiDigits(number6).replace(/\D/g, "");
+  const hasAnyInput = !!(currentRegion || currentClass || digits.length > 0);
+  const needsValidation = required || hasAnyInput;
+  const fieldErrors: string[] = [];
+  if (needsValidation) {
+    if (!currentRegion) fieldErrors.push("Select a BRTA region.");
+    if (!currentClass) fieldErrors.push("Select a vehicle class.");
+    if (digits.length !== 6) {
+      fieldErrors.push("Enter all 6 plate digits (e.g. 12-3456; Bengali digits ০-৯ are supported).");
+    }
+  }
+  const validationMessage = fieldErrors[0] ?? "";
+  const showFieldError = touched && !!validationMessage;
+
+  useEffect(() => {
+    numberInputRef.current?.setCustomValidity(validationMessage);
+  }, [validationMessage]);
 
   const fullPlate = formatPlate(region, classCode, number6);
   const hasRegionOrClass = !!(currentRegion || currentClass);
@@ -147,7 +180,11 @@ export function PlateNumberInput({
             type="button"
             variant="outline"
             onClick={() => setSelectorOpen(true)}
-            className="h-10 w-full justify-between px-3 text-left font-normal"
+            aria-invalid={showFieldError && !currentRegion}
+            className={cn(
+              "h-10 w-full justify-between px-3 text-left font-normal",
+              showFieldError && !currentRegion && "border-destructive",
+            )}
           >
             <span className={cn("truncate text-xs sm:text-sm", !currentRegion && "text-muted-foreground")}>
               {currentRegion ? `${currentRegion.code} (${currentRegion.bengali})` : "Select region"}
@@ -160,7 +197,10 @@ export function PlateNumberInput({
         <div className="space-y-1.5 sm:col-span-3">
           <Label className="text-xs text-muted-foreground">Class</Label>
           <Select value={classCode || BLANK_CLASS} onValueChange={handleClassSelect}>
-            <SelectTrigger className="h-10 w-full">
+            <SelectTrigger
+              aria-invalid={showFieldError && !currentClass}
+              className={cn("h-10 w-full", showFieldError && !currentClass && "border-destructive")}
+            >
               <SelectValue placeholder="Select..." />
             </SelectTrigger>
             <SelectContent>
@@ -180,17 +220,35 @@ export function PlateNumberInput({
             Plate Number
           </Label>
           <Input
+            ref={numberInputRef}
             id={`${inputId}-plate-num`}
             type="text"
             inputMode="numeric"
-            maxLength={7}
+            maxLength={12}
+            placeholder="12-3456"
             value={number6}
             onChange={(e) => handleNumberChange(e.target.value)}
+            onBlur={() => setTouched(true)}
+            onInvalid={(e) => {
+              e.preventDefault();
+              setTouched(true);
+            }}
+            aria-invalid={showFieldError && digits.length !== 6}
+            aria-describedby={showFieldError ? `${inputId}-plate-error` : undefined}
             required={required}
-            className="h-10 text-center font-mono text-sm tracking-wider"
+            className={cn(
+              "h-10 text-center font-mono text-sm tracking-wider",
+              showFieldError && digits.length !== 6 && "border-destructive",
+            )}
           />
         </div>
       </div>
+
+      {showFieldError && (
+        <p id={`${inputId}-plate-error`} role="alert" className="text-xs font-medium text-destructive">
+          {fieldErrors.join(" ")}
+        </p>
+      )}
 
       {/* Visual Bangladesh BRTA License Plate Preview (Realistic physical plate design) */}
       <div className="flex justify-center py-1">

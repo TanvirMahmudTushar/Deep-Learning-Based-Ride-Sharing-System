@@ -107,12 +107,30 @@ export const BRTA_CLASS_CODES: Record<VehicleType, { code: string; bengali: stri
 
 const SORTED_REGIONS = [...BRTA_REGIONS].sort((a, b) => b.code.length - a.code.length);
 
+const BENGALI_TO_ASCII: Record<string, string> = {
+  "০": "0",
+  "১": "1",
+  "২": "2",
+  "৩": "3",
+  "৪": "4",
+  "৫": "5",
+  "৬": "6",
+  "৭": "7",
+  "৮": "8",
+  "৯": "9",
+};
+
+/** Converts Bengali numerals (০-৯) to ASCII digits (0-9). */
+export function toAsciiDigits(raw: string): string {
+  return raw.replace(/[০-৯]/g, (ch) => BENGALI_TO_ASCII[ch] ?? ch);
+}
+
 /** Parses any plate string into { region, classCode, number6 } */
 export function parsePlate(
   raw: string,
   vehicleType: VehicleType = "bike",
 ): { region: string; classCode: string; number6: string } {
-  const clean = raw.trim().toUpperCase().replace(/_/g, " ");
+  const clean = toAsciiDigits(raw).trim().toUpperCase().replace(/_/g, " ");
   const fallbackClass = BRTA_CLASS_CODES[vehicleType]?.[0]?.code ?? "HA";
 
   for (const r of SORTED_REGIONS) {
@@ -153,7 +171,7 @@ export function parsePlate(
 
 /** Formats into standard <A> <B>-<C> */
 export function formatPlate(region: string, classCode: string, number6: string): string {
-  const digits = number6.replace(/\D/g, "").slice(0, 6);
+  const digits = toAsciiDigits(number6).replace(/\D/g, "").slice(0, 6);
   const formattedNum = digits.length > 2 ? `${digits.slice(0, 2)}-${digits.slice(2)}` : digits;
   if (!region.trim() || !classCode.trim() || !formattedNum) return "";
   return `${region.trim().toUpperCase()} ${classCode.trim().toUpperCase()}-${formattedNum}`;
