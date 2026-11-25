@@ -47,9 +47,9 @@ export function DocumentsStep({ onNext }: { onNext: () => void }) {
       transition={SPRING_UI}
       className="space-y-4"
     >
-      <div className="flex items-center justify-between rounded-xl border bg-muted/30 px-3.5 py-2.5 text-xs">
-        <span className="text-muted-foreground">Optional: licence, insurance, registration &amp; face selfie</span>
-        <span className="font-semibold">
+      <div className="flex items-center justify-between gap-2 rounded-xl border bg-muted/30 px-3.5 py-2.5 text-xs">
+        <span className="min-w-0 text-muted-foreground">Optional for demo: licence, insurance, registration &amp; face selfie</span>
+        <span className="shrink-0 font-semibold">
           {uploadedCount}/{data.required.length} uploaded
         </span>
       </div>
@@ -85,12 +85,12 @@ export function DocumentsStep({ onNext }: { onNext: () => void }) {
                   <div className="text-xs text-muted-foreground">{HINT[doc_type]}</div>
                 </div>
                 {st ? (
-                  <Badge variant="outline" className={st.className}>
+                  <Badge variant="outline" className={cn("shrink-0 whitespace-nowrap", st.className)}>
                     <st.icon className="size-3" /> {st.label}
                   </Badge>
                 ) : (
-                  <Badge variant="outline" className="text-muted-foreground">
-                    Required
+                  <Badge variant="outline" className="shrink-0 whitespace-nowrap text-muted-foreground">
+                    Not added
                   </Badge>
                 )}
               </div>
@@ -104,8 +104,8 @@ export function DocumentsStep({ onNext }: { onNext: () => void }) {
 
               {doc?.status === "rejected" && doc.review_note && <p className="text-xs text-red-200">Reason: {doc.review_note}</p>}
 
-              <div className="flex items-center justify-between gap-2 pt-0.5">
-                <span className="truncate text-xs text-muted-foreground">
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
+                <span className="min-w-0 truncate text-xs text-muted-foreground">
                   {doc ? `${doc.original_name} · ${formatDateTime(doc.uploaded_at)}` : "JPG, PNG, WebP or PDF"}
                 </span>
                 <div className="flex shrink-0 gap-1.5">
