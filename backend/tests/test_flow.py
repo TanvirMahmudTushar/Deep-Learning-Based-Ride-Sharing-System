@@ -578,3 +578,27 @@ def test_rider_location_updates_live_eta_and_offer_remaining_seconds(client, use
     assert client.post(f"/api/rider/trips/{trip_id}/collect", headers=rider_h).status_code == 200
 
 
+def test_new_verified_rider_has_zero_cancel_rate(client, admin_h):
+    reg = client.post(
+        "/api/auth/register",
+        json={
+            "full_name": "Zero Cancel Rider",
+            "email": "zero.cancel.rider@example.com",
+            "phone": "+8801755544332",
+            "password": "secret123",
+            "role": "rider",
+            "otp": "000000",
+            "license_no": "DK-ZC-1",
+            "vehicle_type": "bike",
+            "plate_no": "DHAKA METRO-HA 55-4433",
+            "vehicle_model": "Yamaha FZ",
+        },
+    )
+    assert reg.status_code == 201, reg.text
+    h = {"Authorization": f"Bearer {reg.json()['token']}"}
+    rid = client.get("/api/rider/me", headers=h).json()["id"]
+    assert client.post(f"/api/admin/riders/{rid}/verify", headers=admin_h).status_code == 200
+    me = client.get("/api/rider/me", headers=h).json()
+    assert me["cancel_rate"] == 0.0
+
+
