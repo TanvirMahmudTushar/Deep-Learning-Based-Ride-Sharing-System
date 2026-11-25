@@ -60,6 +60,8 @@ class Settings(BaseSettings):
     late_cancel_grace_seconds: int = 120
     # Cancelling is also free once the rider is this many minutes later than the pickup time they were given.
     rider_late_grace_minutes: float = 5.0
+    # Wait time after arrival before a rider's passenger_no_show cancel is exempt from cancel_rate.
+    no_show_wait_seconds: int = 300
     # Rides must start and end within this distance of the city centre (city_lat, city_lng).
     service_radius_km: float = 40.0
     # Pickup and drop-off closer than this are refused: nobody needs a ride for a few steps.

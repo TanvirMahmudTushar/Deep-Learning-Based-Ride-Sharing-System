@@ -473,6 +473,21 @@ class CancelIn(BaseModel):
     note: str = Field(default="", max_length=120)
 
 
+RiderCancelReason = Literal[
+    "passenger_no_show",
+    "unreachable_pickup",
+    "vehicle_issue",
+    "safety_concern",
+    "too_many_passengers",
+    "other",
+]
+
+
+class RiderCancelIn(BaseModel):
+    reason: RiderCancelReason = "other"
+    note: str = Field(default="", max_length=120)
+
+
 class MessageIn(BaseModel):
     body: str = Field(min_length=1, max_length=500)
 

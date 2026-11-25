@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { Banknote, Check, Clock, ExternalLink, Loader2, MapPin, Navigation, Navigation2, Phone, ShieldAlert, Star, X } from "lucide-react";
 import { TripStatusBadge, VehicleTag } from "@/components/ride-bits";
+import { RiderCancelDialog } from "@/components/rider/cancel-dialog";
 import { TripChat } from "@/components/trip-chat";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -200,7 +201,7 @@ export function ActiveTripCard({
 }) {
   const [busy, setBusy] = useState(false);
   const [confirmFar, setConfirmFar] = useState(false);
-  const [confirmCancel, setConfirmCancel] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   // Status steps:
@@ -436,12 +437,6 @@ export function ActiveTripCard({
         </p>
       )}
 
-      {confirmCancel && trip.status === "accepted" && (
-        <p className="text-xs font-medium text-red-300">
-          Cancelling an accepted ride raises your cancellation rate. Tap again to confirm cancel.
-        </p>
-      )}
-
       {/* Primary Status Step Action Button */}
       <div className={trip.status === "accepted" ? "grid grid-cols-3 gap-2" : "w-full"}>
         {trip.status === "accepted" && (
@@ -451,16 +446,9 @@ export function ActiveTripCard({
               variant="destructive"
               disabled={busy}
               className="h-12 w-full font-medium"
-              onClick={() => {
-                if (!confirmCancel) {
-                  setConfirmCancel(true);
-                  return;
-                }
-                setConfirmCancel(false);
-                void act("cancel", "Trip cancelled");
-              }}
+              onClick={() => setCancelOpen(true)}
             >
-              {confirmCancel ? "Confirm" : "Cancel"}
+              Cancel
             </Button>
           </motion.div>
         )}
@@ -503,6 +491,7 @@ export function ActiveTripCard({
           </Button>
         </motion.div>
       </div>
+      <RiderCancelDialog trip={trip} open={cancelOpen} onOpenChange={setCancelOpen} onCancelled={onChanged} />
     </div>
   );
 }
