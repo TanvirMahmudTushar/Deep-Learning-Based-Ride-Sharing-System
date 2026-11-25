@@ -10,9 +10,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, fetcher } from "@/lib/api";
-import { formatDateTime } from "@/lib/format";
+import { formatDateTime, VEHICLE_LABEL } from "@/lib/format";
 import { fetchFileUrl } from "@/lib/server";
-import type { AdminRider, DocumentsOverview, RiderDocument } from "@/lib/types";
+import type { AdminRider, DocumentsOverview, RiderDocument, VehicleChange } from "@/lib/types";
 
 const STATUS_STYLE: Record<RiderDocument["status"], string> = {
   pending: "border-amber-400/30 bg-amber-400/10 text-amber-200",
@@ -119,7 +119,14 @@ function DocumentRow({ label, doc, onReviewed }: { label: string; doc: RiderDocu
 
 export function DocumentReviewDialog({ rider, onOpenChange, onChanged }: { rider: AdminRider | null; onOpenChange: (open: boolean) => void; onChanged: () => void }) {
   const { data, mutate } = useSWR<DocumentsOverview>(rider ? `/api/admin/riders/${rider.id}/documents` : null, fetcher);
+  const { data: vehicleChange, mutate: mutateVehicleChange } = useSWR<VehicleChange | null>(
+    rider ? `/api/admin/riders/${rider.id}/vehicle-change` : null,
+    fetcher,
+  );
   const [verifying, setVerifying] = useState(false);
+  const [vcRejecting, setVcRejecting] = useState(false);
+  const [vcNote, setVcNote] = useState("");
+  const [vcBusy, setVcBusy] = useState(false);
 
   async function verify() {
     if (!rider) return;
@@ -136,6 +143,25 @@ export function DocumentReviewDialog({ rider, onOpenChange, onChanged }: { rider
     }
   }
 
+  async function reviewVehicleChange(status: "approved" | "rejected") {
+    if (!vehicleChange) return;
+    setVcBusy(true);
+    try {
+      await api(`/api/admin/vehicle-changes/${vehicleChange.id}/review`, {
+        json: { status, note: vcNote },
+      });
+      toast.success(status === "approved" ? "Vehicle change approved" : "Vehicle change rejected");
+      setVcRejecting(false);
+      setVcNote("");
+      await mutateVehicleChange();
+      onChanged();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not review vehicle change");
+    } finally {
+      setVcBusy(false);
+    }
+  }
+
   return (
     <Dialog open={!!rider} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
@@ -146,6 +172,58 @@ export function DocumentReviewDialog({ rider, onOpenChange, onChanged }: { rider
             {rider?.vehicle && ` · ${rider.vehicle.model} · ${rider.vehicle.plate_no}`}
           </DialogDescription>
         </DialogHeader>
+        {vehicleChange && vehicleChange.status === "pending" && (
+          <div className="space-y-3 rounded-lg border border-amber-400/30 bg-amber-400/5 p-3.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-sm font-medium">Pending vehicle change</div>
+                <div className="text-xs text-muted-foreground">
+                  {VEHICLE_LABEL[vehicleChange.vehicle_type]} · {vehicleChange.model} · {vehicleChange.plate_no}
+                </div>
+              </div>
+              <Badge variant="outline" className="border-amber-400/30 bg-amber-400/10 text-amber-200">
+                Pending review
+              </Badge>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {vehicleChange.documents.map((item) => (
+                <div key={item.doc_type} className="space-y-2 rounded-lg border bg-background/60 p-2.5">
+                  <div className="flex items-center justify-between gap-2 text-xs font-medium">
+                    <span>{item.label}</span>
+                    {!item.document && <Badge variant="outline" className="text-muted-foreground">not uploaded</Badge>}
+                  </div>
+                  {item.document && <Preview doc={item.document} />}
+                </div>
+              ))}
+            </div>
+            {vcRejecting ? (
+              <div className="flex gap-2">
+                <Input
+                  value={vcNote}
+                  onChange={(e) => setVcNote(e.target.value)}
+                  placeholder="Reason shown to the rider"
+                  maxLength={300}
+                  autoFocus
+                />
+                <Button size="sm" variant="destructive" disabled={vcBusy || !vcNote.trim()} onClick={() => void reviewVehicleChange("rejected")}>
+                  Reject
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setVcRejecting(false)}>
+                  Cancel
+                </Button>
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                <Button size="sm" disabled={vcBusy} onClick={() => void reviewVehicleChange("approved")}>
+                  {vcBusy ? <Loader2 className="animate-spin" /> : <Check />} Approve vehicle
+                </Button>
+                <Button size="sm" variant="outline" disabled={vcBusy} onClick={() => setVcRejecting(true)}>
+                  <X /> Reject vehicle
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
         {!data ? (
           <Skeleton className="h-60" />
         ) : (

@@ -31,6 +31,7 @@ from app.models import (
     Trip,
     TripLocation,
     Vehicle,
+    VehicleChange,
 )
 from app.schemas import (
     AdminAccountPageOut,
@@ -350,6 +351,9 @@ def admin_accounts(
     search: str | None = None,
     role_filter: str = "all",
     status_filter: str = "all",
+    blocked_only: bool = False,
+    vehicle_change_only: bool = False,
+    sort_by: Literal["default", "most-blocked"] = "default",
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ):
@@ -373,6 +377,25 @@ def admin_accounts(
     elif status_filter == "verified":
         filters.extend((active_account, Profile.role == "rider", Rider.status == "verified"))
 
+    if blocked_only:
+        filters.append(
+            exists(
+                select(RiderPreference.id).where(
+                    RiderPreference.rider_id == Rider.id,
+                    RiderPreference.kind == "blocked",
+                )
+            )
+        )
+    if vehicle_change_only:
+        filters.append(
+            exists(
+                select(VehicleChange.id).where(
+                    VehicleChange.rider_id == Rider.id,
+                    VehicleChange.status == "pending",
+                )
+            )
+        )
+
     if search and search.strip():
         term = search.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         pattern = f"%{term}%"
@@ -387,20 +410,38 @@ def admin_accounts(
         )
 
     total = db.scalar(select(func.count(Profile.id)).outerjoin(Rider, Rider.profile_id == Profile.id).where(*filters)) or 0
-    profiles = db.scalars(
+    query = (
         select(Profile)
         .outerjoin(Rider, Rider.profile_id == Profile.id)
         .options(selectinload(Profile.rider).selectinload(Rider.vehicles))
         .where(*filters)
-        .order_by(Profile.created_at.desc(), Profile.id)
-        .offset(offset)
-        .limit(limit)
-    ).all()
+    )
+    if sort_by == "most-blocked":
+        block_counts_subq = (
+            select(
+                RiderPreference.rider_id.label("rider_id"),
+                func.count(RiderPreference.id).label("block_count"),
+            )
+            .where(RiderPreference.kind == "blocked")
+            .group_by(RiderPreference.rider_id)
+            .subquery()
+        )
+        query = query.outerjoin(block_counts_subq, block_counts_subq.c.rider_id == Rider.id).order_by(
+            func.coalesce(block_counts_subq.c.block_count, 0).desc(),
+            Profile.created_at.desc(),
+            Profile.id,
+        )
+    else:
+        query = query.order_by(Profile.created_at.desc(), Profile.id)
+
+    profiles = db.scalars(query.offset(offset).limit(limit)).all()
 
     riders_page = [p.rider for p in profiles if p.rider is not None]
     user_stats = _account_trip_stats(db, Trip.user_id, [p.id for p in profiles if p.role == "user"], "user")
     rider_stats = _account_trip_stats(db, Trip.rider_id, [r.id for r in riders_page], "rider")
     busy = availability.busy_rider_ids(db)
+    changing = pending_change_rider_ids(db)
+    blocked_by = rider_prefs.blocked_counts(db)
     items = []
     for profile in profiles:
         rider = profile.rider
@@ -432,6 +473,8 @@ def admin_accounts(
                 "rating_count": rating_count,
                 "vehicle": vehicle_out(rider.vehicle).model_dump() if rider and rider.vehicle else None,
                 "documents_ready": documents.verification_ready(db, rider)[0] if rider else False,
+                "vehicle_change_pending": rider.id in changing if rider else False,
+                "blocked_by": blocked_by.get(rider.id, 0) if rider else 0,
                 "joined_at": iso_utc(profile.created_at),
                 "stats": stats,
             }

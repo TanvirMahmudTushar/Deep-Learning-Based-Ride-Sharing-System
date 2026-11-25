@@ -3,9 +3,9 @@
 import { useDeferredValue, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
-import { Ban, Bot, Clock3, FileSearch, Loader2, RotateCcw, Search, ShieldCheck, UsersRound } from "lucide-react";
+import { Ban, Bot, FileSearch, Loader2, RotateCcw, Search, ShieldCheck, UsersRound } from "lucide-react";
 import { DocumentReviewDialog } from "@/components/admin/document-review";
-import { RatingText, VehicleTag } from "@/components/ride-bits";
+import { RatingText } from "@/components/ride-bits";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,7 +13,6 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, fetcher } from "@/lib/api";
 import { formatDateTime, formatPercent, formatTaka, VEHICLE_LABEL, plural } from "@/lib/format";
@@ -53,7 +52,8 @@ function accountAsRider(account: AdminAccount): AdminRider | null {
     vehicle: account.vehicle,
     joined_at: account.joined_at,
     documents_ready: account.documents_ready,
-    vehicle_change_pending: false,
+    vehicle_change_pending: account.vehicle_change_pending,
+    blocked_by: account.blocked_by,
   };
 }
 
@@ -182,20 +182,26 @@ function StatCard({ label, value }: { label: string; value: string | number }) {
 }
 
 export function RidersTab() {
-  const [directory, setDirectory] = useState<"accounts" | "verification">("accounts");
   const [search, setSearch] = useState("");
   const deferredSearch = useDeferredValue(search.trim());
   const [roleFilter, setRoleFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [blockedOnly, setBlockedOnly] = useState(false);
+  const [vehicleChangeOnly, setVehicleChangeOnly] = useState(false);
+  const [sortBy, setSortBy] = useState<"default" | "most-blocked">("default");
   const [offset, setOffset] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState<AdminRider | null>(null);
   const [inspecting, setInspecting] = useState<AdminAccount | null>(null);
+  const [blockDetailsRider, setBlockDetailsRider] = useState<AdminRider | null>(null);
 
   const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(offset) });
   if (deferredSearch) params.set("search", deferredSearch);
   if (roleFilter !== "all") params.set("role_filter", roleFilter);
   if (statusFilter !== "all") params.set("status_filter", statusFilter);
+  if (blockedOnly) params.set("blocked_only", "true");
+  if (vehicleChangeOnly) params.set("vehicle_change_only", "true");
+  if (sortBy !== "default") params.set("sort_by", sortBy);
   const key = `/api/admin/accounts?${params.toString()}`;
   const { data, error, mutate } = useSWR<AdminAccountPage>(key, fetcher, { refreshInterval: useLiveInterval(5000, 30000) });
 
@@ -234,28 +240,18 @@ export function RidersTab() {
     if (rider) setReviewing(rider);
   }
 
+  function openBlocks(account: AdminAccount) {
+    const rider = accountAsRider(account);
+    if (rider) setBlockDetailsRider(rider);
+  }
+
+  function toggleStatusBadge(target: "pending" | "suspended") {
+    setStatusFilter((current) => (current === target ? "all" : target));
+    setOffset(0);
+  }
+
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap gap-2" role="tablist" aria-label="Account management views">
-        <Button
-          role="tab"
-          aria-selected={directory === "accounts"}
-          variant={directory === "accounts" ? "default" : "outline"}
-          onClick={() => setDirectory("accounts")}
-        >
-          Account directory
-        </Button>
-        <Button
-          role="tab"
-          aria-selected={directory === "verification"}
-          variant={directory === "verification" ? "default" : "outline"}
-          onClick={() => setDirectory("verification")}
-        >
-          Rider verification
-        </Button>
-      </div>
-      {directory === "accounts" ? (
-      <div className="space-y-5">
+    <div className="space-y-5">
       <section className="relative overflow-hidden rounded-xl border bg-card px-5 py-5 sm:px-6 sm:py-6">
         <div className="pointer-events-none absolute -right-8 -top-10 text-primary/[0.04]" aria-hidden>
           <ShieldCheck className="size-44" strokeWidth={1} />
@@ -264,11 +260,11 @@ export function RidersTab() {
           <div className="max-w-2xl">
             <div className="mb-2 inline-flex items-center gap-1.5 rounded-full border bg-muted/50 px-2.5 py-1 text-xs font-medium text-muted-foreground">
               <ShieldCheck className="size-3.5 text-emerald-500" />
-              Account management
+              Account &amp; rider directory
             </div>
             <h2 className="text-xl font-semibold tracking-tight sm:text-2xl">Users and riders</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Search accounts, review rider verification, manage access, and inspect trip and cancellation history.
+              Search accounts, review rider documents and vehicle changes, inspect passenger blocks, and suspend or reactivate access in one place.
             </p>
           </div>
           <div className="flex items-center gap-2 rounded-lg border bg-background/80 px-3 py-2 text-sm text-muted-foreground">
@@ -285,7 +281,7 @@ export function RidersTab() {
             <h3 className="font-medium">Account directory</h3>
             <p className="text-xs text-muted-foreground">Search name, email, licence number, or account ID.</p>
           </div>
-          <div className="grid gap-2 sm:grid-cols-[minmax(220px,1fr)_170px_190px]">
+          <div className="grid gap-2 sm:grid-cols-[minmax(220px,1fr)_150px_180px_165px]">
             <div className="relative">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -317,6 +313,65 @@ export function RidersTab() {
                 <SelectItem value="suspended">Suspended</SelectItem>
               </SelectContent>
             </Select>
+            <Select
+              value={sortBy}
+              onValueChange={(value) => {
+                if (value === "default" || value === "most-blocked") {
+                  setSortBy(value);
+                  setOffset(0);
+                }
+              }}
+            >
+              <SelectTrigger aria-label="Sort accounts" className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="default">Newest first</SelectItem>
+                <SelectItem value="most-blocked">Most blocked</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              size="xs"
+              variant={statusFilter === "pending" ? "default" : "outline"}
+              aria-pressed={statusFilter === "pending"}
+              onClick={() => toggleStatusBadge("pending")}
+            >
+              Pending verification
+            </Button>
+            <Button
+              type="button"
+              size="xs"
+              variant={vehicleChangeOnly ? "default" : "outline"}
+              aria-pressed={vehicleChangeOnly}
+              onClick={() => {
+                setVehicleChangeOnly((current) => !current);
+                setOffset(0);
+              }}
+            >
+              Vehicle change pending
+            </Button>
+            <Button
+              type="button"
+              size="xs"
+              variant={blockedOnly ? "default" : "outline"}
+              aria-pressed={blockedOnly}
+              onClick={() => {
+                setBlockedOnly((current) => !current);
+                setOffset(0);
+              }}
+            >
+              Blocked riders
+            </Button>
+            <Button
+              type="button"
+              size="xs"
+              variant={statusFilter === "suspended" ? "default" : "outline"}
+              aria-pressed={statusFilter === "suspended"}
+              onClick={() => toggleStatusBadge("suspended")}
+            >
+              Suspended
+            </Button>
           </div>
         </div>
 
@@ -362,9 +417,22 @@ export function RidersTab() {
                       </TableCell>
                       <TableCell>
                         <div className="mb-1 text-sm capitalize">{account.role === "user" ? "Passenger" : "Rider"}</div>
-                        <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs capitalize ${STATUS_STYLE[account.status]}`}>
-                          {statusLabel(account.status)}
-                        </span>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs capitalize ${STATUS_STYLE[account.status]}`}>
+                            {statusLabel(account.status)}
+                          </span>
+                          {account.vehicle_change_pending && (
+                            <button
+                              type="button"
+                              onClick={() => openDocuments(account)}
+                              className="inline-flex cursor-pointer"
+                            >
+                              <Badge variant="outline" className="border-amber-400/30 bg-amber-400/10 text-amber-200 hover:bg-amber-400/20">
+                                Vehicle change pending
+                              </Badge>
+                            </button>
+                          )}
+                        </div>
                         {account.is_simulated && <div className="mt-1 inline-flex items-center gap-1 text-[11px] text-muted-foreground"><Bot className="size-3" /> Simulated</div>}
                       </TableCell>
                       <TableCell>
@@ -377,6 +445,7 @@ export function RidersTab() {
                               {account.is_online ? (account.busy ? "On a trip" : "Online") : "Offline"}
                             </div>
                             <RatingText rating={account.rating} count={account.rating_count} />
+                            <BlockedBy n={account.blocked_by} onClick={() => openBlocks(account)} />
                           </>
                         ) : <span className="text-muted-foreground">Passenger account</span>}
                       </TableCell>
@@ -390,8 +459,12 @@ export function RidersTab() {
                         <div className="flex justify-end gap-1">
                           <Button size="sm" variant="outline" onClick={() => setInspecting(account)}>Inspect</Button>
                           {account.role === "rider" && !account.is_simulated && (
-                            <Button size="sm" variant="ghost" onClick={() => openDocuments(account)}>
-                              <FileSearch /> {account.status === "pending" ? "Review" : "Documents"}
+                            <Button
+                              size="sm"
+                              variant={account.status === "pending" || account.vehicle_change_pending ? "default" : "ghost"}
+                              onClick={() => openDocuments(account)}
+                            >
+                              <FileSearch /> {account.status === "pending" || account.vehicle_change_pending ? "Review" : "Documents"}
                             </Button>
                           )}
                           {!account.is_simulated && (
@@ -436,190 +509,6 @@ export function RidersTab() {
       </Card>
 
       <AccountDetailsDialog key={inspecting?.id ?? "closed"} account={inspecting} onOpenChange={(open) => !open && setInspecting(null)} />
-      <DocumentReviewDialog rider={reviewing} onOpenChange={(open) => !open && setReviewing(null)} onChanged={() => void mutate()} />
-      </div>
-      ) : (
-        <RiderVerificationDirectory />
-      )}
-    </div>
-  );
-}
-
-function RiderVerificationDirectory() {
-  const [filter, setFilter] = useState("all");
-  const [blockedOnly, setBlockedOnly] = useState(false);
-  const [sortBy, setSortBy] = useState<"default" | "most-blocked">("default");
-  const key = filter === "all" ? "/api/admin/riders" : `/api/admin/riders?status_filter=${filter}`;
-  const { data: riders, error, mutate } = useSWR<AdminRider[]>(key, fetcher, { refreshInterval: useLiveInterval(5000, 30000) });
-  const [busy, setBusy] = useState<string | null>(null);
-  const [reviewing, setReviewing] = useState<AdminRider | null>(null);
-  const [blockDetailsRider, setBlockDetailsRider] = useState<AdminRider | null>(null);
-  const displayedRiders = (riders ?? []).filter((rider) => !blockedOnly || (rider.blocked_by ?? 0) > 0);
-  if (sortBy === "most-blocked") {
-    displayedRiders.sort((a, b) => (b.blocked_by ?? 0) - (a.blocked_by ?? 0));
-  }
-
-  async function suspend(rider: AdminRider) {
-    setBusy(rider.id);
-    try {
-      await api(`/api/admin/riders/${rider.id}/suspend`, { method: "POST" });
-      toast.success(`${rider.full_name} suspended`);
-      await mutate();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not suspend rider");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  return (
-    <div className="space-y-4">
-      <Card className="gap-0 py-0">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
-          <div>
-            <CardTitle>Rider verification</CardTitle>
-            <CardDescription>Review documents, verification status, and rider availability.</CardDescription>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <Tabs value={filter} onValueChange={setFilter}>
-              <TabsList>
-                <TabsTrigger value="all">All</TabsTrigger>
-                <TabsTrigger value="pending">Pending</TabsTrigger>
-                <TabsTrigger value="verified">Verified</TabsTrigger>
-                <TabsTrigger value="suspended">Suspended</TabsTrigger>
-              </TabsList>
-            </Tabs>
-            <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-              <input
-                type="checkbox"
-                checked={blockedOnly}
-                onChange={(event) => setBlockedOnly(event.currentTarget.checked)}
-              />
-              Blocked riders only
-            </label>
-            <Select value={sortBy} onValueChange={(value) => {
-              if (value === "default" || value === "most-blocked") setSortBy(value);
-            }}>
-              <SelectTrigger aria-label="Sort riders" className="w-40">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="default">Default order</SelectItem>
-                <SelectItem value="most-blocked">Most blocked</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-        {error && <p role="alert" className="p-4 text-sm text-destructive">Could not load riders: {error.message}</p>}
-        <div className="space-y-3 p-4 md:hidden">
-          {!riders && !error && Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-36" />)}
-          {riders && displayedRiders.length === 0 && (
-            <p className="py-8 text-center text-sm text-muted-foreground">
-              {blockedOnly ? "No blocked riders found for this status." : "No riders found for this status."}
-            </p>
-          )}
-          {displayedRiders.map((rider) => (
-            <article key={rider.id} className="space-y-3 rounded-lg border bg-background p-3.5">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="font-medium">{rider.full_name}</div>
-                  <div className="break-all text-xs text-muted-foreground">{rider.is_simulated ? "Simulated rider" : rider.email}</div>
-                </div>
-                <Badge variant="outline" className={`shrink-0 capitalize ${STATUS_STYLE[rider.status]}`}>{rider.status}</Badge>
-              </div>
-              {rider.vehicle_change_pending && <Badge variant="outline">Vehicle change pending</Badge>}
-              {rider.status === "pending" && (
-                <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <Clock3 className="size-3.5" /> Awaiting verification
-                </p>
-              )}
-              <div className="grid grid-cols-2 gap-3 border-y py-3 text-sm">
-                <div>
-                  <p className="mb-1 text-xs text-muted-foreground">Vehicle</p>
-                  {rider.vehicle ? <><VehicleTag type={rider.vehicle.vehicle_type} /><p className="text-xs text-muted-foreground">{rider.vehicle.model} · {rider.vehicle.plate_no}</p></> : "No vehicle"}
-                </div>
-                <div>
-                  <p className="mb-1 text-xs text-muted-foreground">Licence</p>
-                  <p className="break-all font-mono text-xs">{rider.license_no}</p>
-                </div>
-                <div>
-                  <p className="mb-1 text-xs text-muted-foreground">Availability</p>
-                  {rider.is_online ? (rider.busy ? "On a trip" : "Online") : "Offline"}
-                </div>
-                <div>
-                  <p className="mb-1 text-xs text-muted-foreground">Rating</p>
-                  <RatingText rating={rider.rating} count={rider.rating_count} />
-                  <BlockedBy n={rider.blocked_by} onClick={() => setBlockDetailsRider(rider)} />
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {!rider.is_simulated && (
-                  <Button size="sm" className="flex-1" variant={rider.status === "verified" ? "outline" : "default"} onClick={() => setReviewing(rider)}>
-                    <FileSearch /> {rider.status === "verified" ? "Documents" : "Review documents"}
-                  </Button>
-                )}
-                {rider.status === "verified" && (
-                  <Button size="sm" variant="ghost" disabled={busy === rider.id} onClick={() => void suspend(rider)}>
-                    <Ban /> Suspend
-                  </Button>
-                )}
-              </div>
-            </article>
-          ))}
-        </div>
-        <div className="hidden overflow-x-auto p-4 md:block">
-          <Table className="min-w-[900px]">
-            <TableHeader>
-              <TableRow>
-                <TableHead>Rider</TableHead>
-                <TableHead>Vehicle</TableHead>
-                <TableHead>Licence</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Availability</TableHead>
-                <TableHead>Rating</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {!riders && !error && <TableRow><TableCell colSpan={7}><Skeleton className="h-8" /></TableCell></TableRow>}
-              {riders && displayedRiders.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
-                    {blockedOnly ? "No blocked riders found for this status." : "No riders found for this status."}
-                  </TableCell>
-                </TableRow>
-              )}
-              {displayedRiders.map((rider) => (
-                <TableRow key={rider.id}>
-                  <TableCell>
-                    <div className="font-medium">{rider.full_name}</div>
-                    <div className="text-xs text-muted-foreground">{rider.is_simulated ? "Simulated rider" : rider.email}</div>
-                    <div className="text-[11px] text-muted-foreground">Joined {formatDateTime(rider.joined_at)}</div>
-                  </TableCell>
-                  <TableCell>{rider.vehicle ? <><VehicleTag type={rider.vehicle.vehicle_type} /><div className="text-xs text-muted-foreground">{rider.vehicle.model} · {rider.vehicle.plate_no}</div></> : "No vehicle"}</TableCell>
-                  <TableCell className="font-mono text-xs">{rider.license_no}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className={STATUS_STYLE[rider.status]}>{rider.status}</Badge>
-                    {rider.vehicle_change_pending && <div className="mt-1 text-xs text-amber-300">Vehicle change pending</div>}
-                    {rider.status === "pending" && <div className="mt-1 text-xs text-muted-foreground">Awaiting verification</div>}
-                  </TableCell>
-                  <TableCell>{rider.is_online ? (rider.busy ? "On a trip" : "Online") : "Offline"}</TableCell>
-                  <TableCell>
-                    <RatingText rating={rider.rating} count={rider.rating_count} />
-                    <BlockedBy n={rider.blocked_by} onClick={() => setBlockDetailsRider(rider)} />
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-1">
-                      {!rider.is_simulated && <Button size="sm" variant={rider.status === "verified" ? "ghost" : "default"} onClick={() => setReviewing(rider)}><FileSearch /> {rider.status === "verified" ? "Documents" : "Review"}</Button>}
-                      {rider.status === "verified" && <Button size="sm" variant="ghost" disabled={busy === rider.id} onClick={() => void suspend(rider)}><Ban /> Suspend</Button>}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      </Card>
       <DocumentReviewDialog rider={reviewing} onOpenChange={(open) => !open && setReviewing(null)} onChanged={() => void mutate()} />
       <RiderBlocksDialog rider={blockDetailsRider} onOpenChange={(open) => !open && setBlockDetailsRider(null)} />
     </div>

@@ -3,7 +3,7 @@ from datetime import timedelta
 from sqlalchemy import delete, select
 
 from app.db import SessionLocal, utcnow
-from app.models import Profile, Rider, Trip, Vehicle
+from app.models import Profile, Rider, RiderPreference, Trip, Vehicle, VehicleChange
 
 
 def _trip(user_id: str, rider_id: str | None, status: str, cancelled_by: str | None, at):
@@ -135,3 +135,98 @@ def test_admin_accounts_search_stats_history_and_status_actions(client, admin_h)
         db.execute(delete(Rider).where(Rider.id == rider_id))
         db.execute(delete(Profile).where(Profile.id.in_((passenger_id, rider_profile_id))))
         db.commit()
+
+
+def test_admin_accounts_includes_vehicle_change_and_block_filters(client, admin_h):
+    passenger = client.post(
+        "/api/auth/register",
+        json={
+            "full_name": "Block Filter Passenger",
+            "email": "block.filter.user@example.com",
+            "phone": "+8801700000021",
+            "password": "secret123",
+        },
+    ).json()["profile"]
+    rider_a_prof = client.post(
+        "/api/auth/register",
+        json={
+            "full_name": "Vehicle Change Rider",
+            "email": "vc.rider@example.com",
+            "phone": "+8801700000022",
+            "password": "secret123",
+            "role": "rider",
+            "license_no": "VC-FILTER-LIC-1",
+            "vehicle_type": "bike",
+            "plate_no": "DHAKA VC 11-1111",
+            "vehicle_model": "Yamaha",
+        },
+    ).json()["profile"]
+    rider_b_prof = client.post(
+        "/api/auth/register",
+        json={
+            "full_name": "Blocked Rider",
+            "email": "blocked.rider@example.com",
+            "phone": "+8801700000023",
+            "password": "secret123",
+            "role": "rider",
+            "license_no": "BLK-FILTER-LIC-2",
+            "vehicle_type": "bike",
+            "plate_no": "DHAKA BLK 22-2222",
+            "vehicle_model": "Honda",
+        },
+    ).json()["profile"]
+
+    with SessionLocal() as db:
+        rider_a = db.scalar(select(Rider).where(Rider.profile_id == rider_a_prof["id"]))
+        rider_b = db.scalar(select(Rider).where(Rider.profile_id == rider_b_prof["id"]))
+        assert rider_a is not None and rider_b is not None
+        rider_a_id, rider_b_id = rider_a.id, rider_b.id
+        db.add(
+            VehicleChange(
+                rider_id=rider_a_id,
+                vehicle_type="car",
+                plate_no="DHAKA VC 99-9999",
+                model="Toyota Corolla",
+                status="pending",
+            )
+        )
+        db.add(
+            RiderPreference(
+                user_id=passenger["id"],
+                rider_id=rider_b_id,
+                kind="blocked",
+                reason="Test block",
+            )
+        )
+        db.commit()
+
+    try:
+        vc_res = client.get(
+            "/api/admin/accounts",
+            headers=admin_h,
+            params={"vehicle_change_only": "true", "search": "VC-FILTER-LIC-1"},
+        )
+        assert vc_res.status_code == 200
+        vc_items = vc_res.json()["items"]
+        assert len(vc_items) == 1
+        assert vc_items[0]["rider_id"] == rider_a_id
+        assert vc_items[0]["vehicle_change_pending"] is True
+        assert vc_items[0]["blocked_by"] == 0
+
+        blk_res = client.get(
+            "/api/admin/accounts",
+            headers=admin_h,
+            params={"blocked_only": "true", "sort_by": "most-blocked"},
+        )
+        assert blk_res.status_code == 200
+        blk_items = blk_res.json()["items"]
+        assert any(item["rider_id"] == rider_b_id and item["blocked_by"] >= 1 for item in blk_items)
+        assert all(item["blocked_by"] > 0 for item in blk_items)
+    finally:
+        with SessionLocal() as db:
+            db.execute(delete(VehicleChange).where(VehicleChange.rider_id.in_((rider_a_id, rider_b_id))))
+            db.execute(delete(RiderPreference).where(RiderPreference.rider_id.in_((rider_a_id, rider_b_id))))
+            db.execute(delete(Vehicle).where(Vehicle.rider_id.in_((rider_a_id, rider_b_id))))
+            db.execute(delete(Rider).where(Rider.id.in_((rider_a_id, rider_b_id))))
+            db.execute(delete(Profile).where(Profile.id.in_((passenger["id"], rider_a_prof["id"], rider_b_prof["id"]))))
+            db.commit()

@@ -132,6 +132,8 @@ class AdminAccountOut(BaseModel):
     rating_count: int
     vehicle: VehicleOut | None
     documents_ready: bool
+    vehicle_change_pending: bool = False
+    blocked_by: int = 0
     joined_at: str | None
     stats: AdminAccountStatsOut
 

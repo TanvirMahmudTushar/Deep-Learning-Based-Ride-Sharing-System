@@ -307,6 +307,8 @@ export interface AdminAccount {
   rating_count: number;
   vehicle: Vehicle | null;
   documents_ready: boolean;
+  vehicle_change_pending: boolean;
+  blocked_by: number;
   joined_at: string | null;
   stats: AdminAccountStats;
 }
