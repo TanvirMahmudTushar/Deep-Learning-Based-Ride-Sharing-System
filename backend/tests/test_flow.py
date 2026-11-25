@@ -372,15 +372,24 @@ def test_rider_otp_signup_and_onboarding_vehicle(client):
 
 
 def test_brta_dataset_and_plate_format(client):
+    from app.brta import BRTA_REGIONS, parse_plate
+
     res = client.get("/api/brta")
     assert res.status_code == 200
     data = res.json()
-    assert len(data["regions"]) == 69
+    assert len(data["regions"]) == len(BRTA_REGIONS)
     assert any(r["code"] == "DHAKA METRO" and r["bengali"] == "ঢাকা মেট্রো" for r in data["regions"])
+    assert any(r["code"] == "COX'S BAZAR" and r["bengali"] == "কক্সবাজার" for r in data["regions"])
+    assert not any("_" in r["code"] for r in data["regions"])
     assert any(r["code"] == "SHERPUR" and r["bengali"] == "শেরপুর" for r in data["regions"])
     assert any(c["code"] == "HA" and c["bengali"] == "হ" and c["vehicle_type"] == "bike" for c in data["class_codes"])
     assert any(c["code"] == "KA" and c["bengali"] == "ক" and c["vehicle_type"] == "car" for c in data["class_codes"])
     assert any(c["code"] == "THA" and c["bengali"] == "থ" and c["vehicle_type"] == "cng" for c in data["class_codes"])
+    # Class code validation by vehicle type + Bengali digits + alias normalization
+    assert parse_plate("DHAKA METRO HA-১২-৩৪৫৬", vehicle_type="bike") == ("DHAKA METRO", "HA", "12-3456")
+    assert parse_plate("DHAKA METRO KA-12-3456", vehicle_type="bike") is None
+    assert parse_plate("DHAKA METRO XYZ-12-3456") is None
+    assert parse_plate("COXS_BAZAR KA-12-3456", vehicle_type="car") == ("COX'S BAZAR", "KA", "12-3456")
 
 
 def test_trip_navigation_status_steps_and_tracking(client, user_h, rider_h):

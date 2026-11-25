@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { BRTA_CLASS_CODES, BRTA_REGIONS, formatPlate, parsePlate, toAsciiDigits, type BrtaRegion } from "@/lib/brta";
+import { formatPlate, parsePlate, toAsciiDigits, useBrtaSpecs, type BrtaRegion } from "@/lib/brta";
 import { cn } from "@/lib/utils";
 import type { VehicleType } from "@/lib/types";
 
@@ -52,7 +52,11 @@ export function PlateNumberInput({
 }) {
   const inputId = useId();
   const numberInputRef = useRef<HTMLInputElement>(null);
-  const parsed = useMemo(() => parsePlate(value || "", vehicleType), [value, vehicleType]);
+  const { regions, classCodesByVehicle } = useBrtaSpecs();
+  const parsed = useMemo(
+    () => parsePlate(value || "", vehicleType, regions, classCodesByVehicle),
+    [value, vehicleType, regions, classCodesByVehicle],
+  );
 
   // Nothing is selected until the rider picks it (or an existing plate is being edited).
   const [region, setRegion] = useState(value ? parsed.region : "");
@@ -64,7 +68,7 @@ export function PlateNumberInput({
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
-  const availableClasses = BRTA_CLASS_CODES[vehicleType] || BRTA_CLASS_CODES.bike;
+  const availableClasses = classCodesByVehicle[vehicleType] || classCodesByVehicle.bike;
 
   // Sync state only on external value changes (never wipe typed segments on vehicleType change or internal echo)
   const [synced, setSynced] = useState({ value, vehicleType });
@@ -74,7 +78,7 @@ export function PlateNumberInput({
     if (valueChanged && value !== lastEmitted) {
       setLastEmitted(value);
       if (value) {
-        const p = parsePlate(value, vehicleType);
+        const p = parsePlate(value, vehicleType, regions, classCodesByVehicle);
         setRegion(p.region);
         setClassCode(p.classCode);
         setNumber6(p.number6);
@@ -107,13 +111,13 @@ export function PlateNumberInput({
 
   const filteredRegions = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return BRTA_REGIONS;
-    return BRTA_REGIONS.filter(
+    if (!q) return regions;
+    return regions.filter(
       (r) => r.code.toLowerCase().includes(q) || r.bengali.includes(q),
     );
-  }, [searchQuery]);
+  }, [searchQuery, regions]);
 
-  const currentRegion = BRTA_REGIONS.find((r) => r.code === region) || null;
+  const currentRegion = regions.find((r) => r.code === region) || null;
   const currentClass = availableClasses.find((c) => c.code === classCode) || null;
 
   function handleRegionSelect(r: BrtaRegion | null) {
