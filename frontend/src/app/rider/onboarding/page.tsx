@@ -4,13 +4,14 @@ import { useRouter } from "next/navigation";
 import { Suspense, lazy, useEffect, useState } from "react";
 import useSWR from "swr";
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowLeft, Car, FileText, Loader2, ShieldCheck } from "lucide-react";
+import { ArrowLeft, Car, FileText, Loader2, LogOut, ShieldCheck } from "lucide-react";
 import { PortalShell } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { SPRING_UI } from "@/components/ui/motion";
 import { fetcher } from "@/lib/api";
 import { useLiveInterval } from "@/lib/realtime";
+import { clearSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
 import type { RiderMe } from "@/lib/types";
 
@@ -48,16 +49,30 @@ function OnboardingContent() {
     );
   }
 
-  const hasVehicle = !!me.vehicle && !!me.license_no;
+  const hasVehicle = !!me.vehicle && !!me.license_no?.trim();
   const activeStep: Step = step ?? (hasVehicle ? "documents" : "vehicle");
 
   return (
     <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-6">
       <div className="mx-auto w-full max-w-lg space-y-4">
         <div className="flex items-center justify-between gap-2">
-          <Button type="button" variant="ghost" size="sm" onClick={() => router.push("/rider")}>
-            <ArrowLeft className="size-4" /> Back to Rider Portal
-          </Button>
+          {hasVehicle ? (
+            <Button type="button" variant="ghost" size="sm" onClick={() => router.push("/rider")}>
+              <ArrowLeft className="size-4" /> Back to Rider Portal
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                clearSession();
+                router.replace("/login");
+              }}
+            >
+              <LogOut className="size-4" /> Sign out
+            </Button>
+          )}
           <span className="text-xs font-medium text-muted-foreground">Rider Onboarding</span>
         </div>
 
