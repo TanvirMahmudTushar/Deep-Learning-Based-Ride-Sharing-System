@@ -20,13 +20,14 @@ export function VerificationStatusCard({
   onEditStep,
 }: {
   me: RiderMe;
-  onRefresh: () => Promise<void>;
+  onRefresh: () => Promise<RiderMe | undefined | void>;
   onEnterApp: () => void;
   onEditStep: (step: "vehicle" | "documents") => void;
 }) {
   const { data: docs, mutate: refreshDocs } = useSWR<DocumentsOverview>("/api/rider/documents", fetcher);
   const [checking, setChecking] = useState(false);
 
+  const hasPhone = Boolean(me.phone?.trim());
   const hasVehicle = !!me.vehicle && !!me.license_no;
   const uploadedCount = docs ? docs.required.filter((d) => d.document !== null).length : 0;
   const totalDocs = docs ? docs.required.length : 4;
@@ -35,7 +36,11 @@ export function VerificationStatusCard({
   const suspended = me.status === "suspended";
 
   const steps = [
-    { label: "Account & Phone OTP", done: true, detail: "Verified" },
+    {
+      label: "Account & Phone OTP",
+      done: hasPhone,
+      detail: hasPhone ? `${me.phone} · Verified` : "Phone required",
+    },
     {
       label: "Vehicle Details",
       done: hasVehicle,
@@ -44,7 +49,7 @@ export function VerificationStatusCard({
     {
       label: "Documents (optional)",
       done: allUploaded,
-      detail: `${uploadedCount}/${totalDocs} uploaded`,
+      detail: docs ? `${uploadedCount}/${totalDocs} uploaded` : "Checking…",
     },
     {
       label: "Admin Verification",
@@ -56,8 +61,17 @@ export function VerificationStatusCard({
   async function handleRefresh() {
     setChecking(true);
     try {
-      await Promise.all([onRefresh(), refreshDocs()]);
-      toast.success(verified ? "Your account is verified!" : "Status refreshed");
+      const [freshMe] = await Promise.all([onRefresh(), refreshDocs()]);
+      const nextStatus = freshMe?.status ?? me.status;
+      if (nextStatus === "verified") {
+        toast.success("Your account is verified!");
+      } else if (nextStatus === "suspended") {
+        toast.error("Your account is currently suspended.");
+      } else {
+        toast.success("Status refreshed");
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to refresh verification status");
     } finally {
       setChecking(false);
     }
@@ -120,15 +134,15 @@ export function VerificationStatusCard({
             transition={{ ...SPRING_UI, delay: idx * 0.05 }}
             className="flex items-center justify-between gap-3 rounded-xl border bg-card/60 px-3.5 py-2.5"
           >
-            <div className="flex items-center gap-2.5">
+            <div className="flex min-w-0 items-center gap-2.5">
               {s.done ? (
                 <CheckCircle2 className="size-4 shrink-0 text-emerald-400" />
               ) : (
                 <Clock className="size-4 shrink-0 text-amber-400" />
               )}
-              <span className="text-sm font-medium">{s.label}</span>
+              <span className="truncate text-sm font-medium">{s.label}</span>
             </div>
-            <span className="text-xs text-muted-foreground">{s.detail}</span>
+            <span className="max-w-[48%] shrink-0 truncate text-right text-xs text-muted-foreground">{s.detail}</span>
           </motion.div>
         ))}
       </div>
