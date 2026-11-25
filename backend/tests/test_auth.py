@@ -442,3 +442,24 @@ def test_rider_registration_rejects_blank_vehicle_fields_and_duplicate_plates_an
             db.execute(delete(Rider).where(Rider.id == rider_id))
             db.execute(delete(Profile).where(Profile.id == prof_id))
             db.commit()
+
+
+def test_contact_and_profile_update_normalizes_and_enforces_phone_uniqueness(client, user_h, rider_h):
+    other_phone = "+8801755599887"
+    assert client.post("/api/auth/register", json=_signup_body(email="phone.owner@example.com", phone=other_phone)).status_code == 201
+
+    # PATCH /api/auth/me rejects invalid and colliding normalized phones.
+    assert client.patch("/api/auth/me", headers=user_h, json={"full_name": "Demo Passenger", "phone": "bad"}).status_code == 422
+    assert client.patch("/api/auth/me", headers=user_h, json={"full_name": "Demo Passenger", "phone": "01755599887"}).status_code == 409
+
+    # PATCH /api/rider/contact rejects invalid and colliding normalized phones, and normalizes valid updates.
+    rider_me = client.get("/api/rider/me", headers=rider_h).json()
+    assert client.patch("/api/rider/contact", headers=rider_h, json={"email": rider_me["email"], "phone": "bad"}).status_code == 422
+    assert client.patch("/api/rider/contact", headers=rider_h, json={"email": rider_me["email"], "phone": "01755599887"}).status_code == 409
+
+    updated = client.patch("/api/rider/contact", headers=rider_h, json={"email": rider_me["email"], "phone": "01755 599888"})
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["phone"] == "+8801755599888"
+
+    # Restore original rider phone so downstream tests see the seeded value.
+    assert client.patch("/api/rider/contact", headers=rider_h, json={"email": rider_me["email"], "phone": rider_me["phone"]}).status_code == 200

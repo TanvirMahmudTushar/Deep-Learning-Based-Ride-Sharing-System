@@ -3,10 +3,12 @@
 import { useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { ChevronLeft, IdCard, KeyRound, Loader2, Mail, Phone, Save } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/lib/api";
+import { updateSessionProfile, useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
 import type { RiderMe } from "@/lib/types";
 
@@ -19,10 +21,12 @@ export function EditPersonalDetailsScreen({
   onBack: () => void;
   onSaved: () => Promise<void> | void;
 }) {
+  const session = useSession();
   const [closing, setClosing] = useState(false);
   const [email, setEmail] = useState(me.email);
   const [phone, setPhone] = useState(me.phone);
   const [currentPassword, setCurrentPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   const emailChanged = email.trim().toLowerCase() !== me.email.toLowerCase();
@@ -35,12 +39,15 @@ export function EditPersonalDetailsScreen({
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (emailChanged && !currentPassword) {
-      toast.error("Current password is required to change your email");
+      const msg = "Current password is required to change your email";
+      setError(msg);
+      toast.error(msg);
       return;
     }
     setSaving(true);
+    setError(null);
     try {
-      await api<RiderMe>("/api/rider/contact", {
+      const updated = await api<RiderMe>("/api/rider/contact", {
         method: "PATCH",
         json: {
           email: email.trim().toLowerCase(),
@@ -48,11 +55,22 @@ export function EditPersonalDetailsScreen({
           ...(emailChanged ? { current_password: currentPassword } : {}),
         },
       });
+      if (session.status === "authenticated") {
+        updateSessionProfile({
+          ...session.profile,
+          full_name: updated.full_name,
+          email: updated.email,
+          phone: updated.phone,
+          avatar_url: updated.avatar_url ?? session.profile.avatar_url,
+        });
+      }
       toast.success("Personal details updated");
       await onSaved();
       close();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to update personal details");
+      const msg = err instanceof Error ? err.message : "Failed to update personal details";
+      setError(msg);
+      toast.error(msg);
     } finally {
       setSaving(false);
     }
@@ -75,8 +93,13 @@ export function EditPersonalDetailsScreen({
         <h1 className="text-base font-semibold">Edit Personal Details</h1>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-4">
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-4 pb-8">
         <form onSubmit={handleSubmit} className="mx-auto w-full max-w-lg space-y-6">
+          {error && (
+            <Alert variant="destructive">
+              <AlertDescription className="break-words">{error}</AlertDescription>
+            </Alert>
+          )}
           <div className="space-y-4 rounded-xl border p-4">
             {/* Non-editable License */}
             <div className="space-y-1.5">
