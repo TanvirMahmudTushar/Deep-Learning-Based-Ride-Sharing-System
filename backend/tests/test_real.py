@@ -180,6 +180,20 @@ def test_document_upload_review_and_access(client, admin_h, rider_h):
         client.post(f"/api/admin/documents/{doc_id}/review", headers=admin_h, json={"status": "approved"})
     assert client.get("/api/rider/me", headers=h).json()["documents_ready"] is True
 
+    # Renewing an already-approved document replaces it cleanly and sets avatar when requested.
+    renewed = client.post(
+        "/api/rider/documents",
+        headers=h,
+        data={"doc_type": "photo", "use_as_profile_photo": "true"},
+        files={"file": ("p3.png", png, "image/png")},
+    )
+    assert renewed.status_code == 201, renewed.text
+    renewed_id = renewed.json()["id"]
+    assert renewed_id != new["id"]
+    assert renewed.json()["status"] == "pending"
+    assert client.get("/api/rider/me", headers=h).json()["avatar_url"] == f"/api/documents/{renewed_id}/file"
+    assert client.get(f"/api/documents/{new['id']}/file", headers=h).status_code == 404
+
 
 def test_riders_need_no_documents_to_be_verified_or_go_online(client, admin_h):
     body = {

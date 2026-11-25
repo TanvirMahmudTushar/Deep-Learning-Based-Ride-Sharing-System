@@ -140,7 +140,15 @@ export function DocumentsStep({ onNext }: { onNext: () => void }) {
       </Button>
 
       <Suspense fallback={null}>
-        {selfieOpen && <SelfieCaptureDialog open={selfieOpen} onOpenChange={setSelfieOpen} onUploaded={refreshAll} />}
+        {selfieOpen && (
+          <SelfieCaptureDialog
+            open={selfieOpen}
+            onOpenChange={setSelfieOpen}
+            onUploaded={refreshAll}
+            useAsProfile={useAsProfile}
+            onUseAsProfileChange={setUseAsProfile}
+          />
+        )}
       </Suspense>
     </motion.div>
   );
