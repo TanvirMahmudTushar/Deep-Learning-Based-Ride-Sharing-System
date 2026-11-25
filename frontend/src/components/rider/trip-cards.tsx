@@ -336,8 +336,19 @@ export function ActiveTripCard({
         </div>
       </div>
 
-      <div className="flex items-center justify-between">
-        <TripStatusBadge status={trip.status} />
+      <div className="flex items-center justify-between gap-2">
+        <TripStatusBadge
+          status={trip.status}
+          label={
+            stage === "to_pickup"
+              ? "Heading to pickup"
+              : stage === "at_pickup"
+                ? "At pickup"
+                : stage === "ongoing"
+                  ? "Trip in progress"
+                  : undefined
+          }
+        />
         <span className="text-right">
           <span className="block font-semibold tabular-nums text-base">{formatTaka(Math.max(0, trip.fare_estimate + (trip.fee_adjustment ?? 0)))} cash</span>
           {!!trip.fee_adjustment && (
