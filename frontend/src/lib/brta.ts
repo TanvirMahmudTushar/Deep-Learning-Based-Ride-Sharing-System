@@ -1,3 +1,5 @@
+import useSWR from "swr";
+import { fetcher } from "@/lib/api";
 import type { VehicleType } from "@/lib/types";
 
 export interface BrtaRegion {
@@ -14,9 +16,13 @@ export interface BrtaClassCode {
 export const BRTA_REGIONS: BrtaRegion[] = [
   { code: "DHAKA METRO", bengali: "ঢাকা মেট্রো" },
   { code: "CHATTO METRO", bengali: "চট্ট মেট্রো" },
+  { code: "GAZIPUR METRO", bengali: "গাজীপুর মেট্রো" },
   { code: "RAJ METRO", bengali: "রাজ মেট্রো" },
   { code: "KHULNA METRO", bengali: "খুলনা মেট্রো" },
   { code: "SYLHET METRO", bengali: "সিলেট মেট্রো" },
+  { code: "BARISHAL METRO", bengali: "বরিশাল মেট্রো" },
+  { code: "RANGPUR METRO", bengali: "রংপুর মেট্রো" },
+  { code: "MYMENSINGH METRO", bengali: "ময়মনসিংহ মেট্রো" },
   { code: "DHAKA", bengali: "ঢাকা" },
   { code: "GAZIPUR", bengali: "গাজীপুর" },
   { code: "NARAYANGANJ", bengali: "নারায়ণগঞ্জ" },
@@ -31,7 +37,7 @@ export const BRTA_REGIONS: BrtaRegion[] = [
   { code: "RAJBARI", bengali: "রাজবাড়ী" },
   { code: "SHARIATPUR", bengali: "শরীয়তপুর" },
   { code: "CHATTOGRAM", bengali: "চট্টগ্রাম" },
-  { code: "COXS_BAZAR", bengali: "কক্সবাজার" },
+  { code: "COX'S BAZAR", bengali: "কক্সবাজার" },
   { code: "CUMILLA", bengali: "কুমিল্লা" },
   { code: "FENI", bengali: "ফেনী" },
   { code: "BRAHMANBARIA", bengali: "ব্রাহ্মণবাড়িয়া" },
@@ -125,15 +131,55 @@ export function toAsciiDigits(raw: string): string {
   return raw.replace(/[০-৯]/g, (ch) => BENGALI_TO_ASCII[ch] ?? ch);
 }
 
+interface BrtaSpecsApi {
+  regions: BrtaRegion[];
+  class_codes: BrtaClassCode[];
+}
+
+const FALLBACK_SPECS: BrtaSpecsApi = {
+  regions: BRTA_REGIONS,
+  class_codes: (Object.keys(BRTA_CLASS_CODES) as VehicleType[]).flatMap((vt) =>
+    BRTA_CLASS_CODES[vt].map((c) => ({ ...c, vehicle_type: vt })),
+  ),
+};
+
+/** Fetches canonical BRTA region and class specs from `/api/brta` with instant local fallback. */
+export function useBrtaSpecs() {
+  const { data } = useSWR<BrtaSpecsApi>("/api/brta", fetcher, {
+    fallbackData: FALLBACK_SPECS,
+    revalidateOnFocus: false,
+    dedupingInterval: 60_000,
+  });
+  const regions = data?.regions?.length ? data.regions : BRTA_REGIONS;
+  const classCodesByVehicle: Record<VehicleType, { code: string; bengali: string }[]> = {
+    bike: [],
+    car: [],
+    cng: [],
+  };
+  for (const item of data?.class_codes ?? FALLBACK_SPECS.class_codes) {
+    if (classCodesByVehicle[item.vehicle_type]) {
+      classCodesByVehicle[item.vehicle_type].push({ code: item.code, bengali: item.bengali });
+    }
+  }
+  return { regions, classCodesByVehicle };
+}
+
 /** Parses any plate string into { region, classCode, number6 } */
 export function parsePlate(
   raw: string,
   vehicleType: VehicleType = "bike",
+  regionsList: BrtaRegion[] = BRTA_REGIONS,
+  classCodesMap: Record<VehicleType, { code: string; bengali: string }[]> = BRTA_CLASS_CODES,
 ): { region: string; classCode: string; number6: string } {
-  const clean = toAsciiDigits(raw).trim().toUpperCase().replace(/_/g, " ");
-  const fallbackClass = BRTA_CLASS_CODES[vehicleType]?.[0]?.code ?? "HA";
+  let clean = toAsciiDigits(raw).trim().toUpperCase().replace(/_/g, " ");
+  if (clean.startsWith("COXS BAZAR")) {
+    clean = `COX'S BAZAR${clean.slice("COXS BAZAR".length)}`;
+  }
+  const available = classCodesMap[vehicleType] || BRTA_CLASS_CODES[vehicleType];
+  const fallbackClass = available?.[0]?.code ?? "HA";
+  const sortedRegions = [...regionsList].sort((a, b) => b.code.length - a.code.length);
 
-  for (const r of SORTED_REGIONS) {
+  for (const r of sortedRegions) {
     const regNorm = r.code.replace(/_/g, " ");
     if (clean.startsWith(regNorm)) {
       const rest = clean.slice(regNorm.length).trim().replace(/^[ -]+/, "");
@@ -149,7 +195,7 @@ export function parsePlate(
       const digitsOnly = rest.replace(/\D/g, "").slice(0, 6);
       const lettersOnly = rest.replace(/[^A-Z]/g, "");
       const matchedClass =
-        BRTA_CLASS_CODES[vehicleType]?.find((c) => c.code === lettersOnly)?.code ||
+        available?.find((c) => c.code === lettersOnly)?.code ||
         lettersOnly ||
         fallbackClass;
       const formattedNum =

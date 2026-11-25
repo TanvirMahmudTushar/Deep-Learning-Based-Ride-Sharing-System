@@ -14,9 +14,13 @@ import re
 BRTA_REGIONS: list[tuple[str, str]] = [
     ("DHAKA METRO", "ঢাকা মেট্রো"),
     ("CHATTO METRO", "চট্ট মেট্রো"),
+    ("GAZIPUR METRO", "গাজীপুর মেট্রো"),
     ("RAJ METRO", "রাজ মেট্রো"),
     ("KHULNA METRO", "খুলনা মেট্রো"),
     ("SYLHET METRO", "সিলেট মেট্রো"),
+    ("BARISHAL METRO", "বরিশাল মেট্রো"),
+    ("RANGPUR METRO", "রংপুর মেট্রো"),
+    ("MYMENSINGH METRO", "ময়মনসিংহ মেট্রো"),
     ("DHAKA", "ঢাকা"),
     ("GAZIPUR", "গাজীপুর"),
     ("NARAYANGANJ", "নারায়ণগঞ্জ"),
@@ -31,7 +35,7 @@ BRTA_REGIONS: list[tuple[str, str]] = [
     ("RAJBARI", "রাজবাড়ী"),
     ("SHARIATPUR", "শরীয়তপুর"),
     ("CHATTOGRAM", "চট্টগ্রাম"),
-    ("COXS_BAZAR", "কক্সবাজার"),
+    ("COX'S BAZAR", "কক্সবাজার"),
     ("CUMILLA", "কুমিল্লা"),
     ("FENI", "ফেনী"),
     ("BRAHMANBARIA", "ব্রাহ্মণবাড়িয়া"),
@@ -115,12 +119,33 @@ ALL_CLASS_CODES: dict[str, str] = {
 _SORTED_REGIONS = sorted(BRTA_REGIONS, key=lambda r: len(r[0]), reverse=True)
 
 
-def parse_plate(raw: str) -> tuple[str, str, str] | None:
+_BENGALI_TO_ASCII = str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")
+
+_REGION_ALIASES: dict[str, str] = {
+    "COXS BAZAR": "COX'S BAZAR",
+    "COXS_BAZAR": "COX'S BAZAR",
+}
+
+
+def parse_plate(raw: str, vehicle_type: str | None = None) -> tuple[str, str, str] | None:
     """Parse a plate string into (region, class_code, formatted_number).
 
-    Formatted number is XX-XXXX (6 digits).
+    Formatted number is XX-XXXX (6 digits). When `vehicle_type` is supplied,
+    `class_code` must belong to that vehicle type's BRTA class list; otherwise
+    it must be a known BRTA class code.
     """
-    clean = raw.strip().upper().replace("_", " ")
+    clean = raw.translate(_BENGALI_TO_ASCII).strip().upper().replace("_", " ")
+    allowed_classes = (
+        {c for c, _ in BRTA_CLASS_CODES[vehicle_type]}
+        if vehicle_type in BRTA_CLASS_CODES
+        else set(ALL_CLASS_CODES)
+    )
+    for alias, canonical in _REGION_ALIASES.items():
+        alias_norm = alias.replace("_", " ")
+        if clean.startswith(alias_norm):
+            clean = canonical + clean[len(alias_norm) :]
+            break
+
     for region_code, _ in _SORTED_REGIONS:
         normalized_reg = region_code.replace("_", " ")
         if clean.startswith(normalized_reg):
@@ -129,13 +154,15 @@ def parse_plate(raw: str) -> tuple[str, str, str] | None:
             match = re.match(r"^([A-Z]+)[\s\-_]*(\d{2})[\s\-_]*(\d{4})$", remainder)
             if match:
                 class_code, p1, p2 = match.groups()
+                if class_code not in allowed_classes:
+                    return None
                 return region_code, class_code, f"{p1}-{p2}"
     return None
 
 
 def format_plate(region: str, class_code: str, number: str) -> str:
     """Combine into standard <A> <B>-<C> format."""
-    digits = re.sub(r"\D", "", number)
+    digits = re.sub(r"\D", "", number.translate(_BENGALI_TO_ASCII))
     if len(digits) == 6:
         formatted_num = f"{digits[:2]}-{digits[2:]}"
     else:
@@ -148,9 +175,9 @@ def normalize_plate(raw: str, vehicle_type: str | None = None) -> str:
 
     If parsing fails, returns cleaned upper-cased string.
     """
-    parsed = parse_plate(raw)
+    parsed = parse_plate(raw, vehicle_type=vehicle_type)
     if parsed:
         region, class_code, num = parsed
         return f"{region} {class_code}-{num}"
-    return raw.strip().upper()
+    return raw.translate(_BENGALI_TO_ASCII).strip().upper()
 

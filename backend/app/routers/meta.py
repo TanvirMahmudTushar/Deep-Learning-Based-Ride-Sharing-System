@@ -37,16 +37,8 @@ def models():
 
 
 @router.get("/brta")
-def brta_specs(db: DB):
-    regions = db.execute(select(BRTARegion.code, BRTARegion.bengali_text).order_by(BRTARegion.id)).all()
-    class_codes = db.execute(
-        select(BRTAClassCode.code, BRTAClassCode.bengali_text, BRTAClassCode.vehicle_type).order_by(BRTAClassCode.id)
-    ).all()
-    if not regions:
-        regions = BRTA_REGIONS
-    if not class_codes:
-        class_codes = [(c, bn, vt) for vt, items in BRTA_CLASS_CODES.items() for c, bn in items]
+def brta_specs():
     return {
-        "regions": [{"code": r[0], "bengali": r[1]} for r in regions],
-        "class_codes": [{"code": c[0], "bengali": c[1], "vehicle_type": c[2]} for c in class_codes],
+        "regions": [{"code": code, "bengali": bn} for code, bn in BRTA_REGIONS],
+        "class_codes": [{"code": c, "bengali": bn, "vehicle_type": vt} for vt, items in BRTA_CLASS_CODES.items() for c, bn in items],
     }
