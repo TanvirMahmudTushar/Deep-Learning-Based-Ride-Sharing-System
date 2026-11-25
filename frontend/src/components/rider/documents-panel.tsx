@@ -115,23 +115,25 @@ export function DocumentsPanel() {
 
   return (
     <div className="space-y-3">
-      <p className="text-sm text-muted-foreground">JPG, PNG, WebP or PDF, up to the size limit shown when you upload.</p>
+      <p className="text-xs text-muted-foreground">
+        Optional for demo: licence, insurance, registration &amp; face selfie (JPG, PNG, WebP or PDF, up to the size limit shown when you upload).
+      </p>
       {data.required.map(({ doc_type, label, document: doc }) => {
         const st = doc ? STATUS[doc.status] : null;
         const isPhoto = doc_type === "photo";
         return (
           <div key={doc_type} className={cn("space-y-2 rounded-xl border p-3", doc?.status === "rejected" && "border-red-400/40")}>
             <div className="flex items-start justify-between gap-2">
-              <div>
+              <div className="min-w-0">
                 <div className="text-sm font-medium">{label}</div>
                 <div className="text-xs text-muted-foreground">{HINT[doc_type]}</div>
               </div>
               {st ? (
-                <Badge variant="outline" className={st.className}>
+                <Badge variant="outline" className={cn("shrink-0 whitespace-nowrap", st.className)}>
                   <st.icon className="size-3" /> {st.label}
                 </Badge>
               ) : (
-                <Badge variant="outline" className="text-muted-foreground">
+                <Badge variant="outline" className="shrink-0 whitespace-nowrap text-muted-foreground">
                   Not added
                 </Badge>
               )}

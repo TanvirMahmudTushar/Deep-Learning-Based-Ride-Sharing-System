@@ -47,7 +47,7 @@ export function VerificationStatusCard({
       detail: me.vehicle ? `${VEHICLE_LABEL[me.vehicle.vehicle_type]} · ${me.vehicle.plate_no}` : "Pending",
     },
     {
-      label: "Documents (optional)",
+      label: "Documents (Optional)",
       done: allUploaded,
       detail: docs ? `${uploadedCount}/${totalDocs} uploaded` : "Checking…",
     },

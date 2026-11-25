@@ -99,14 +99,14 @@ function OnboardingContent() {
                 {activeStep === "vehicle"
                   ? "Vehicle & Licence Details"
                   : activeStep === "documents"
-                    ? "Upload Documents (optional)"
+                    ? "Upload Documents (Optional)"
                     : "Verification Status"}
               </CardTitle>
               <CardDescription>
                 {activeStep === "vehicle"
                   ? "Choose your vehicle type and enter registration details."
                   : activeStep === "documents"
-                    ? "Documents aren't required. Add your driving licence, insurance, registration or a photo if you like."
+                    ? "Optional for demo: add your driving licence, insurance, registration, or face selfie without blocking verification."
                     : "Track your verification progress. The rider app unlocks once an admin verifies you."}
               </CardDescription>
             </CardHeader>
