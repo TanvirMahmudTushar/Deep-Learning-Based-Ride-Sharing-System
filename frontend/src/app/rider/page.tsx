@@ -35,7 +35,7 @@ const MIN_GAP_MS = 4000;
 const HEARTBEAT_MS = 20000;
 
 function sendFix(fix: GeoFix) {
-  return api("/api/rider/location", { json: { lat: fix.lat, lng: fix.lng, speed_kmh: fix.speedKmh, accuracy_m: Math.round(fix.accuracy) } });
+  return api<RiderMe>("/api/rider/location", { json: { lat: fix.lat, lng: fix.lng, speed_kmh: fix.speedKmh, accuracy_m: Math.round(fix.accuracy) } });
 }
 
 function GpsStatus({ status, fix, manual, onManual }: { status: string; fix: GeoFix | null; manual: boolean; onManual: (v: boolean) => void }) {
@@ -125,7 +125,7 @@ function RiderPortal() {
     const moved = prev ? haversineKm(prev, fix) * 1000 : Infinity;
     if (prev && (now - prev.at < minGap || (moved < minMove && now - prev.at < heartbeat))) return;
     lastSent.current = { lat: fix.lat, lng: fix.lng, at: now };
-    sendFix(fix).catch(() => undefined);
+    sendFix(fix).then(applyLocationUpdate).catch(() => undefined);
   }, [geo.fix, sharing, gpsWanted, active]);
 
   useEffect(() => {
@@ -135,7 +135,7 @@ function RiderPortal() {
       const fix = latestFix.current;
       if (!fix) return;
       lastSent.current = { lat: fix.lat, lng: fix.lng, at: Date.now() };
-      sendFix(fix).catch(() => undefined);
+      sendFix(fix).then(applyLocationUpdate).catch(() => undefined);
     }, intervalTime);
     return () => clearInterval(id);
   }, [sharing, gpsWanted, active]);
@@ -147,7 +147,7 @@ function RiderPortal() {
   useEffect(() => {
     if (!sharing || !manual || active?.auto_drive || spotLat == null || spotLng == null) return;
     const id = setInterval(() => {
-      api("/api/rider/location", { json: { lat: spotLat, lng: spotLng } }).catch(() => undefined);
+      api<RiderMe>("/api/rider/location", { json: { lat: spotLat, lng: spotLng } }).then(applyLocationUpdate).catch(() => undefined);
     }, active ? 7000 : HEARTBEAT_MS);
     return () => clearInterval(id);
   }, [sharing, manual, active, spotLat, spotLng]);
@@ -193,6 +193,16 @@ function RiderPortal() {
     void refreshActive();
     void refreshOffer();
     void refreshCollect();
+  };
+
+  const applyLocationUpdate = (updated: RiderMe) => {
+    void refreshMe(updated, { revalidate: false });
+    if (updated.live_eta_min !== undefined) {
+      void refreshActive(
+        (cur) => (cur ? { ...cur, live_eta_min: updated.live_eta_min ?? cur.live_eta_min } : cur),
+        { revalidate: false },
+      );
+    }
   };
 
   const canGoOnline = !!me && verified && !incomplete;

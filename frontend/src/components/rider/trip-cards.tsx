@@ -66,7 +66,21 @@ export function OfferCard({
   const now = useNow(500);
   const [busy, setBusy] = useState<"accept" | "decline" | null>(null);
   const expiredFired = useRef(false);
-  const left = Math.max(0, (new Date(offer.expires_at).getTime() - now) / 1000);
+  const offerKey = `${offer.trip.id}:${offer.expires_at}:${offer.remaining_seconds}`;
+  const [anchor, setAnchor] = useState<{ key: string; at: number; remaining: number }>(() => ({
+    key: offerKey,
+    at: Date.now(),
+    remaining: Math.max(0, Math.min(OFFER_SECONDS, offer.remaining_seconds ?? (new Date(offer.expires_at).getTime() - Date.now()) / 1000)),
+  }));
+  if (anchor.key !== offerKey) {
+    setAnchor({
+      key: offerKey,
+      at: Date.now(),
+      remaining: Math.max(0, Math.min(OFFER_SECONDS, offer.remaining_seconds ?? (new Date(offer.expires_at).getTime() - Date.now()) / 1000)),
+    });
+  }
+  const left = Math.max(0, Math.min(OFFER_SECONDS, anchor.remaining - (now - anchor.at) / 1000));
+  const progressPct = Math.max(0, Math.min(100, (left / OFFER_SECONDS) * 100));
   const t = offer.trip;
 
   useEffect(() => {
@@ -103,7 +117,7 @@ export function OfferCard({
           <Clock className="size-3" /> {Math.ceil(left)}s
         </span>
       </div>
-      <Progress value={(left / OFFER_SECONDS) * 100} className="h-1.5" />
+      <Progress value={progressPct} className="h-1.5" />
 
       {/* Passenger photo, name, rating, distance + big fare */}
       <div className="flex items-center justify-between gap-3">
