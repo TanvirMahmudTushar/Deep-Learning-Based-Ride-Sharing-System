@@ -134,9 +134,7 @@ function OnboardingContent() {
                     <VerificationStatusCard
                       key="status"
                       me={me}
-                      onRefresh={async () => {
-                        await mutate();
-                      }}
+                      onRefresh={() => mutate()}
                       onEditStep={(target) => setStep(target)}
                       onEnterApp={() => router.replace("/rider")}
                     />
