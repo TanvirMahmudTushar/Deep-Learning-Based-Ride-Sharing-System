@@ -188,11 +188,13 @@ export interface RiderMe {
   missing_documents: string[];
   commission_due: number;
   avatar_url?: string | null;
+  live_eta_min?: number | null;
 }
 
 export interface Offer {
   trip: Trip;
   expires_at: string;
+  remaining_seconds: number;
   pickup_distance_km: number;
 }
 

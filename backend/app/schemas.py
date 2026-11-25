@@ -553,6 +553,7 @@ class AutoDriveIn(BaseModel):
 class OfferOut(BaseModel):
     trip: TripOut
     expires_at: UTCDateTime
+    remaining_seconds: float
     pickup_distance_km: float
 
 
@@ -578,6 +579,7 @@ class RiderMe(BaseModel):
     missing_documents: list[str]
     commission_due: float
     avatar_url: str | None = None
+    live_eta_min: float | None = None
 
 
 # --- admin ----------------------------------------------------------------------------------

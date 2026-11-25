@@ -12,7 +12,7 @@ from app.config import settings
 from app.db import local_day_start, utcnow
 from app.geo import haversine_km
 from app.models import DemandForecast, Payment, Profile, Rider, Trip, Vehicle
-from app.schemas import RiderCancelIn, RiderContactIn, RiderOnboardingVehicleIn, AutoDriveIn, LocationIn, MessageIn, OfferOut, OnlineIn, RiderMe, TripOut, iso_utc, rider_rating, trip_out, vehicle_out
+from app.schemas import RiderCancelIn, RiderContactIn, RiderOnboardingVehicleIn, AutoDriveIn, LocationIn, MessageIn, OfferOut, OnlineIn, RiderMe, TripOut, iso_utc, live_eta_min, rider_rating, trip_out, vehicle_out
 from app.security import DB, CurrentRider, verify_password
 from app.realtime import ADMINS, emit
 from app.services import availability, demand, documents, messages, payments, pricing, weather
@@ -61,6 +61,7 @@ def me(db: DB, rider: CurrentRider):
         else 0
     )
     ready, missing = documents.verification_ready(db, rider)
+    active_trip = trip_service.active_trip_for_rider(db, rider.id)
     return RiderMe(
         id=rider.id,
         full_name=rider.profile.full_name,
@@ -83,6 +84,7 @@ def me(db: DB, rider: CurrentRider):
         missing_documents=missing,
         commission_due=payments.rider_balance(db, rider.id)["commission_due"] if is_verified else 0.0,
         avatar_url=f"/api/documents/{rider.profile.avatar_doc_id}/file" if rider.profile.avatar_doc_id else None,
+        live_eta_min=live_eta_min(active_trip) if active_trip else None,
     )
 
 
@@ -191,9 +193,13 @@ def current_offer(db: DB, rider: CurrentRider):
         if rider.current_lat is not None and rider.current_lng is not None
         else 0.0
     )
+    now = utcnow()
+    expires_at = trip.offered_at + timedelta(seconds=settings.offer_timeout_seconds)
+    remaining = max(0.0, (expires_at - now).total_seconds())
     return OfferOut(
         trip=trip_out(db, trip, for_rider=True),
-        expires_at=trip.offered_at + timedelta(seconds=settings.offer_timeout_seconds),
+        expires_at=expires_at,
+        remaining_seconds=round(remaining, 2),
         pickup_distance_km=pickup_dist,
     )
 

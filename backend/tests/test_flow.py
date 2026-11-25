@@ -544,3 +544,37 @@ def test_proximity_and_duration_guards_on_trip_transitions(client, user_h, rider
     assert client.post(f"/api/rider/trips/{trip_id}/collect", headers=rider_h).status_code == 200
 
 
+def test_rider_location_updates_live_eta_and_offer_remaining_seconds(client, user_h, rider_h):
+    with SessionLocal() as db:
+        db.execute(update(Rider).where(Rider.is_simulated.is_(True)).values(is_online=False))
+        db.commit()
+
+    assert client.post("/api/rider/online", headers=rider_h, json={"is_online": True, "lat": 23.8000, "lng": 90.4150}).status_code == 200
+    trip = client.post("/api/trips", headers=user_h, json={"pickup": GULSHAN, "drop": DHANMONDI, "vehicle_type": "bike"}).json()
+    trip_id = trip["id"]
+
+    offer = client.get("/api/rider/offer", headers=rider_h).json()
+    assert offer is not None
+    assert 0 < offer["remaining_seconds"] <= settings.offer_timeout_seconds
+
+    assert client.post(f"/api/rider/offers/{trip_id}/accept", headers=rider_h).status_code == 200
+    far_loc = client.post("/api/rider/location", headers=rider_h, json={"lat": 23.8050, "lng": 90.4150}).json()
+    near_loc = client.post("/api/rider/location", headers=rider_h, json={"lat": 23.7840, "lng": 90.4150}).json()
+    assert far_loc["live_eta_min"] is not None
+    assert near_loc["live_eta_min"] is not None
+    assert near_loc["live_eta_min"] < far_loc["live_eta_min"]
+
+    assert client.post("/api/rider/location", headers=rider_h, json={**GULSHAN}).status_code == 200
+    assert client.post(f"/api/rider/trips/{trip_id}/start", headers=rider_h).status_code == 200
+    mid_loc = client.post("/api/rider/location", headers=rider_h, json={"lat": 23.7650, "lng": 90.3950}).json()
+    drop_loc = client.post("/api/rider/location", headers=rider_h, json={**DHANMONDI}).json()
+    assert drop_loc["live_eta_min"] < mid_loc["live_eta_min"]
+
+    with SessionLocal() as db:
+        t = db.get(Trip, trip_id)
+        t.started_at = t.started_at - timedelta(minutes=1)
+        db.commit()
+    assert client.post(f"/api/rider/trips/{trip_id}/complete", headers=rider_h).status_code == 200
+    assert client.post(f"/api/rider/trips/{trip_id}/collect", headers=rider_h).status_code == 200
+
+
