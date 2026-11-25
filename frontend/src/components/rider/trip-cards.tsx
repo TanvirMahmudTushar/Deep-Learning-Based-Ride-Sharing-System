@@ -253,6 +253,12 @@ export function ActiveTripCard({
         ? "ongoing"
         : "other";
 
+  useEffect(() => {
+    setConfirmFar(false);
+    setCancelOpen(false);
+    setActionError(null);
+  }, [trip.id, trip.status, stage]);
+
   const target = stage === "ongoing" ? trip.drop : trip.pickup;
   const distanceKm = position ? haversineKm(position, target) : null;
   const far = distanceKm != null && distanceKm > FAR_KM;
@@ -541,7 +547,7 @@ export function ActiveTripCard({
           </Button>
         </motion.div>
       </div>
-      <RiderCancelDialog trip={trip} open={cancelOpen} onOpenChange={setCancelOpen} onCancelled={onChanged} />
+      <RiderCancelDialog key={trip.id} trip={trip} open={cancelOpen} onOpenChange={setCancelOpen} onCancelled={onChanged} />
     </div>
   );
 }
