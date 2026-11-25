@@ -159,6 +159,7 @@ export function PlateNumberInput({
   }, [validationMessage]);
 
   const fullPlate = formatPlate(region, classCode, number6);
+  const isCommercialGreen = vehicleType === "cng" || classCode === "PA";
   const hasRegionOrClass = !!(currentRegion || currentClass);
   const bnLine1 = hasRegionOrClass
     ? [currentRegion?.bengali, currentClass?.bengali].filter(Boolean).join("-")
@@ -252,7 +253,13 @@ export function PlateNumberInput({
 
       {/* Visual Bangladesh BRTA License Plate Preview (Realistic physical plate design) */}
       <div className="flex justify-center py-1">
-        <div className="relative flex w-60 sm:w-68 flex-col items-center justify-center rounded-xl border-[2.5px] border-black bg-white px-3 py-2 sm:py-2.5 shadow-md select-none">
+        <div
+          data-plate-variant={isCommercialGreen ? "commercial-green" : "private-white"}
+          className={cn(
+            "relative flex w-60 sm:w-68 flex-col items-center justify-center rounded-xl border-[2.5px] border-black px-3 py-2 sm:py-2.5 shadow-md select-none transition-colors",
+            isCommercialGreen ? "bg-[#4cc764]" : "bg-white",
+          )}
+        >
           {/* Top metallic screw heads */}
           <span
             aria-hidden="true"
@@ -268,7 +275,7 @@ export function PlateNumberInput({
             style={{ fontFamily: 'var(--font-solaiman-lipi), "SolaimanLipi", sans-serif' }}
             className={cn(
               "font-solaiman-lipi text-center font-bold text-black tracking-normal text-2xl sm:text-[1.75rem] leading-[1.15]",
-              !currentRegion && "text-zinc-400",
+              !currentRegion && (isCommercialGreen ? "text-black/45" : "text-zinc-400"),
             )}
           >
             {bnLine1}
@@ -279,7 +286,7 @@ export function PlateNumberInput({
             style={{ fontFamily: 'var(--font-solaiman-lipi), "SolaimanLipi", sans-serif' }}
             className={cn(
               "font-solaiman-lipi text-center font-bold text-black tracking-wider text-2xl sm:text-[1.75rem] leading-[1.15]",
-              !hasNumber && "text-zinc-400",
+              !hasNumber && (isCommercialGreen ? "text-black/45" : "text-zinc-400"),
             )}
           >
             {bnLine2}
