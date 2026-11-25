@@ -555,6 +555,8 @@ class OfferOut(BaseModel):
     expires_at: UTCDateTime
     remaining_seconds: float
     pickup_distance_km: float
+    estimated_earning: float | None = None
+    commission_pct: float | None = None
 
 
 class RiderMe(BaseModel):
