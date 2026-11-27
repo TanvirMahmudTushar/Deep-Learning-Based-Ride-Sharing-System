@@ -549,6 +549,49 @@ class PricingRuleIn(BaseModel):
     cancel_fee: float | None = Field(default=None, ge=0, le=1000)
 
 
+PaymentResolutionAction = Literal["mark_settled", "waive_balance", "resolve_dispute", "apply_adjustment"]
+
+
+class PaymentResolveIn(BaseModel):
+    action: PaymentResolutionAction = "mark_settled"
+    note: str = Field(default="", max_length=500)
+    adjusted_amount: float | None = Field(default=None, ge=0, le=1_000_000)
+
+
+class OpenPaymentOut(BaseModel):
+    id: str
+    trip_id: str
+    amount: float
+    commission: float
+    commission_pct: float
+    rider_earning: float
+    status: str
+    method: str
+    created_at: UTCDateTime | None
+    collected_at: UTCDateTime | None
+    pickup_address: str
+    drop_address: str
+    vehicle_type: str
+    distance_km: float
+    rider_id: str
+    rider_name: str
+    rider_phone: str
+    rider_is_simulated: bool
+    passenger_id: str
+    passenger_name: str
+    passenger_phone: str
+    trip_status: str
+    fare_estimate: float
+    fare_final: float | None
+    dispute_reason: str | None = None
+    dispute_note: str | None = None
+    dispute_created_at: UTCDateTime | None = None
+    original_amount: float | None = None
+    resolution_action: str | None = None
+    resolution_note: str | None = None
+    resolved_at: UTCDateTime | None = None
+
+
 # --- assistant ------------------------------------------------------------------------------
 
 

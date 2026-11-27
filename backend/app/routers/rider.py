@@ -49,7 +49,7 @@ def me(db: DB, rider: CurrentRider):
     earnings = (
         db.scalar(
             select(func.sum(Payment.rider_earning)).where(
-                Payment.rider_id == rider.id, Payment.status != "disputed", Payment.created_at >= local_day_start()
+                Payment.rider_id == rider.id, Payment.status.notin_(("disputed", "waived")), Payment.created_at >= local_day_start()
             )
         )
         if is_verified

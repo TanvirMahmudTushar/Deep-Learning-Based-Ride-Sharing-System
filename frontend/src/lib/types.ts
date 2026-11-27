@@ -640,7 +640,7 @@ export interface PaymentRow {
   commission: number;
   commission_pct: number;
   rider_earning: number;
-  status: "pending" | "collected" | "disputed";
+  status: "pending" | "collected" | "disputed" | "waived";
   method: string;
   created_at: string | null;
   collected_at: string | null;
@@ -648,6 +648,28 @@ export interface PaymentRow {
   drop_address: string;
   vehicle_type: VehicleType;
   distance_km: number;
+}
+
+export type PaymentResolutionAction = "mark_settled" | "waive_balance" | "resolve_dispute" | "apply_adjustment";
+
+export interface OpenPaymentRow extends PaymentRow {
+  rider_id: string;
+  rider_name: string;
+  rider_phone: string;
+  rider_is_simulated: boolean;
+  passenger_id: string;
+  passenger_name: string;
+  passenger_phone: string;
+  trip_status: string;
+  fare_estimate: number;
+  fare_final: number | null;
+  dispute_reason: string | null;
+  dispute_note: string | null;
+  dispute_created_at: string | null;
+  original_amount: number | null;
+  resolution_action: PaymentResolutionAction | null;
+  resolution_note: string | null;
+  resolved_at: string | null;
 }
 
 export interface EarningsPeriod {
@@ -700,7 +722,7 @@ export interface PaymentsOverview {
   month: { gross: number; commission: number; trips: number };
   commission_outstanding: number;
   balances: (RiderBalance & { rider_id: string; full_name: string; phone: string; is_simulated: boolean; vehicle_type: VehicleType | null })[];
-  open_payments: PaymentRow[];
+  open_payments: OpenPaymentRow[];
   settlements: { id: string; rider_name: string; amount: number; note: string; created_at: string | null }[];
 }
 

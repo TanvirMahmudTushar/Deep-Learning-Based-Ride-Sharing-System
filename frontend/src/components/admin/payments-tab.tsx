@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
-import { Bot, Check, HandCoins, Loader2 } from "lucide-react";
+import { AlertTriangle, Ban, Bot, Check, HandCoins, Loader2, Phone, Scale, ShieldCheck, User } from "lucide-react";
 import { Stat, VehicleTag } from "@/components/ride-bits";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { api, fetcher } from "@/lib/api";
 import { formatDateTime, formatTaka, plural } from "@/lib/format";
 import { useLiveInterval } from "@/lib/realtime";
-import type { AdminCancelFee, PaymentsOverview } from "@/lib/types";
+import type { AdminCancelFee, OpenPaymentRow, PaymentResolutionAction, PaymentsOverview } from "@/lib/types";
 
 type Balance = PaymentsOverview["balances"][number];
 
@@ -86,22 +86,198 @@ function SettlementDialog({ balance, onOpenChange, onSaved }: { balance: Balance
   );
 }
 
+const RESOLUTION_META: Record<
+  PaymentResolutionAction,
+  { label: string; description: string; noteRequired: boolean; notePlaceholder: string; successLabel: string }
+> = {
+  mark_settled: {
+    label: "Mark settled",
+    description: "Confirm that cash has been collected from the passenger and add it to the rider's ledger.",
+    noteRequired: false,
+    notePlaceholder: "Confirmed with rider and passenger…",
+    successLabel: "Payment marked as settled",
+  },
+  resolve_dispute: {
+    label: "Resolve dispute",
+    description: "Close the passenger's fare dispute and mark the payment as collected.",
+    noteRequired: true,
+    notePlaceholder: "Verified fare with both parties, dispute closed…",
+    successLabel: "Dispute resolved",
+  },
+  apply_adjustment: {
+    label: "Adjust fare",
+    description: "Update the final collected fare and recalculate platform commission and rider earning.",
+    noteRequired: true,
+    notePlaceholder: "Reason for fare adjustment…",
+    successLabel: "Fare adjusted and settled",
+  },
+  waive_balance: {
+    label: "Waive balance",
+    description: "Write off this unpaid or disputed balance (commission and rider earning become ৳0).",
+    noteRequired: true,
+    notePlaceholder: "Reason for waiving balance…",
+    successLabel: "Balance waived",
+  },
+};
+
+function PaymentResolutionDialog({
+  target,
+  onClose,
+  onSaved,
+}: {
+  target: { payment: OpenPaymentRow; action: PaymentResolutionAction } | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [action, setAction] = useState<PaymentResolutionAction>("mark_settled");
+  const [note, setNote] = useState("");
+  const [adjustedAmount, setAdjustedAmount] = useState<string>("");
+  const [saving, setSaving] = useState(false);
+
+  const [lastTargetId, setLastTargetId] = useState<string | null>(null);
+  const [lastTargetAction, setLastTargetAction] = useState<PaymentResolutionAction | null>(null);
+  if (target && (target.payment.id !== lastTargetId || target.action !== lastTargetAction)) {
+    setLastTargetId(target.payment.id);
+    setLastTargetAction(target.action);
+    setAction(target.action);
+    setAdjustedAmount(String(Math.max(0, target.payment.amount)));
+    setNote("");
+  }
+
+  function close() {
+    setNote("");
+    setAdjustedAmount("");
+    setLastTargetId(null);
+    setLastTargetAction(null);
+    onClose();
+  }
+
+  if (!target) return null;
+  const p = target.payment;
+  const meta = RESOLUTION_META[action];
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (meta.noteRequired && !note.trim()) {
+      toast.error("Please enter an audit note");
+      return;
+    }
+    if (action === "apply_adjustment") {
+      const parsed = Number(adjustedAmount);
+      if (Number.isNaN(parsed) || parsed < 0) {
+        toast.error("Enter a valid adjusted amount");
+        return;
+      }
+    }
+    setSaving(true);
+    try {
+      await api(`/api/admin/payments/${p.id}/resolve`, {
+        method: "POST",
+        json: {
+          action,
+          note: note.trim(),
+          adjusted_amount: action === "apply_adjustment" ? Number(adjustedAmount) : undefined,
+        },
+      });
+      toast.success(meta.successLabel);
+      onSaved();
+      close();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not resolve payment");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const availableActions: PaymentResolutionAction[] =
+    p.status === "disputed"
+      ? ["resolve_dispute", "apply_adjustment", "waive_balance", "mark_settled"]
+      : ["mark_settled", "apply_adjustment", "waive_balance"];
+
+  return (
+    <Dialog open={!!target} onOpenChange={(open) => !open && close()}>
+      <DialogContent>
+        <form onSubmit={submit} className="space-y-4">
+          <DialogHeader>
+            <DialogTitle>{meta.label}</DialogTitle>
+            <DialogDescription>{meta.description}</DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-1.5 rounded-lg border bg-muted/40 p-3 text-xs">
+            <div className="flex items-center justify-between gap-2 font-medium text-foreground">
+              <span className="truncate">
+                {p.pickup_address} → {p.drop_address}
+              </span>
+              <span className="shrink-0 tabular-nums">{formatTaka(p.amount)}</span>
+            </div>
+            <div className="text-muted-foreground">
+              Rider: {p.rider_name} ({p.rider_phone || "No phone"}) · Passenger: {p.passenger_name} ({p.passenger_phone || "No phone"})
+            </div>
+            {p.dispute_note && (
+              <div className="rounded bg-red-400/10 px-2 py-1 text-red-200">
+                Dispute{p.dispute_reason ? ` (${p.dispute_reason})` : ""}: {p.dispute_note}
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <Label>Resolution action</Label>
+            <div className="flex flex-wrap gap-1.5">
+              {availableActions.map((a) => (
+                <Button key={a} type="button" size="xs" variant={action === a ? "default" : "outline"} onClick={() => setAction(a)}>
+                  {RESOLUTION_META[a].label}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          {action === "apply_adjustment" && (
+            <div className="space-y-2">
+              <Label htmlFor="adjust-amount">Adjusted fare amount (৳)</Label>
+              <Input
+                id="adjust-amount"
+                type="number"
+                min={0}
+                step="1"
+                required
+                value={adjustedAmount}
+                onChange={(e) => setAdjustedAmount(e.target.value)}
+              />
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <Label htmlFor="resolve-note">
+              Audit note {meta.noteRequired ? <span className="text-red-300">*</span> : <span className="text-muted-foreground">(optional)</span>}
+            </Label>
+            <Input
+              id="resolve-note"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder={meta.notePlaceholder}
+              required={meta.noteRequired}
+              maxLength={500}
+            />
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={close} disabled={saving}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={saving}>
+              {saving && <Loader2 className="animate-spin" />} Confirm {meta.label.toLowerCase()}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function PaymentsTab() {
   const { data, mutate } = useSWR<PaymentsOverview>("/api/admin/payments", fetcher, { refreshInterval: useLiveInterval(10000, 60000) });
   const [settling, setSettling] = useState<Balance | null>(null);
-  const [resolving, setResolving] = useState<string | null>(null);
-
-  async function resolve(id: string) {
-    setResolving(id);
-    try {
-      await api(`/api/admin/payments/${id}/resolve`, { method: "POST" });
-      await mutate();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not update payment");
-    } finally {
-      setResolving(null);
-    }
-  }
+  const [resolutionTarget, setResolutionTarget] = useState<{ payment: OpenPaymentRow; action: PaymentResolutionAction } | null>(null);
 
   if (!data) return <Skeleton className="h-96" />;
 
@@ -120,20 +296,77 @@ export function PaymentsTab() {
             <CardTitle>Needs attention</CardTitle>
             <CardDescription>Cash not yet confirmed by the rider, or disputed by the passenger</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-2">
+          <CardContent className="space-y-3">
             {data.open_payments.map((p) => (
-              <div key={p.id} className="flex flex-wrap items-center gap-3 rounded-lg border p-3 text-sm">
-                <Badge variant="outline" className={p.status === "disputed" ? "border-red-400/30 bg-red-400/10 text-red-200" : "border-amber-400/30 bg-amber-400/10 text-amber-200"}>
-                  {p.status}
-                </Badge>
-                <span className="min-w-0 flex-1 truncate">
-                  {p.pickup_address} → {p.drop_address}
-                </span>
-                <span className="text-xs text-muted-foreground">{formatDateTime(p.created_at)}</span>
-                <span className="font-medium tabular-nums">{formatTaka(p.amount)}</span>
-                <Button size="sm" variant="outline" disabled={resolving === p.id} onClick={() => resolve(p.id)}>
-                  {resolving === p.id ? <Loader2 className="animate-spin" /> : <Check />} Mark collected
-                </Button>
+              <div key={p.id} className="space-y-2.5 rounded-lg border p-3.5 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <Badge variant="outline" className={p.status === "disputed" ? "border-red-400/30 bg-red-400/10 text-red-200" : "border-amber-400/30 bg-amber-400/10 text-amber-200"}>
+                      {p.status}
+                    </Badge>
+                    <VehicleTag type={p.vehicle_type} className="text-xs" />
+                    <span className="truncate font-medium">
+                      {p.pickup_address} → {p.drop_address}
+                    </span>
+                    <span className="text-xs text-muted-foreground">({p.distance_km.toFixed(1)} km)</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-muted-foreground">{formatDateTime(p.created_at)}</span>
+                    <span className="font-semibold tabular-nums">{formatTaka(p.amount)}</span>
+                  </div>
+                </div>
+
+                <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+                  <div className="flex flex-wrap items-center gap-1.5 rounded-md bg-muted/40 px-2.5 py-1.5">
+                    <User className="size-3.5 text-foreground" />
+                    <span className="font-medium text-foreground">Rider:</span>
+                    <span>{p.rider_name}</span>
+                    {p.rider_is_simulated && <Bot className="size-3.5 text-muted-foreground" aria-label="Simulated rider" />}
+                    {p.rider_phone && (
+                      <span className="inline-flex items-center gap-1 text-muted-foreground">
+                        · <Phone className="size-3" /> {p.rider_phone}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 rounded-md bg-muted/40 px-2.5 py-1.5">
+                    <User className="size-3.5 text-foreground" />
+                    <span className="font-medium text-foreground">Passenger:</span>
+                    <span>{p.passenger_name}</span>
+                    {p.passenger_phone && (
+                      <span className="inline-flex items-center gap-1 text-muted-foreground">
+                        · <Phone className="size-3" /> {p.passenger_phone}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {(p.status === "disputed" || p.dispute_note) && (
+                  <div className="flex items-start gap-2 rounded-md border border-red-400/20 bg-red-400/10 px-2.5 py-2 text-xs text-red-200">
+                    <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                    <div>
+                      <span className="font-medium">Dispute{p.dispute_reason ? ` (${p.dispute_reason})` : ""}: </span>
+                      <span>{p.dispute_note || "Passenger reported a fare issue."}</span>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center justify-end gap-2 pt-0.5">
+                  {p.status === "disputed" ? (
+                    <Button size="sm" variant="default" onClick={() => setResolutionTarget({ payment: p, action: "resolve_dispute" })}>
+                      <ShieldCheck /> Resolve dispute
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="outline" onClick={() => setResolutionTarget({ payment: p, action: "mark_settled" })}>
+                      <Check /> Mark settled
+                    </Button>
+                  )}
+                  <Button size="sm" variant="outline" onClick={() => setResolutionTarget({ payment: p, action: "apply_adjustment" })}>
+                    <Scale /> Adjust fare
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setResolutionTarget({ payment: p, action: "waive_balance" })}>
+                    <Ban /> Waive balance
+                  </Button>
+                </div>
               </div>
             ))}
           </CardContent>
@@ -215,6 +448,7 @@ export function PaymentsTab() {
       <CancelFeesCard />
 
       <SettlementDialog balance={settling} onOpenChange={(open) => !open && setSettling(null)} onSaved={() => void mutate()} />
+      <PaymentResolutionDialog target={resolutionTarget} onClose={() => setResolutionTarget(null)} onSaved={() => void mutate()} />
     </div>
   );
 }

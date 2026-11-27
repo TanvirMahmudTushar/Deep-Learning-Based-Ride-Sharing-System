@@ -12,6 +12,7 @@ const PAYMENT_BADGE: Record<PaymentRow["status"], string> = {
   pending: "border-amber-400/30 bg-amber-400/10 text-amber-200",
   collected: "border-border bg-muted text-muted-foreground",
   disputed: "border-red-400/30 bg-red-400/10 text-red-200",
+  waived: "border-border bg-muted/60 text-muted-foreground",
 };
 
 export function EarningsPanel() {

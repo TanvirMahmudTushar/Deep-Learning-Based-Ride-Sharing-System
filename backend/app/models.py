@@ -400,9 +400,14 @@ class Payment(Base):
     commission_pct: Mapped[float] = mapped_column(Float)
     commission: Mapped[float] = mapped_column(Float)
     rider_earning: Mapped[float] = mapped_column(Float)
-    status: Mapped[str] = mapped_column(String(10), default="pending")  # pending, collected, disputed
+    status: Mapped[str] = mapped_column(String(10), default="pending")  # pending, collected, disputed, waived
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     collected_at: Mapped[datetime | None] = mapped_column(DateTime)
+    original_amount: Mapped[float | None] = mapped_column(Float)
+    resolved_by: Mapped[str | None] = mapped_column(ForeignKey("profiles.id"))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime)
+    resolution_action: Mapped[str | None] = mapped_column(String(24))
+    resolution_note: Mapped[str | None] = mapped_column(Text)
 
     trip: Mapped[Trip] = relationship(back_populates="payment")
 

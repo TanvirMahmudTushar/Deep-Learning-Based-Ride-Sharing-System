@@ -267,3 +267,86 @@ def test_rider_earnings_daily_and_demand_hints(client, rider_h):
     assert hints["zones"][0]["expected_requests"] >= hints["zones"][-1]["expected_requests"]
     assert all(z["distance_km"] is not None for z in hints["zones"])
     assert all(z["demand_level"] in ("low", "normal", "high", "very high") for z in hints["zones"])
+
+
+def _create_completed_trip(client, user_h, rider_h):
+    _only_demo_rider_online()
+    client.post("/api/rider/online", headers=rider_h, json={"is_online": True, "lat": 23.7815, "lng": 90.4140})
+    trip = client.post("/api/trips", headers=user_h, json={"pickup": GULSHAN, "drop": DHANMONDI, "vehicle_type": "bike"}).json()
+    client.post(f"/api/rider/offers/{trip['id']}/accept", headers=rider_h)
+    client.post(f"/api/rider/trips/{trip['id']}/start", headers=rider_h)
+    client.post(f"/api/rider/trips/{trip['id']}/complete", headers=rider_h)
+    return trip
+
+
+def test_open_payments_includes_parties_and_dispute_resolution(client, admin_h, user_h, rider_h):
+    trip = _create_completed_trip(client, user_h, rider_h)
+    client.post(f"/api/trips/{trip['id']}/report", headers=user_h, json={"category": "fare", "note": "Overcharged at drop-off"})
+
+    overview = client.get("/api/admin/payments", headers=admin_h).json()
+    row = next(p for p in overview["open_payments"] if p["trip_id"] == trip["id"])
+    assert row["status"] == "disputed"
+    assert row["rider_name"] and row["rider_phone"]
+    assert row["passenger_name"] and row["passenger_phone"]
+    assert row["dispute_reason"] == "fare"
+    assert row["dispute_note"] == "Overcharged at drop-off"
+
+    # Missing note is rejected for resolve_dispute.
+    assert client.post(f"/api/admin/payments/{row['id']}/resolve", headers=admin_h, json={"action": "resolve_dispute", "note": "  "}).status_code == 422
+
+    resolved = client.post(
+        f"/api/admin/payments/{row['id']}/resolve",
+        headers=admin_h,
+        json={"action": "resolve_dispute", "note": "Verified fare with both parties"},
+    )
+    assert resolved.status_code == 200
+    body = resolved.json()
+    assert body["status"] == "collected"
+    assert body["resolution_action"] == "resolve_dispute"
+    assert body["resolution_note"] == "Verified fare with both parties"
+    assert body["resolved_at"] is not None
+
+    # Already resolved payment cannot be resolved again.
+    assert client.post(f"/api/admin/payments/{row['id']}/resolve", headers=admin_h).status_code == 409
+    after = client.get("/api/admin/payments", headers=admin_h).json()
+    assert all(p["id"] != row["id"] for p in after["open_payments"])
+
+
+def test_admin_payment_adjustment_waive_and_default_settle(client, admin_h, user_h, rider_h):
+    # 1. Default empty POST marks pending payment as settled.
+    t1 = _create_completed_trip(client, user_h, rider_h)
+    p1 = next(p for p in client.get("/api/admin/payments", headers=admin_h).json()["open_payments"] if p["trip_id"] == t1["id"])
+    r1 = client.post(f"/api/admin/payments/{p1['id']}/resolve", headers=admin_h)
+    assert r1.status_code == 200 and r1.json()["status"] == "collected" and r1.json()["resolution_action"] == "mark_settled"
+
+    # 2. Apply adjustment recalculates commission and preserves original_amount.
+    t2 = _create_completed_trip(client, user_h, rider_h)
+    p2 = next(p for p in client.get("/api/admin/payments", headers=admin_h).json()["open_payments"] if p["trip_id"] == t2["id"])
+    assert client.post(f"/api/admin/payments/{p2['id']}/resolve", headers=admin_h, json={"action": "apply_adjustment", "note": "No amount"}).status_code == 422
+    r2 = client.post(
+        f"/api/admin/payments/{p2['id']}/resolve",
+        headers=admin_h,
+        json={"action": "apply_adjustment", "adjusted_amount": 100, "note": "Agreed on 100 BDT"},
+    )
+    assert r2.status_code == 200
+    d2 = r2.json()
+    assert d2["status"] == "collected"
+    assert d2["original_amount"] == p2["amount"]
+    assert d2["amount"] == 100.0
+    assert d2["commission"] == round(100 * d2["commission_pct"] / 100)
+    assert d2["rider_earning"] == 100.0 - d2["commission"]
+
+    # 3. Waive balance sets status=waived and zeroes commission/rider_earning.
+    t3 = _create_completed_trip(client, user_h, rider_h)
+    p3 = next(p for p in client.get("/api/admin/payments", headers=admin_h).json()["open_payments"] if p["trip_id"] == t3["id"])
+    r3 = client.post(
+        f"/api/admin/payments/{p3['id']}/resolve",
+        headers=admin_h,
+        json={"action": "waive_balance", "note": "Passenger could not pay"},
+    )
+    assert r3.status_code == 200
+    d3 = r3.json()
+    assert d3["status"] == "waived"
+    assert d3["commission"] == 0.0
+    assert d3["rider_earning"] == 0.0
+    assert d3["resolution_note"] == "Passenger could not pay"

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import utcnow
-from app.models import Payment, PricingRule, Settlement, Trip
+from app.models import Payment, PricingRule, SafetyAlert, Settlement, Trip
 
 
 def commission_pct_for(db: Session, vehicle_type: str) -> float:
@@ -44,6 +44,71 @@ def mark_collected(payment: Payment) -> Payment:
     if payment.status != "collected":
         payment.status = "collected"
         payment.collected_at = utcnow()
+    return payment
+
+
+def resolve_payment(
+    db: Session,
+    payment: Payment,
+    *,
+    admin_id: str,
+    action: str,
+    note: str = "",
+    adjusted_amount: float | None = None,
+) -> Payment:
+    """Resolve an open (pending or disputed) payment with audit tracking."""
+    if payment.status not in ("pending", "disputed"):
+        raise ValueError(f"Payment is already {payment.status}")
+
+    cleaned_note = note.strip()
+    now = utcnow()
+
+    if action == "mark_settled":
+        mark_collected(payment)
+    elif action == "waive_balance":
+        if not cleaned_note:
+            raise ValueError("An audit note is required when waiving a balance")
+        if payment.original_amount is None:
+            payment.original_amount = payment.amount
+        payment.status = "waived"
+        payment.commission = 0.0
+        payment.rider_earning = 0.0
+    elif action == "resolve_dispute":
+        if not cleaned_note:
+            raise ValueError("An audit note is required when resolving a dispute")
+        mark_collected(payment)
+        open_fare_alerts = db.scalars(
+            select(SafetyAlert).where(
+                SafetyAlert.trip_id == payment.trip_id,
+                SafetyAlert.alert_type == "report",
+                SafetyAlert.status != "closed",
+            )
+        ).all()
+        for alert in open_fare_alerts:
+            if alert.details.get("category") == "fare":
+                alert.status = "closed"
+                alert.reviewed_by = admin_id
+                alert.resolution_note = cleaned_note
+    elif action == "apply_adjustment":
+        if adjusted_amount is None:
+            raise ValueError("adjusted_amount is required when applying an adjustment")
+        if not cleaned_note:
+            raise ValueError("An audit note is required when adjusting a fare")
+        if payment.original_amount is None:
+            payment.original_amount = payment.amount
+        new_amount = round(float(adjusted_amount), 2)
+        new_commission = round(new_amount * float(payment.commission_pct) / 100)
+        payment.amount = new_amount
+        payment.commission = float(new_commission)
+        payment.rider_earning = round(new_amount - float(new_commission), 2)
+        mark_collected(payment)
+    else:
+        raise ValueError(f"Unknown resolution action: {action}")
+
+    payment.resolved_by = admin_id
+    payment.resolved_at = now
+    payment.resolution_action = action
+    payment.resolution_note = cleaned_note or None
     return payment
 
 

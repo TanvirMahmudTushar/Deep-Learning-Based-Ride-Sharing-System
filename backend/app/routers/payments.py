@@ -8,9 +8,9 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from app.db import local_day_start, local_month_start, local_time, utcnow
-from app.models import Payment, Rider, Settlement, Trip
+from app.models import Payment, Rider, SafetyAlert, Settlement, Trip
 from app.realtime import ADMINS, emit
-from app.schemas import TripOut, iso_utc, trip_out
+from app.schemas import OpenPaymentOut, PaymentResolveIn, TripOut, iso_utc, trip_out
 from app.security import DB, Admin, CurrentRider
 from app.services import payments
 
@@ -42,10 +42,67 @@ def _payment_row(p: Payment) -> dict:
     }
 
 
+def _open_payment_row(p: Payment, alert: SafetyAlert | None = None) -> dict:
+    t = p.trip
+    passenger = t.user
+    rider = t.rider
+    rider_profile = rider.profile if rider else None
+    details = alert.details if alert else {}
+    return OpenPaymentOut(
+        id=p.id,
+        trip_id=p.trip_id,
+        amount=p.amount,
+        commission=p.commission,
+        commission_pct=p.commission_pct,
+        rider_earning=p.rider_earning,
+        status=p.status,
+        method=p.method,
+        created_at=p.created_at,
+        collected_at=p.collected_at,
+        pickup_address=t.pickup_address,
+        drop_address=t.drop_address,
+        vehicle_type=t.vehicle_type_requested,
+        distance_km=t.distance_km,
+        rider_id=p.rider_id,
+        rider_name=rider_profile.full_name if rider_profile else "Unknown rider",
+        rider_phone=rider_profile.phone if rider_profile else "",
+        rider_is_simulated=bool(rider.is_simulated) if rider else False,
+        passenger_id=t.user_id,
+        passenger_name=passenger.full_name if passenger else "Unknown passenger",
+        passenger_phone=passenger.phone if passenger else "",
+        trip_status=t.status,
+        fare_estimate=t.fare_estimate,
+        fare_final=t.fare_final,
+        dispute_reason=details.get("category"),
+        dispute_note=details.get("note") or None,
+        dispute_created_at=alert.created_at if alert else None,
+        original_amount=p.original_amount,
+        resolution_action=p.resolution_action,
+        resolution_note=p.resolution_note,
+        resolved_at=p.resolved_at,
+    ).model_dump()
+
+
+def _fare_dispute_alerts(db: DB, trip_ids: list[str]) -> dict[str, SafetyAlert]:
+    if not trip_ids:
+        return {}
+    alerts = db.scalars(
+        select(SafetyAlert)
+        .where(SafetyAlert.trip_id.in_(trip_ids), SafetyAlert.alert_type == "report")
+        .order_by(SafetyAlert.created_at.desc())
+    ).all()
+    by_trip: dict[str, SafetyAlert] = {}
+    for alert in alerts:
+        existing = by_trip.get(alert.trip_id)
+        if existing is None or (alert.details.get("category") == "fare" and existing.details.get("category") != "fare"):
+            by_trip[alert.trip_id] = alert
+    return by_trip
+
+
 def _period(db: DB, rider_id: str, since) -> dict:
     gross, earning, trips = db.execute(
         select(func.coalesce(func.sum(Payment.amount), 0), func.coalesce(func.sum(Payment.rider_earning), 0), func.count(Payment.id)).where(
-            Payment.rider_id == rider_id, Payment.status != "disputed", Payment.created_at >= since
+            Payment.rider_id == rider_id, Payment.status.notin_(("disputed", "waived")), Payment.created_at >= since
         )
     ).one()
     return {"gross": round(float(gross)), "earnings": round(float(earning)), "trips": int(trips)}
@@ -57,7 +114,7 @@ def _daily_breakdown(db: DB, rider_id: str, days: int = 7) -> list[dict]:
     since = local_day_start() - timedelta(days=days - 1)
     rows = db.execute(
         select(Payment.amount, Payment.rider_earning, Payment.created_at).where(
-            Payment.rider_id == rider_id, Payment.status != "disputed", Payment.created_at >= since
+            Payment.rider_id == rider_id, Payment.status.notin_(("disputed", "waived")), Payment.created_at >= since
         )
     ).all()
 
@@ -165,8 +222,16 @@ def payments_overview(db: DB, admin: Admin):
     balances.sort(key=lambda b: (b["is_simulated"], -b["commission_due"]))
 
     pending = db.scalars(
-        select(Payment).where(Payment.status.in_(("pending", "disputed"))).options(selectinload(Payment.trip)).order_by(Payment.created_at.desc()).limit(50)
+        select(Payment)
+        .where(Payment.status.in_(("pending", "disputed")))
+        .options(
+            selectinload(Payment.trip).selectinload(Trip.user),
+            selectinload(Payment.trip).selectinload(Trip.rider).selectinload(Rider.profile),
+        )
+        .order_by(Payment.created_at.desc())
+        .limit(50)
     ).all()
+    dispute_alerts = _fare_dispute_alerts(db, [p.trip_id for p in pending])
     settlements = db.execute(
         select(Settlement, Rider).join(Rider, Rider.id == Settlement.rider_id).options(selectinload(Rider.profile)).order_by(Settlement.created_at.desc()).limit(20)
     ).all()
@@ -176,7 +241,7 @@ def payments_overview(db: DB, admin: Admin):
         "month": totals(local_month_start()),
         "commission_outstanding": sum(max(0, b["commission_due"]) for b in balances),
         "balances": balances,
-        "open_payments": [_payment_row(p) for p in pending],
+        "open_payments": [_open_payment_row(p, dispute_alerts.get(p.trip_id)) for p in pending],
         "settlements": [
             {"id": s.id, "rider_name": r.profile.full_name, "amount": s.amount, "note": s.note, "created_at": iso_utc(s.created_at)} for s, r in settlements
         ],
@@ -197,12 +262,37 @@ def record_settlement(rider_id: str, body: SettlementIn, db: DB, admin: Admin):
 
 
 @router.post("/admin/payments/{payment_id}/resolve")
-def resolve_payment(payment_id: str, db: DB, admin: Admin):
-    """Mark a pending or disputed payment as collected after checking with rider and passenger."""
-    p = db.get(Payment, payment_id)
+def resolve_payment(payment_id: str, db: DB, admin: Admin, body: PaymentResolveIn | None = None):
+    """Resolve a pending or disputed payment (settle, waive, resolve dispute, or adjust amount)."""
+    p = db.scalar(
+        select(Payment)
+        .where(Payment.id == payment_id)
+        .options(
+            selectinload(Payment.trip).selectinload(Trip.user),
+            selectinload(Payment.trip).selectinload(Trip.rider).selectinload(Rider.profile),
+        )
+    )
     if p is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Payment not found")
-    payments.mark_collected(p)
+    payload = body or PaymentResolveIn()
+    try:
+        payments.resolve_payment(
+            db,
+            p,
+            admin_id=admin.id,
+            action=payload.action,
+            note=payload.note,
+            adjusted_amount=payload.adjusted_amount,
+        )
+    except ValueError as exc:
+        code = status.HTTP_409_CONFLICT if "already" in str(exc) else status.HTTP_422_UNPROCESSABLE_CONTENT
+        raise HTTPException(code, str(exc)) from exc
+
+    if p.trip:
+        emit(db, p.trip.user_id, "trip.updated", trip_id=p.trip_id, status=p.trip.status)
+        if p.trip.rider:
+            emit(db, p.trip.rider.profile_id, "earnings.updated")
     emit(db, ADMINS, "payments.changed")
     db.commit()
-    return _payment_row(p)
+    dispute_alerts = _fare_dispute_alerts(db, [p.trip_id])
+    return _open_payment_row(p, dispute_alerts.get(p.trip_id))
