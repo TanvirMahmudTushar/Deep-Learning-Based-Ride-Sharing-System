@@ -296,12 +296,12 @@ def demand_hints(
     if zone_points:
         free_riders = db.scalars(
             select(Rider)
+            .join(Profile, Profile.id == Rider.profile_id)
             .join(Vehicle, Vehicle.rider_id == Rider.id)
             .where(
-                Rider.is_online.is_(True),
-                Rider.status == "verified",
+                *availability.online_rider_clauses(),
                 Rider.current_lat.is_not(None),
-                or_(Rider.is_simulated.is_(True), Rider.last_seen >= utcnow() - timedelta(seconds=settings.rider_stale_seconds)),
+                Rider.current_lng.is_not(None),
                 Vehicle.vehicle_type == vt,
                 Vehicle.verified.is_(True),
                 Vehicle.retired_at.is_(None),

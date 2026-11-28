@@ -442,7 +442,9 @@ export function RidersTab() {
                             {account.vehicle && <div className="text-xs text-muted-foreground">{account.vehicle.model} · {account.vehicle.plate_no}</div>}
                             <div className="font-mono text-xs text-muted-foreground">Licence {account.license_no}</div>
                             <div className="text-xs text-muted-foreground">
-                              {account.is_online ? (account.busy ? "On a trip" : "Online") : "Offline"}
+                              {account.status === "verified" && account.account_status !== "suspended" && account.is_online
+                                ? (account.busy ? "On a trip" : "Online")
+                                : "Offline"}
                             </div>
                             <RatingText rating={account.rating} count={account.rating_count} />
                             <BlockedBy n={account.blocked_by} onClick={() => openBlocks(account)} />

@@ -115,11 +115,11 @@ def stats(db: DB, admin: Admin):
         elif trip_status == "cancelled":
             daily[day]["cancelled"] += 1
 
-    online = db.scalars(select(Rider).where(Rider.is_online.is_(True)).options(selectinload(Rider.vehicles))).all()
+    online = availability.online_riders(db)
     busy = availability.busy_rider_ids(db)
     online_by_type: dict[str, int] = defaultdict(int)
     for r in online:
-        if r.vehicle:
+        if r.vehicle and r.vehicle.verified:
             online_by_type[r.vehicle.vehicle_type] += 1
 
     weather = current_weather(db)
@@ -279,7 +279,7 @@ def riders(db: DB, admin: Admin, status_filter: str | None = None):
                 "phone": r.profile.phone,
                 "license_no": r.license_no,
                 "status": "suspended" if account_is_suspended(r.profile) else r.status,
-                "is_online": r.is_online,
+                "is_online": availability.is_rider_truly_online(r),
                 "is_simulated": r.is_simulated,
                 "busy": r.id in busy,
                 "lat": r.current_lat,
@@ -465,7 +465,7 @@ def admin_accounts(
                 "rider_id": rider.id if rider else None,
                 "license_no": rider.license_no if rider else None,
                 "is_simulated": rider.is_simulated if rider else False,
-                "is_online": rider.is_online if rider else False,
+                "is_online": availability.is_rider_truly_online(rider) if rider else False,
                 "busy": rider.id in busy if rider else False,
                 "lat": rider.current_lat if rider else None,
                 "lng": rider.current_lng if rider else None,
@@ -663,7 +663,7 @@ def revoke_support_agent(agent_id: str, db: DB, admin: Admin):
 def live_trips(db: DB, staff: Staff):
     trips = db.scalars(select(Trip).where(Trip.status.in_(ACTIVE_TRIP_STATUSES)).order_by(Trip.requested_at.desc())).all()
     busy = availability.busy_rider_ids(db)
-    online = db.scalars(select(Rider).where(Rider.is_online.is_(True)).options(selectinload(Rider.vehicles)))
+    online = availability.online_riders(db, require_location=True)
     trace_by_trip: dict[str, list[list[float]]] = defaultdict(list)
     if trips:
         locations = db.execute(
@@ -1131,16 +1131,12 @@ def forecasts(db: DB, admin: Admin, horizon_minutes: int = Query(default=60, ge=
     busy = availability.busy_rider_ids(db)
     supply: dict[int, dict[str, int]] = defaultdict(lambda: {vt: 0 for vt in VEHICLE_TYPES})
     zone_points = [(z.id, (z.center_lat, z.center_lng)) for z in zones]
-    riders = db.scalars(
-        select(Rider)
-        .options(selectinload(Rider.vehicles))
-        .where(Rider.is_online.is_(True), Rider.current_lat.is_not(None))
-    )
+    riders = availability.online_riders(db, require_location=True)
     for r in riders:
         if r.id in busy:
             continue
         vehicle = r.vehicle
-        if vehicle is None or vehicle.vehicle_type not in VEHICLE_TYPES:
+        if vehicle is None or not vehicle.verified or vehicle.vehicle_type not in VEHICLE_TYPES:
             continue
         zid = min(zone_points, key=lambda zp: haversine_km(zp[1], (r.current_lat, r.current_lng)))[0]
         supply[zid][vehicle.vehicle_type] += 1
