@@ -14,7 +14,7 @@ from app.services import login_throttle
 from .conftest import login
 
 # Everything else under /api must demand a login, so a new route without a guard fails these tests.
-PUBLIC_ROUTES = {"/api/auth/register", "/api/auth/login", "/api/health", "/api/zones", "/api/models", "/api/brta"}
+PUBLIC_ROUTES = {"/api/auth/register", "/api/auth/login", "/api/auth/otp/request", "/api/auth/otp/verify", "/api/health", "/api/zones", "/api/models", "/api/brta"}
 PASSENGER_PREFIXES = ("/api/trips", "/api/passenger", "/api/assistant")
 RIDER_PREFIXES = ("/api/rider",)
 ADMIN_PREFIXES = ("/api/admin",)
@@ -55,8 +55,19 @@ def _call_all(client, prefixes, headers):
     return {(m, url): client.request(m, url, headers=headers).status_code for m, url in routes}
 
 
+import itertools
+
+from app.schemas import normalize_phone
+
+_PHONE_SEQ = itertools.count(10000001)
+
+
+def _next_phone() -> str:
+    return f"+88017{next(_PHONE_SEQ)}"
+
+
 def _register(client, email, password="a-good-password", **extra):
-    body = {"full_name": "Auth Test", "email": email, "phone": "+8801711111111", "password": password, **extra}
+    body = {"full_name": "Auth Test", "email": email, "phone": _next_phone(), "password": password, "otp": "000000", **extra}
     return client.post("/api/auth/register", json=body)
 
 
@@ -235,7 +246,7 @@ def test_new_support_agent_has_access_straight_away_but_only_to_support_routes(c
 
 
 def test_support_agent_cannot_choose_their_own_status_or_use_admin_actions(client):
-    body = {"full_name": "Sneaky", "email": "sneaky@example.com", "phone": "+8801711111111", "password": "a-good-password"}
+    body = {"full_name": "Sneaky", "email": "sneaky@example.com", "phone": _next_phone(), "password": "a-good-password", "otp": "000000"}
     created = client.post("/api/auth/register", json={**body, "role": "support", "approval_status": "revoked"}).json()
     assert created["profile"]["approval_status"] == "approved"  # the field is ignored; sign-up decides it
     agent = {"Authorization": f"Bearer {created['token']}"}
@@ -310,7 +321,7 @@ def test_support_agent_can_work_an_alert(client, support_h, user_h, admin_h):
 
 
 def _signup_body(**overrides) -> dict:
-    return {"full_name": "Valid Name", "email": "valid@example.com", "phone": "+8801712345678", "password": "a-good-password", **overrides}
+    return {"full_name": "Valid Name", "email": "valid@example.com", "phone": _next_phone(), "password": "a-good-password", "otp": "000000", **overrides}
 
 
 @pytest.mark.parametrize("phone", ["abcdef", "12345", "+88-", "01712 34x678", "+" + "1" * 40])
@@ -319,11 +330,11 @@ def test_sign_up_rejects_phone_numbers_nobody_could_dial(client, phone):
     assert resp.status_code == 422, resp.text
 
 
-@pytest.mark.parametrize("phone", ["+8801712345678", "01712345678", "+880 1712-345678"])
+@pytest.mark.parametrize("phone", ["+8801712345671", "01712345672", "+880 1712-345673"])
 def test_sign_up_accepts_normal_phone_numbers(client, phone):
     resp = client.post("/api/auth/register", json=_signup_body(email=f"ok.phone.{abs(hash(phone))}@example.com", phone=phone))
     assert resp.status_code == 201, resp.text
-    assert resp.json()["profile"]["phone"] == phone.strip()
+    assert resp.json()["profile"]["phone"] == normalize_phone(phone)
 
 
 def test_a_name_of_only_spaces_is_not_a_name(client, user_h):
@@ -346,3 +357,109 @@ def test_new_password_has_to_differ_from_the_current_one(client):
     same = client.post("/api/auth/password", headers=h, json={"current_password": "a-good-password", "new_password": "a-good-password"})
     assert same.status_code == 400 and "different" in same.json()["detail"]
     assert client.post("/api/auth/password", headers=h, json={"current_password": "a-good-password", "new_password": "another-good-one"}).status_code == 200
+
+
+def test_registration_requires_valid_otp_and_normalizes_phone_uniqueness(client):
+    # Missing or wrong OTP is rejected; 000000 succeeds.
+    no_otp = _signup_body(email="no.otp@example.com")
+    no_otp.pop("otp")
+    assert client.post("/api/auth/register", json=no_otp).status_code == 400
+    assert client.post("/api/auth/register", json=_signup_body(email="bad.otp@example.com", otp="123456")).status_code == 400
+
+    # OtpRequestIn rejects invalid phone formats.
+    assert client.post("/api/auth/otp/request", json={"email": "otp.bad@example.com", "phone": "not-a-phone"}).status_code == 422
+
+    # Register with +8801755512345; equivalent local/dashed formats must be rejected as duplicates.
+    ok = client.post("/api/auth/register", json=_signup_body(email="phone.norm1@example.com", phone="+8801755512345"))
+    assert ok.status_code == 201, ok.text
+    assert ok.json()["profile"]["phone"] == "+8801755512345"
+    assert ok.json()["profile"]["phone_verified"] is True
+
+    for dup_phone in ("01755512345", "+880 1755-512345", "8801755512345"):
+        assert (
+            client.post("/api/auth/otp/request", json={"email": "phone.dup@example.com", "phone": dup_phone}).status_code
+            == 409
+        )
+        assert (
+            client.post("/api/auth/register", json=_signup_body(email="phone.dup@example.com", phone=dup_phone)).status_code
+            == 409
+        )
+
+
+def test_rider_registration_rejects_blank_vehicle_fields_and_duplicate_plates_and_emits_admin_event(client, monkeypatch):
+    from sqlalchemy import delete, select
+    from app.db import SessionLocal
+    from app.models import Profile, Rider, Vehicle
+    from app.realtime import ADMINS, hub
+
+    events: list[tuple[list[str], dict]] = []
+    orig_publish = hub.publish
+
+    def spy(audience, message, *args, **kwargs):
+        aud_list = list(audience)
+        events.append((aud_list, message))
+        return orig_publish(aud_list, message, *args, **kwargs)
+
+    monkeypatch.setattr(hub, "publish", spy)
+
+    base = _signup_body(
+        email="rider.valid@example.com",
+        role="rider",
+        license_no="  DK-991  ",
+        vehicle_type="bike",
+        plate_no="  dhaka metro-ha 99-8877  ",
+        vehicle_model="  Yamaha FZ  ",
+    )
+
+    # Whitespace-only vehicle/licence fields are rejected with 422.
+    for field in ("license_no", "plate_no", "vehicle_model"):
+        resp = client.post("/api/auth/register", json={**base, "email": f"blank.{field}@example.com", field: "   "})
+        assert resp.status_code == 422, f"{field}: {resp.text}"
+
+    # Valid rider registration succeeds and emits riders.changed to ADMINS.
+    created = client.post("/api/auth/register", json=base)
+    assert created.status_code == 201, created.text
+    try:
+        assert any(ADMINS in aud and msg.get("type") == "riders.changed" for aud, msg in events)
+
+        # Duplicate active plate_no (even with different casing/spacing) is rejected with 409.
+        dup_plate = _signup_body(
+            email="rider.dup.plate@example.com",
+            role="rider",
+            license_no="DK-992",
+            vehicle_type="bike",
+            plate_no="DHAKA METRO-HA 99-8877",
+            vehicle_model="Suzuki Gixxer",
+        )
+        dup_resp = client.post("/api/auth/register", json=dup_plate)
+        assert dup_resp.status_code == 409, dup_resp.text
+    finally:
+        # Clean up created pending rider so downstream admin stats tests see the expected seeded count.
+        with SessionLocal() as db:
+            prof_id = created.json()["profile"]["id"]
+            rider_id = db.scalar(select(Rider.id).where(Rider.profile_id == prof_id))
+            db.execute(delete(Vehicle).where(Vehicle.rider_id == rider_id))
+            db.execute(delete(Rider).where(Rider.id == rider_id))
+            db.execute(delete(Profile).where(Profile.id == prof_id))
+            db.commit()
+
+
+def test_contact_and_profile_update_normalizes_and_enforces_phone_uniqueness(client, user_h, rider_h):
+    other_phone = "+8801755599887"
+    assert client.post("/api/auth/register", json=_signup_body(email="phone.owner@example.com", phone=other_phone)).status_code == 201
+
+    # PATCH /api/auth/me rejects invalid and colliding normalized phones.
+    assert client.patch("/api/auth/me", headers=user_h, json={"full_name": "Demo Passenger", "phone": "bad"}).status_code == 422
+    assert client.patch("/api/auth/me", headers=user_h, json={"full_name": "Demo Passenger", "phone": "01755599887"}).status_code == 409
+
+    # PATCH /api/rider/contact rejects invalid and colliding normalized phones, and normalizes valid updates.
+    rider_me = client.get("/api/rider/me", headers=rider_h).json()
+    assert client.patch("/api/rider/contact", headers=rider_h, json={"email": rider_me["email"], "phone": "bad"}).status_code == 422
+    assert client.patch("/api/rider/contact", headers=rider_h, json={"email": rider_me["email"], "phone": "01755599887"}).status_code == 409
+
+    updated = client.patch("/api/rider/contact", headers=rider_h, json={"email": rider_me["email"], "phone": "01755 599888"})
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["phone"] == "+8801755599888"
+
+    # Restore original rider phone so downstream tests see the seeded value.
+    assert client.patch("/api/rider/contact", headers=rider_h, json={"email": rider_me["email"], "phone": rider_me["phone"]}).status_code == 200

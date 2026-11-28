@@ -41,7 +41,10 @@ const Toaster = ({ ...props }: ToasterProps) => {
           toast: "cn-toast",
         },
       }}
-      duration={2000}
+      closeButton
+      swipeDirections={["top", "right", "left"]}
+      mobileOffset={{ top: 132, right: 12, left: 12 }}
+      duration={6000}
       {...props}
     />
   )

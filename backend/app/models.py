@@ -29,6 +29,7 @@ class Profile(Base):
     account_status: Mapped[str | None] = mapped_column(String(10), default="active")
     # Support agents only: pending until an admin approves, revoked if access is removed.
     approval_status: Mapped[str | None] = mapped_column(String(10))  # pending, approved, revoked
+    phone_verified: Mapped[bool | None] = mapped_column(Boolean, default=False)
     avatar_doc_id: Mapped[str | None] = mapped_column(String(36))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
@@ -461,6 +462,8 @@ class VehicleChange(Base):
     vehicle_type: Mapped[str] = mapped_column(String(8))
     plate_no: Mapped[str] = mapped_column(String(32))
     model: Mapped[str] = mapped_column(String(60))
+    color: Mapped[str | None] = mapped_column(String(32))
+    registration_no: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(10), default="pending")  # pending, approved, rejected, cancelled
     review_note: Mapped[str | None] = mapped_column(String(300))
     reviewed_by: Mapped[str | None] = mapped_column(ForeignKey("profiles.id"))

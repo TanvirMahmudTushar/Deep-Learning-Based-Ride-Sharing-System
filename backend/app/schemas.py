@@ -48,6 +48,15 @@ PersonName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=
 _PHONE = re.compile(r"^\+?\d[\d\s-]{4,28}\d$")
 
 
+def normalize_phone(phone: str) -> str:
+    compact = re.sub(r"[\s-]+", "", phone.strip())
+    if compact.startswith("0") and len(compact) == 11 and compact.isdigit():
+        return "+88" + compact
+    if compact.startswith("880") and compact.isdigit():
+        return "+" + compact
+    return compact
+
+
 def _valid_phone(phone: str) -> str:
     phone = phone.strip()
     if not _PHONE.match(phone):
@@ -65,10 +74,26 @@ class RegisterIn(BaseModel):
     phone: PhoneNumber
     password: NewPassword
     role: Literal["user", "rider", "support"] = "user"
-    license_no: str | None = Field(default=None, max_length=40)
+    otp: str | None = Field(default=None, min_length=4, max_length=10)
+    license_no: Annotated[str | None, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)] = None
     vehicle_type: VehicleType | None = None
-    plate_no: str | None = Field(default=None, max_length=32)
-    vehicle_model: str | None = Field(default=None, max_length=60)
+    plate_no: Annotated[str | None, StringConstraints(strip_whitespace=True, min_length=1, max_length=32)] = None
+    vehicle_model: Annotated[str | None, StringConstraints(strip_whitespace=True, min_length=1, max_length=60)] = None
+
+
+class OtpRequestIn(BaseModel):
+    email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=160)
+    phone: PhoneNumber
+
+
+class OtpRequestOut(BaseModel):
+    ok: bool
+    message: str
+
+
+class OtpVerifyIn(BaseModel):
+    phone: PhoneNumber
+    otp: str = Field(min_length=4, max_length=10)
 
 
 class LoginIn(BaseModel):
@@ -83,6 +108,7 @@ class ProfileOut(BaseModel):
     phone: str
     role: str
     approval_status: str | None = None
+    phone_verified: bool = False
     avatar_url: str | None = None
 
 
@@ -171,6 +197,19 @@ class RiderOnboardingVehicleIn(BaseModel):
     color: str = Field(min_length=2, max_length=32)
     registration_no: str = Field(min_length=3, max_length=64)
     license_no: str = Field(min_length=2, max_length=40)
+
+
+class VehicleChangeIn(BaseModel):
+    vehicle_type: VehicleType
+    plate_no: str = Field(min_length=2, max_length=32)
+    model: str = Field(min_length=2, max_length=60)
+    color: str | None = Field(default=None, min_length=2, max_length=32)
+    registration_no: str | None = Field(default=None, min_length=3, max_length=64)
+
+
+class VehicleChangeReviewIn(BaseModel):
+    status: Literal["approved", "rejected"]
+    note: str = Field(default="", max_length=300)
 
 
 class RiderPublic(BaseModel):
@@ -323,6 +362,13 @@ def rider_rating(db: Session, rider_id: str) -> tuple[float | None, int]:
     return (round(float(avg), 2) if avg is not None else None), int(count)
 
 
+def passenger_rating(db: Session, user_id: str) -> tuple[float | None, int]:
+    avg, count = db.execute(
+        select(func.avg(Rating.stars), func.count(Rating.id)).join(Trip, Trip.id == Rating.trip_id).where(Trip.user_id == user_id)
+    ).one()
+    return (round(float(avg), 2) if avg is not None else None), int(count)
+
+
 def rider_public(db: Session, rider: Rider, vehicle: Vehicle | None = None) -> RiderPublic:
     rating, count = rider_rating(db, rider.id)
     return RiderPublic(
@@ -356,6 +402,7 @@ def live_eta_min(trip: Trip) -> float | None:
 def trip_out(db: Session, trip: Trip, include_route: bool = True, for_rider: bool = False) -> TripOut:
     """`for_rider` hides passenger-only safety state (an SOS is never shown to the rider)."""
     alert_types = set(db.scalars(select(SafetyAlert.alert_type).where(SafetyAlert.trip_id == trip.id, SafetyAlert.status != "closed")))
+    p_rating, p_rating_count = passenger_rating(db, trip.user_id) if for_rider else (None, 0)
     return TripOut(
         id=trip.id,
         status=trip.status,
@@ -382,6 +429,9 @@ def trip_out(db: Session, trip: Trip, include_route: bool = True, for_rider: boo
         passenger_name=trip.user.full_name,
         # The rider can call the passenger only while the trip is in progress.
         passenger_phone=trip.user.phone if for_rider and trip.status in ("accepted", "ongoing") else None,
+        passenger_photo=f"/api/documents/{trip.user.avatar_doc_id}/file" if for_rider and trip.user.avatar_doc_id else None,
+        passenger_rating=p_rating,
+        passenger_rating_count=p_rating_count,
         payment=(
             PaymentOut(
                 method=trip.payment.method,
@@ -422,6 +472,21 @@ CancelReason = Literal["changed_plans", "wait_too_long", "rider_not_moving", "wr
 
 class CancelIn(BaseModel):
     reason: CancelReason = "other"
+    note: str = Field(default="", max_length=120)
+
+
+RiderCancelReason = Literal[
+    "passenger_no_show",
+    "unreachable_pickup",
+    "vehicle_issue",
+    "safety_concern",
+    "too_many_passengers",
+    "other",
+]
+
+
+class RiderCancelIn(BaseModel):
+    reason: RiderCancelReason = "other"
     note: str = Field(default="", max_length=120)
 
 
@@ -490,7 +555,10 @@ class AutoDriveIn(BaseModel):
 class OfferOut(BaseModel):
     trip: TripOut
     expires_at: UTCDateTime
+    remaining_seconds: float
     pickup_distance_km: float
+    estimated_earning: float | None = None
+    commission_pct: float | None = None
 
 
 class RiderMe(BaseModel):
@@ -515,6 +583,7 @@ class RiderMe(BaseModel):
     missing_documents: list[str]
     commission_due: float
     avatar_url: str | None = None
+    live_eta_min: float | None = None
 
 
 # --- admin ----------------------------------------------------------------------------------

@@ -264,7 +264,7 @@ export function PortalShell({
               <NotificationButton />
             </>
           )}
-          {role === "rider" ? <RiderProfileButton profile={profile} /> : <UserMenu profile={profile} />}
+          {role === "rider" && profile.role === "rider" ? <RiderProfileButton profile={profile} /> : <UserMenu profile={profile} />}
         </div>
       </header>
       {profile.role === role ? (

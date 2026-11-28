@@ -1,16 +1,21 @@
 "use client";
 
-import { useRef, useState } from "react";
-import useSWR from "swr";
+import { Suspense, lazy, useRef, useState } from "react";
+import useSWR, { useSWRConfig } from "swr";
 import { toast } from "sonner";
-import { CheckCircle2, Clock, Eye, FileUp, Loader2, XCircle } from "lucide-react";
+import { Camera, CheckCircle2, Clock, Eye, FileUp, Loader2, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { api, fetcher } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import { fetchFileUrl, useServerHealth } from "@/lib/server";
 import { cn } from "@/lib/utils";
 import type { DocumentType, DocumentsOverview, RiderDocument } from "@/lib/types";
+
+const SelfieCaptureDialog = lazy(() =>
+  import("@/components/rider/selfie-capture-dialog").then((m) => ({ default: m.SelfieCaptureDialog })),
+);
 
 export const STATUS: Record<RiderDocument["status"], { label: string; icon: typeof Clock; className: string }> = {
   pending: { label: "In review", icon: Clock, className: "border-amber-400/30 bg-amber-400/10 text-amber-200" },
@@ -39,12 +44,14 @@ export async function openDocument(doc: RiderDocument) {
 export function UploadButton({
   docType,
   replacing,
+  label,
   onUploaded,
   endpoint = "/api/rider/documents",
   useAsProfilePhoto = false,
 }: {
   docType: DocumentType;
   replacing: boolean;
+  label?: string;
   onUploaded: () => void;
   endpoint?: string;
   useAsProfilePhoto?: boolean;
@@ -88,7 +95,7 @@ export function UploadButton({
         onChange={(e) => e.target.files?.[0] && void upload(e.target.files[0])}
       />
       <Button size="sm" variant={replacing ? "outline" : "default"} disabled={busy} onClick={() => input.current?.click()}>
-        {busy ? <Loader2 className="animate-spin" /> : <FileUp />} {replacing ? "Replace" : "Upload"}
+        {busy ? <Loader2 className="animate-spin" /> : <FileUp />} {label ?? (replacing ? "Replace" : "Upload")}
       </Button>
     </>
   );
@@ -96,45 +103,84 @@ export function UploadButton({
 
 export function DocumentsPanel() {
   const { data, mutate } = useSWR<DocumentsOverview>("/api/rider/documents", fetcher);
+  const { mutate: globalMutate } = useSWRConfig();
+  const [selfieOpen, setSelfieOpen] = useState(false);
+  const [useAsProfile, setUseAsProfile] = useState(true);
   if (!data) return null;
+
+  const refreshAll = () => {
+    void mutate();
+    void globalMutate("/api/rider/me");
+  };
 
   return (
     <div className="space-y-3">
-      <p className="text-sm text-muted-foreground">JPG, PNG, WebP or PDF, up to the size limit shown when you upload.</p>
+      <p className="text-xs text-muted-foreground">
+        Optional for demo: licence, insurance, registration &amp; face selfie (JPG, PNG, WebP or PDF, up to the size limit shown when you upload).
+      </p>
       {data.required.map(({ doc_type, label, document: doc }) => {
         const st = doc ? STATUS[doc.status] : null;
+        const isPhoto = doc_type === "photo";
         return (
           <div key={doc_type} className={cn("space-y-2 rounded-xl border p-3", doc?.status === "rejected" && "border-red-400/40")}>
             <div className="flex items-start justify-between gap-2">
-              <div>
+              <div className="min-w-0">
                 <div className="text-sm font-medium">{label}</div>
                 <div className="text-xs text-muted-foreground">{HINT[doc_type]}</div>
               </div>
               {st ? (
-                <Badge variant="outline" className={st.className}>
+                <Badge variant="outline" className={cn("shrink-0 whitespace-nowrap", st.className)}>
                   <st.icon className="size-3" /> {st.label}
                 </Badge>
               ) : (
-                <Badge variant="outline" className="text-muted-foreground">
+                <Badge variant="outline" className="shrink-0 whitespace-nowrap text-muted-foreground">
                   Not added
                 </Badge>
               )}
             </div>
+            {isPhoto && (
+              <div className="flex items-center justify-between gap-2 rounded-xl border bg-background/60 px-3 py-2">
+                <span className="text-xs text-muted-foreground">Use selfie/photo as my profile photo</span>
+                <Switch checked={useAsProfile} onCheckedChange={setUseAsProfile} aria-label="Use as profile photo" />
+              </div>
+            )}
             {doc?.status === "rejected" && doc.review_note && <p className="text-xs text-red-200">Reason: {doc.review_note}</p>}
-            <div className="flex items-center justify-between gap-2">
-              <span className="truncate text-xs text-muted-foreground">{doc ? `${doc.original_name} · ${formatDateTime(doc.uploaded_at)}` : "Not uploaded"}</span>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="min-w-0 truncate text-xs text-muted-foreground">{doc ? `${doc.original_name} · ${formatDateTime(doc.uploaded_at)}` : "Not uploaded"}</span>
               <div className="flex shrink-0 gap-1.5">
                 {doc && (
                   <Button size="sm" variant="ghost" onClick={() => void openDocument(doc)} aria-label={`View ${label}`}>
                     <Eye />
                   </Button>
                 )}
-                {doc?.status !== "approved" && <UploadButton docType={doc_type} replacing={!!doc} onUploaded={() => void mutate()} />}
+                {isPhoto && (
+                  <Button size="sm" variant="default" onClick={() => setSelfieOpen(true)}>
+                    <Camera /> Take Selfie
+                  </Button>
+                )}
+                <UploadButton
+                  docType={doc_type}
+                  replacing={!!doc || isPhoto}
+                  label={doc?.status === "approved" ? "Renew" : undefined}
+                  useAsProfilePhoto={isPhoto && useAsProfile}
+                  onUploaded={refreshAll}
+                />
               </div>
             </div>
           </div>
         );
       })}
+      <Suspense fallback={null}>
+        {selfieOpen && (
+          <SelfieCaptureDialog
+            open={selfieOpen}
+            onOpenChange={setSelfieOpen}
+            onUploaded={refreshAll}
+            useAsProfile={useAsProfile}
+            onUseAsProfileChange={setUseAsProfile}
+          />
+        )}
+      </Suspense>
     </div>
   );
 }

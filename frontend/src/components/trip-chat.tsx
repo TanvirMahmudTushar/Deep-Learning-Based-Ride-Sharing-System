@@ -13,12 +13,15 @@ import { useLiveInterval } from "@/lib/realtime";
 import { cn } from "@/lib/utils";
 import type { TripMessage } from "@/lib/types";
 
+const RIDER_QUICK_REPLIES = ["On my way", "Reached pickup", "Wait 2 mins", "Where are you?"] as const;
+
 /**
  * Text chat between a passenger and their rider. `basePath` is `/api/trips/{id}` for the passenger
  * and `/api/rider/trips/{id}` for the rider; messages can be sent only while the trip is under way.
  */
 export function TripChat({ basePath, otherName, canSend }: { basePath: string; otherName: string; canSend: boolean }) {
   const key = `${basePath}/messages`;
+  const isRider = basePath.startsWith("/api/rider/");
   const { data: messages, mutate } = useSWR<TripMessage[]>(key, fetcher, { refreshInterval: useLiveInterval(4000, 30000) });
   const [open, setOpen] = useState(false);
   const [seen, setSeen] = useState(0);
@@ -39,10 +42,9 @@ export function TripChat({ basePath, otherName, canSend }: { basePath: string; o
     setOpen(!open);
   }
 
-  async function send(e: FormEvent) {
-    e.preventDefault();
-    const body = text.trim();
-    if (!body) return;
+  async function sendBody(raw: string) {
+    const body = raw.trim();
+    if (!body || sending) return;
     setSending(true);
     try {
       await api(key, { json: { body } });
@@ -55,6 +57,11 @@ export function TripChat({ basePath, otherName, canSend }: { basePath: string; o
     }
   }
 
+  function send(e: FormEvent) {
+    e.preventDefault();
+    void sendBody(text);
+  }
+
   return (
     <div className="rounded-lg border">
       <button type="button" onClick={toggle} className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-sm">
@@ -64,7 +71,9 @@ export function TripChat({ basePath, otherName, canSend }: { basePath: string; o
         {unread > 0 ? (
           <Badge className="h-5 min-w-5 px-1.5 tabular-nums">{unread}</Badge>
         ) : (
-          <span className="text-xs text-muted-foreground">{open ? "Hide" : messages?.length ? `${messages.length} messages` : "Open"}</span>
+          <span className="text-xs text-muted-foreground">
+            {open ? "Hide" : messages?.length ? `${messages.length} ${messages.length === 1 ? "message" : "messages"}` : "Open"}
+          </span>
         )}
       </button>
       {open && (
@@ -82,12 +91,32 @@ export function TripChat({ basePath, otherName, canSend }: { basePath: string; o
             <div ref={endRef} />
           </div>
           {canSend ? (
-            <form onSubmit={send} className="flex gap-2">
-              <Input value={text} onChange={(e) => setText(e.target.value)} placeholder={`Message ${otherName}`} maxLength={500} aria-label={`Message ${otherName}`} />
-              <Button type="submit" size="icon" disabled={sending || !text.trim()} aria-label="Send">
-                {sending ? <Loader2 className="animate-spin" /> : <SendHorizontal />}
-              </Button>
-            </form>
+            <div className="space-y-2">
+              {isRider && (
+                <div
+                  className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                  aria-label="Quick replies"
+                >
+                  {RIDER_QUICK_REPLIES.map((reply) => (
+                    <button
+                      key={reply}
+                      type="button"
+                      disabled={sending}
+                      onClick={() => void sendBody(reply)}
+                      className="shrink-0 rounded-full border border-border/80 bg-muted/60 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted active:scale-[0.97] disabled:opacity-50"
+                    >
+                      {reply}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <form onSubmit={send} className="flex gap-2">
+                <Input value={text} onChange={(e) => setText(e.target.value)} placeholder={`Message ${otherName}`} maxLength={500} aria-label={`Message ${otherName}`} />
+                <Button type="submit" size="icon" disabled={sending || !text.trim()} aria-label="Send">
+                  {sending ? <Loader2 className="animate-spin" /> : <SendHorizontal />}
+                </Button>
+              </form>
+            </div>
           ) : (
             <p className="text-center text-xs text-muted-foreground">Chat closes when the trip ends.</p>
           )}

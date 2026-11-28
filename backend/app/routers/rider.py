@@ -5,22 +5,32 @@ from datetime import timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 
 from app.brta import normalize_plate
 from app.config import settings
 from app.db import local_day_start, utcnow
 from app.geo import haversine_km
-from app.models import DemandForecast, Payment, Profile, Rider, Trip, Vehicle
-from app.schemas import RiderContactIn, RiderOnboardingVehicleIn, AutoDriveIn, LocationIn, MessageIn, OfferOut, OnlineIn, RiderMe, TripOut, iso_utc, rider_rating, trip_out, vehicle_out
+from app.models import DemandForecast, MatchScore, Payment, Profile, Rider, Trip, Vehicle
+from app.routers.auth import phone_taken
+from app.schemas import RiderCancelIn, RiderContactIn, RiderOnboardingVehicleIn, AutoDriveIn, LocationIn, MessageIn, OfferOut, OnlineIn, RiderMe, TripOut, iso_utc, live_eta_min, normalize_phone, rider_rating, trip_out, vehicle_out
 from app.security import DB, CurrentRider, verify_password
 from app.realtime import ADMINS, emit
 from app.services import availability, demand, documents, messages, payments, pricing, weather
 from app.services import trips as trip_service
-from app.services.matching import rider_cancel_rates
 from app.services.zones import all_zones
 
 router = APIRouter(prefix="/api/rider", tags=["rider"])
+
+
+def _actual_cancel_rate(db: DB, rider_id: str) -> float:
+    total_trips, cancelled_trips = db.execute(
+        select(func.count(), func.sum(case((Trip.cancelled_by == "rider", 1), else_=0))).where(Trip.rider_id == rider_id)
+    ).one()
+    declined = db.scalar(select(func.count()).where(MatchScore.rider_id == rider_id, MatchScore.status == "declined")) or 0
+    total = int(total_trips or 0) + int(declined)
+    bad = int(cancelled_trips or 0) + int(declined)
+    return round(bad / total, 3) if total > 0 else 0.0
 
 
 def _assigned_trip(db: DB, rider: Rider, trip_id: str) -> Trip:
@@ -61,6 +71,7 @@ def me(db: DB, rider: CurrentRider):
         else 0
     )
     ready, missing = documents.verification_ready(db, rider)
+    active_trip = trip_service.active_trip_for_rider(db, rider.id)
     return RiderMe(
         id=rider.id,
         full_name=rider.profile.full_name,
@@ -77,12 +88,13 @@ def me(db: DB, rider: CurrentRider):
         trips_completed=completed,
         trips_today=trips_today,
         earnings_today=float(earnings or 0),
-        cancel_rate=round(rider_cancel_rates(db, [rider.id]).get(rider.id, 0.05), 3) if is_verified else 0.0,
+        cancel_rate=_actual_cancel_rate(db, rider.id) if is_verified else 0.0,
         is_simulated=rider.is_simulated,
         documents_ready=ready,
         missing_documents=missing,
         commission_due=payments.rider_balance(db, rider.id)["commission_due"] if is_verified else 0.0,
         avatar_url=f"/api/documents/{rider.profile.avatar_doc_id}/file" if rider.profile.avatar_doc_id else None,
+        live_eta_min=live_eta_min(active_trip) if active_trip else None,
     )
 
 
@@ -90,21 +102,24 @@ def me(db: DB, rider: CurrentRider):
 def update_contact(body: RiderContactIn, db: DB, rider: CurrentRider):
     profile = rider.profile
     email = body.email.strip().lower()
+    phone = normalize_phone(body.phone)
+    if phone_taken(db, phone, exclude_profile_id=profile.id):
+        raise HTTPException(status.HTTP_409_CONFLICT, "An account with this phone number already exists")
     if email != profile.email:
         if not body.current_password or not verify_password(body.current_password, profile.password_hash):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Enter your current password to change your email")
         if db.scalar(select(Profile.id).where(Profile.email == email, Profile.id != profile.id)):
             raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email already exists")
         profile.email = email
-    profile.phone = body.phone.strip()
+    profile.phone = phone
     db.commit()
     return me(db, rider)
 
 
 @router.post("/onboarding/vehicle", response_model=RiderMe)
 def save_onboarding_vehicle(body: RiderOnboardingVehicleIn, db: DB, rider: CurrentRider):
-    if rider.vehicle is not None and rider.status == "verified":
-        raise HTTPException(status.HTTP_409_CONFLICT, "Riders who already have a vehicle must submit a vehicle change request")
+    if rider.status == "verified":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Verified riders must submit a vehicle change request")
     plate = normalize_plate(body.plate_no, body.vehicle_type)
     taken = db.scalar(
         select(Vehicle.id).where(Vehicle.plate_no == plate, Vehicle.retired_at.is_(None), Vehicle.rider_id != rider.id)
@@ -121,7 +136,6 @@ def save_onboarding_vehicle(body: RiderOnboardingVehicleIn, db: DB, rider: Curre
             model=body.model.strip(),
             color=body.color.strip(),
             registration_no=body.registration_no.strip().upper(),
-            verified=rider.status == "verified",
         )
         db.add(v)
     else:
@@ -143,6 +157,11 @@ def set_online(body: OnlineIn, db: DB, rider: CurrentRider):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Your account is suspended. Contact support.")
         if rider.status != "verified":
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Your account is waiting for admin verification")
+        if rider.vehicle is None or not (rider.license_no or "").strip():
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Complete your vehicle and driving licence details before going online",
+            )
         if body.lat is not None and body.lng is not None:
             rider.current_lat, rider.current_lng = body.lat, body.lng
         if rider.current_lat is None:
@@ -187,10 +206,19 @@ def current_offer(db: DB, rider: CurrentRider):
         if rider.current_lat is not None and rider.current_lng is not None
         else 0.0
     )
+    now = utcnow()
+    expires_at = trip.offered_at + timedelta(seconds=settings.offer_timeout_seconds)
+    remaining = max(0.0, (expires_at - now).total_seconds())
+    fare = float(trip.fare_estimate)
+    pct = payments.commission_pct_for(db, trip.vehicle_type_requested)
+    estimated_earning = round(fare - round(fare * pct / 100), 2)
     return OfferOut(
         trip=trip_out(db, trip, for_rider=True),
-        expires_at=trip.offered_at + timedelta(seconds=settings.offer_timeout_seconds),
+        expires_at=expires_at,
+        remaining_seconds=round(remaining, 2),
         pickup_distance_km=pickup_dist,
+        estimated_earning=estimated_earning,
+        commission_pct=pct,
     )
 
 
@@ -248,9 +276,29 @@ def send_message(trip_id: str, body: MessageIn, db: DB, rider: CurrentRider):
     return messages.message_out(message, "rider")
 
 
+RIDER_CANCEL_REASON_LABEL = {
+    "passenger_no_show": "Passenger didn't show up",
+    "unreachable_pickup": "Pickup location unreachable",
+    "vehicle_issue": "Vehicle issue",
+    "safety_concern": "Safety concern",
+    "too_many_passengers": "Too many passengers / luggage",
+    "other": "Other reason",
+}
+
+
 @router.post("/trips/{trip_id}/cancel", response_model=TripOut)
-def cancel(trip_id: str, db: DB, rider: CurrentRider):
-    trip = trip_service.cancel(db, _assigned_trip(db, rider, trip_id), "rider", "Cancelled by rider")
+def cancel(trip_id: str, db: DB, rider: CurrentRider, body: RiderCancelIn | None = None):
+    body = body or RiderCancelIn()
+    reason = f"Cancelled by rider: {RIDER_CANCEL_REASON_LABEL[body.reason]}"
+    if body.note.strip():
+        reason = f"{reason} ({body.note.strip()})"
+    trip = trip_service.cancel(
+        db,
+        _assigned_trip(db, rider, trip_id),
+        "rider",
+        reason[:160],
+        reason_code=body.reason,
+    )
     db.commit()
     return trip_out(db, trip, for_rider=True)
 

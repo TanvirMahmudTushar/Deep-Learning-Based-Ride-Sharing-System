@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
-import { FileCheck2, Loader2, LocateFixed, LocateOff, Lock, MapPin, RefreshCw, ShieldAlert } from "lucide-react";
+import { FileCheck2, FileWarning, Loader2, LocateFixed, LocateOff, Lock, MapPin, RefreshCw, ShieldAlert } from "lucide-react";
 import { PortalShell } from "@/components/app-shell";
 import { RideMap, type MapCircle, type MapLine, type MapMarker } from "@/components/map/ride-map";
 import { BottomSheet } from "@/components/rider/bottom-sheet";
@@ -35,7 +35,7 @@ const MIN_GAP_MS = 4000;
 const HEARTBEAT_MS = 20000;
 
 function sendFix(fix: GeoFix) {
-  return api("/api/rider/location", { json: { lat: fix.lat, lng: fix.lng, speed_kmh: fix.speedKmh, accuracy_m: Math.round(fix.accuracy) } });
+  return api<RiderMe>("/api/rider/location", { json: { lat: fix.lat, lng: fix.lng, speed_kmh: fix.speedKmh, accuracy_m: Math.round(fix.accuracy) } });
 }
 
 function GpsStatus({ status, fix, manual, onManual }: { status: string; fix: GeoFix | null; manual: boolean; onManual: (v: boolean) => void }) {
@@ -98,10 +98,9 @@ function RiderPortal() {
 
   // ---- device GPS -------------------------------------------------------------------------
   const verified = me?.status === "verified";
-  // No admin verification: a rider only needs a vehicle to start, and is locked out only if suspended.
-  const suspended = me?.status === "suspended";
-  const needsOnboarding = !!me && !suspended && (!me.vehicle || !me.license_no);
-  const lockedOut = !!me && (suspended || needsOnboarding);
+  const incomplete = !!me && (!me.vehicle || !me.license_no?.trim());
+  const needsOnboarding = !!me && !verified && incomplete;
+  const lockedOut = !!me && !verified;
 
   useEffect(() => {
     if (needsOnboarding) {
@@ -126,7 +125,7 @@ function RiderPortal() {
     const moved = prev ? haversineKm(prev, fix) * 1000 : Infinity;
     if (prev && (now - prev.at < minGap || (moved < minMove && now - prev.at < heartbeat))) return;
     lastSent.current = { lat: fix.lat, lng: fix.lng, at: now };
-    sendFix(fix).catch(() => undefined);
+    sendFix(fix).then(applyLocationUpdate).catch(() => undefined);
   }, [geo.fix, sharing, gpsWanted, active]);
 
   useEffect(() => {
@@ -136,7 +135,7 @@ function RiderPortal() {
       const fix = latestFix.current;
       if (!fix) return;
       lastSent.current = { lat: fix.lat, lng: fix.lng, at: Date.now() };
-      sendFix(fix).catch(() => undefined);
+      sendFix(fix).then(applyLocationUpdate).catch(() => undefined);
     }, intervalTime);
     return () => clearInterval(id);
   }, [sharing, gpsWanted, active]);
@@ -148,7 +147,7 @@ function RiderPortal() {
   useEffect(() => {
     if (!sharing || !manual || active?.auto_drive || spotLat == null || spotLng == null) return;
     const id = setInterval(() => {
-      api("/api/rider/location", { json: { lat: spotLat, lng: spotLng } }).catch(() => undefined);
+      api<RiderMe>("/api/rider/location", { json: { lat: spotLat, lng: spotLng } }).then(applyLocationUpdate).catch(() => undefined);
     }, active ? 7000 : HEARTBEAT_MS);
     return () => clearInterval(id);
   }, [sharing, manual, active, spotLat, spotLng]);
@@ -187,7 +186,7 @@ function RiderPortal() {
     const ro = new ResizeObserver(measure);
     ro.observe(body);
     return () => ro.disconnect();
-  }, [clampToIdlePrompt, me?.is_online, geo.status, manual]);
+  }, [clampToIdlePrompt, incomplete, me?.is_online, geo.status, manual]);
 
   const refreshAll = () => {
     void refreshMe();
@@ -196,17 +195,32 @@ function RiderPortal() {
     void refreshCollect();
   };
 
-  const canGoOnline = !!me && me.status === "verified";
+  const applyLocationUpdate = (updated: RiderMe) => {
+    void refreshMe(updated, { revalidate: false });
+    if (updated.live_eta_min !== undefined) {
+      void refreshActive(
+        (cur) => (cur ? { ...cur, live_eta_min: updated.live_eta_min ?? cur.live_eta_min } : cur),
+        { revalidate: false },
+      );
+    }
+  };
 
-  /** Going online needs a verified account; otherwise explain why. Documents are optional. */
+  const canGoOnline = !!me && verified && !incomplete;
+
+  /** Going online needs a verified account with vehicle and licence details; otherwise explain why. */
   function requestOnline(online: boolean) {
     if (online && me && !canGoOnline) {
       if (me.status === "suspended") {
         setBlocked({ title: "Account suspended", message: "Your account is suspended, so you can't go online. Contact support to restore access." });
-      } else {
+      } else if (!verified) {
         setBlocked({
           title: "Waiting for verification",
           message: "An admin still needs to verify your account before you can go online. You'll get a notice as soon as it's done.",
+        });
+      } else {
+        setBlocked({
+          title: "Finish vehicle & licence setup",
+          message: "Add your vehicle and driving licence details before going online.",
         });
       }
       return;
@@ -333,7 +347,15 @@ function RiderPortal() {
               online={me.is_online}
               busy={toggling}
               disabled={!!active}
-              hint={active ? "Finish your current trip to go offline" : !canGoOnline ? "Verification required to go online" : undefined}
+              hint={
+                active
+                  ? "Finish your current trip to go offline"
+                  : incomplete
+                    ? "Finish vehicle & licence setup to go online"
+                    : !canGoOnline
+                      ? "Verification required to go online"
+                      : undefined
+              }
               onChange={requestOnline}
             />
           </div>
@@ -376,10 +398,36 @@ function RiderPortal() {
             {!me && <Loader2 className="mx-auto size-5 animate-spin text-muted-foreground" />}
             {me && (
               <>
+                {me.status === "pending" && (
+                  <Alert>
+                    <FileWarning />
+                    <AlertTitle>Waiting for verification</AlertTitle>
+                    <AlertDescription>
+                      An admin will verify your account shortly. You can add your documents any time, but they aren&apos;t required.
+                    </AlertDescription>
+                  </Alert>
+                )}
                 {me.status === "suspended" && (
                   <Alert variant="destructive">
                     <AlertTitle>Account suspended</AlertTitle>
                     <AlertDescription>Contact support to restore access.</AlertDescription>
+                  </Alert>
+                )}
+                {incomplete && (
+                  <Alert className="border-amber-500/40 bg-amber-500/10">
+                    <FileWarning className="text-amber-400" />
+                    <AlertTitle>Finish vehicle &amp; licence setup</AlertTitle>
+                    <AlertDescription className="space-y-3">
+                      <p>Add your vehicle and driving licence details before you can get verified or go online.</p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="h-10 w-full sm:w-auto"
+                        onClick={() => (verified ? openProfile("vehicle") : router.push("/rider/onboarding"))}
+                      >
+                        <FileCheck2 /> {verified ? "Add Vehicle & Licence" : "Finish Setup"}
+                      </Button>
+                    </AlertDescription>
                   </Alert>
                 )}
                 {verified && <GpsStatus status={geo.status} fix={geo.fix} manual={manual} onManual={setManual} />}
@@ -414,7 +462,7 @@ function RiderPortal() {
                     <Loader2 className="size-4 animate-spin" /> Waiting for trip requests near you…
                   </div>
                 )}
-                {!me.is_online && verified && !active && (
+                {!me.is_online && verified && !incomplete && !active && (
                   <p className="text-sm text-muted-foreground">
                     Go online to receive requests for <VehicleTag type={me.vehicle?.vehicle_type ?? "bike"} className="inline-flex" /> rides.
                   </p>
@@ -434,7 +482,7 @@ function RiderPortal() {
         </BottomSheet>
       </div>
 
-      {/* Lockout overlay while the account is suspended or has no vehicle yet */}
+      {/* Lockout overlay until rider passes verification */}
       <AnimatePresence>
         {lockedOut && me && (
           <motion.div
@@ -466,45 +514,47 @@ function RiderPortal() {
                 </motion.span>
                 <div className="min-w-0 space-y-1">
                   <h2 className="text-lg font-bold">
-                    {me.status === "suspended" ? "Account suspended" : "Add your vehicle"}
+                    {me.status === "suspended"
+                      ? "Account suspended"
+                      : incomplete
+                        ? "Finish vehicle & licence setup"
+                        : "You haven't been verified yet"}
                   </h2>
                   <p className="text-sm text-muted-foreground">
                     {me.status === "suspended"
                       ? "Your rider account is currently suspended. Contact support to restore access."
-                      : "Add your vehicle details to start taking trips. Documents are optional."}
+                      : incomplete
+                        ? "Add your vehicle and driving licence details so an admin can verify your account and you can go online."
+                        : "Add your vehicle details. The rider app unlocks once an admin verifies you. Documents are optional."}
                   </p>
                 </div>
               </div>
 
               <div className="flex flex-col gap-3 pt-1 sm:flex-row">
-                {me.status !== "suspended" && (
-                  <Button type="button" className="h-12 min-h-12 w-full text-base sm:w-auto sm:flex-1" onClick={() => router.push("/rider/onboarding")}>
-                    <FileCheck2 /> Add vehicle details
-                  </Button>
-                )}
-                {me.status === "suspended" && (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="h-12 min-h-12 w-full text-base sm:w-auto sm:flex-1"
-                    disabled={refreshingStatus}
-                    onClick={() => {
-                      setRefreshingStatus(true);
-                      void refreshMe()
-                        .then((updated) => {
-                          if (updated?.status === "suspended") {
-                            toast.info("Your account is still suspended");
-                          } else {
-                            toast.success("Your account is active again");
-                          }
-                        })
-                        .finally(() => setRefreshingStatus(false));
-                    }}
-                  >
-                    <RefreshCw className={refreshingStatus ? "animate-spin" : undefined} />
-                    {refreshingStatus ? "Checking…" : "Check Status"}
-                  </Button>
-                )}
+                <Button type="button" className="h-12 min-h-12 w-full text-base sm:w-auto sm:flex-1" onClick={() => router.push("/rider/onboarding")}>
+                  <FileCheck2 /> Vehicle &amp; Documents
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-12 min-h-12 w-full text-base sm:w-auto sm:flex-1"
+                  disabled={refreshingStatus}
+                  onClick={() => {
+                    setRefreshingStatus(true);
+                    void refreshMe()
+                      .then((updated) => {
+                        if (updated?.status === "verified") {
+                          toast.success("Account verified! Welcome to Cholo.");
+                        } else {
+                          toast.info("Still waiting for admin verification");
+                        }
+                      })
+                      .finally(() => setRefreshingStatus(false));
+                  }}
+                >
+                  <RefreshCw className={refreshingStatus ? "animate-spin" : undefined} />
+                  {refreshingStatus ? "Checking…" : "Check Status"}
+                </Button>
               </div>
             </motion.div>
           </motion.div>
@@ -520,8 +570,23 @@ function RiderPortal() {
             <DialogTitle className="text-lg">{blocked?.title}</DialogTitle>
             <DialogDescription>{blocked?.message}</DialogDescription>
           </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setBlocked(null)}>
+          <DialogFooter className="flex-col gap-2 sm:flex-row">
+            {incomplete && (
+              <Button
+                className="w-full sm:w-auto"
+                onClick={() => {
+                  setBlocked(null);
+                  if (verified) {
+                    openProfile("vehicle");
+                  } else {
+                    router.push("/rider/onboarding");
+                  }
+                }}
+              >
+                <FileCheck2 /> {verified ? "Add Vehicle & Licence" : "Finish Setup"}
+              </Button>
+            )}
+            <Button variant="outline" className="w-full sm:w-auto" onClick={() => setBlocked(null)}>
               Close
             </Button>
           </DialogFooter>

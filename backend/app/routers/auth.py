@@ -2,9 +2,21 @@ from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
 
 from app.brta import normalize_plate
+from app.config import settings
 from app.models import Profile, Rider, Vehicle
 from app.realtime import ADMINS, emit
-from app.schemas import AuthOut, LoginIn, PasswordChangeIn, ProfileOut, ProfileUpdateIn, RegisterIn
+from app.schemas import (
+    AuthOut,
+    LoginIn,
+    OtpRequestIn,
+    OtpRequestOut,
+    OtpVerifyIn,
+    PasswordChangeIn,
+    ProfileOut,
+    ProfileUpdateIn,
+    RegisterIn,
+    normalize_phone,
+)
 from app.security import DB, CurrentUser, account_is_suspended, create_token, hash_password, verify_password
 from app.services import login_throttle
 
@@ -19,8 +31,35 @@ def profile_out(p: Profile) -> ProfileOut:
         phone=p.phone,
         role=p.role,
         approval_status=p.approval_status,
+        phone_verified=bool(p.phone_verified),
         avatar_url=f"/api/documents/{p.avatar_doc_id}/file" if p.avatar_doc_id else None,
     )
+
+
+def phone_taken(db: DB, phone: str, exclude_profile_id: str | None = None) -> bool:
+    q = select(Profile.phone).where(Profile.phone != "")
+    if exclude_profile_id is not None:
+        q = q.where(Profile.id != exclude_profile_id)
+    return any(normalize_phone(existing) == phone for existing in db.scalars(q))
+
+
+@router.post("/otp/request", response_model=OtpRequestOut)
+def request_otp(body: OtpRequestIn, db: DB):
+    email = body.email.strip().lower()
+    if db.scalar(select(Profile.id).where(Profile.email == email)):
+        raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email already exists")
+    phone = normalize_phone(body.phone)
+    if phone_taken(db, phone):
+        raise HTTPException(status.HTTP_409_CONFLICT, "An account with this phone number already exists")
+    # Testing-mode OTP: always accepts settings.default_test_otp ("000000").
+    return OtpRequestOut(ok=True, message=f"Verification code sent to {phone}")
+
+
+@router.post("/otp/verify", response_model=OtpRequestOut)
+def verify_otp(body: OtpVerifyIn):
+    if body.otp.strip() != settings.default_test_otp:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid verification code. Please check and try again.")
+    return OtpRequestOut(ok=True, message="Phone number verified")
 
 
 @router.post("/register", response_model=AuthOut, status_code=status.HTTP_201_CREATED)
@@ -28,40 +67,51 @@ def register(body: RegisterIn, db: DB):
     email = body.email.strip().lower()
     if db.scalar(select(Profile.id).where(Profile.email == email)):
         raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email already exists")
+    phone = normalize_phone(body.phone)
+    if phone_taken(db, phone):
+        raise HTTPException(status.HTTP_409_CONFLICT, "An account with this phone number already exists")
+    if not body.otp or body.otp.strip() != settings.default_test_otp:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or missing verification code")
 
     vehicle_fields = (body.license_no, body.vehicle_type, body.plate_no, body.vehicle_model)
     has_any_vehicle = any(vehicle_fields)
     if body.role == "rider" and has_any_vehicle and not all(vehicle_fields):
         raise HTTPException(422, "Riders must provide licence, vehicle type, plate number and model")
 
+    plate: str | None = None
+    if body.role == "rider" and all(vehicle_fields):
+        plate = normalize_plate(body.plate_no, body.vehicle_type)
+        if db.scalar(select(Vehicle.id).where(Vehicle.plate_no == plate, Vehicle.retired_at.is_(None))):
+            raise HTTPException(status.HTTP_409_CONFLICT, "This plate number is already registered to another rider")
+
     profile = Profile(
         full_name=body.full_name.strip(),
         email=email,
-        phone=body.phone.strip(),
+        phone=phone,
         password_hash=hash_password(body.password),
         role=body.role,
         # Support agents get access straight away; an admin can still remove it later.
         approval_status="approved" if body.role == "support" else None,
+        phone_verified=True,
     )
     db.add(profile)
     db.flush()
     if body.role == "support":
         emit(db, ADMINS, "support.changed", notify=("New support agent", f"{profile.full_name} signed up as a support agent."))
     if body.role == "rider":
-        # No admin verification: riders can go online as soon as they have a vehicle.
-        rider = Rider(profile_id=profile.id, license_no=(body.license_no or "").strip(), status="verified")
+        rider = Rider(profile_id=profile.id, license_no=(body.license_no or "").strip(), status="pending")
         db.add(rider)
         db.flush()
-        if all(vehicle_fields):
+        if plate is not None:
             db.add(
                 Vehicle(
                     rider_id=rider.id,
                     vehicle_type=body.vehicle_type,
-                    plate_no=normalize_plate(body.plate_no, body.vehicle_type),
+                    plate_no=plate,
                     model=body.vehicle_model.strip(),
-                    verified=True,
                 )
             )
+        emit(db, ADMINS, "riders.changed", notify=("New rider signup", f"{profile.full_name} registered as a rider."))
     db.commit()
     return AuthOut(token=create_token(profile), profile=profile_out(profile))
 
@@ -95,8 +145,11 @@ def me(user: CurrentUser):
 
 @router.patch("/me", response_model=ProfileOut)
 def update_me(body: ProfileUpdateIn, user: CurrentUser, db: DB):
+    phone = normalize_phone(body.phone)
+    if phone_taken(db, phone, exclude_profile_id=user.id):
+        raise HTTPException(status.HTTP_409_CONFLICT, "An account with this phone number already exists")
     user.full_name = body.full_name.strip()
-    user.phone = body.phone.strip()
+    user.phone = phone
     db.commit()
     return profile_out(user)
 

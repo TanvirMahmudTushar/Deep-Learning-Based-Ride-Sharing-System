@@ -4,13 +4,14 @@ import { useRouter } from "next/navigation";
 import { Suspense, lazy, useEffect, useState } from "react";
 import useSWR from "swr";
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowLeft, Car, FileText, Loader2, ShieldCheck } from "lucide-react";
+import { ArrowLeft, Car, FileText, Loader2, LogOut, ShieldCheck } from "lucide-react";
 import { PortalShell } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { SPRING_UI } from "@/components/ui/motion";
 import { fetcher } from "@/lib/api";
 import { useLiveInterval } from "@/lib/realtime";
+import { clearSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
 import type { RiderMe } from "@/lib/types";
 
@@ -34,14 +35,13 @@ function OnboardingContent() {
   const { data: me, mutate } = useSWR<RiderMe>("/api/rider/me", fetcher, { refreshInterval: interval });
   const [step, setStep] = useState<Step | null>(null);
 
-  // Riders need no admin verification, so once there's a vehicle the rider app is ready.
-  const ready = !!me && me.status !== "suspended" && !!me.vehicle && !!me.license_no;
-
   useEffect(() => {
-    if (ready) router.replace("/rider");
-  }, [ready, router]);
+    if (me?.status === "verified") {
+      router.replace("/rider");
+    }
+  }, [me?.status, router]);
 
-  if (!me || ready) {
+  if (!me || me.status === "verified") {
     return (
       <div className="flex flex-1 items-center justify-center">
         <Loader2 className="size-6 animate-spin text-muted-foreground" />
@@ -49,16 +49,30 @@ function OnboardingContent() {
     );
   }
 
-  const hasVehicle = !!me.vehicle && !!me.license_no;
-  const activeStep: Step = step ?? (hasVehicle ? "status" : "vehicle");
+  const hasVehicle = !!me.vehicle && !!me.license_no?.trim();
+  const activeStep: Step = step ?? (hasVehicle ? "documents" : "vehicle");
 
   return (
     <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-6">
       <div className="mx-auto w-full max-w-lg space-y-4">
         <div className="flex items-center justify-between gap-2">
-          <Button type="button" variant="ghost" size="sm" onClick={() => router.push("/rider")}>
-            <ArrowLeft className="size-4" /> Back to Rider Portal
-          </Button>
+          {hasVehicle ? (
+            <Button type="button" variant="ghost" size="sm" onClick={() => router.push("/rider")}>
+              <ArrowLeft className="size-4" /> Back to Rider Portal
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                clearSession();
+                router.replace("/login");
+              }}
+            >
+              <LogOut className="size-4" /> Sign out
+            </Button>
+          )}
           <span className="text-xs font-medium text-muted-foreground">Rider Onboarding</span>
         </div>
 
@@ -100,14 +114,14 @@ function OnboardingContent() {
                 {activeStep === "vehicle"
                   ? "Vehicle & Licence Details"
                   : activeStep === "documents"
-                    ? "Upload Documents (optional)"
+                    ? "Upload Documents (Optional)"
                     : "Verification Status"}
               </CardTitle>
               <CardDescription>
                 {activeStep === "vehicle"
                   ? "Choose your vehicle type and enter registration details."
                   : activeStep === "documents"
-                    ? "Documents aren't required. Add your driving licence, insurance, registration or a photo if you like."
+                    ? "Optional for demo: add your driving licence, insurance, registration, or face selfie without blocking verification."
                     : "Track your verification progress. The rider app unlocks once an admin verifies you."}
               </CardDescription>
             </CardHeader>
@@ -135,9 +149,7 @@ function OnboardingContent() {
                     <VerificationStatusCard
                       key="status"
                       me={me}
-                      onRefresh={async () => {
-                        await mutate();
-                      }}
+                      onRefresh={() => mutate()}
                       onEditStep={(target) => setStep(target)}
                       onEnterApp={() => router.replace("/rider")}
                     />

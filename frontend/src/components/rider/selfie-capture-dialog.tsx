@@ -9,27 +9,54 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { SPRING_UI } from "@/components/ui/motion";
 import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
+import { useServerHealth } from "@/lib/server";
+
+const SQUARE_SIZE = 720;
+
+function cropToSquareBlob(canvas: HTMLCanvasElement, source: HTMLVideoElement | HTMLImageElement, sw: number, sh: number): Promise<Blob | null> {
+  const side = Math.min(sw, sh);
+  if (side <= 0) return Promise.resolve(null);
+  const target = Math.min(side, SQUARE_SIZE);
+  const sx = (sw - side) / 2;
+  const sy = (sh - side) / 2;
+  canvas.width = target;
+  canvas.height = target;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return Promise.resolve(null);
+  ctx.drawImage(source, sx, sy, side, side, 0, 0, target, target);
+  return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), "image/jpeg", 0.9));
+}
 
 export function SelfieCaptureDialog({
   open,
   onOpenChange,
   onUploaded,
+  useAsProfile: controlledUseAsProfile,
+  onUseAsProfileChange,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onUploaded: () => void;
+  useAsProfile?: boolean;
+  onUseAsProfileChange?: (v: boolean) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const { data: health } = useServerHealth();
+  const maxMb = health?.max_upload_mb ?? 5;
+  const maxBytes = maxMb * 1024 * 1024;
 
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [cameraReady, setCameraReady] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [capturedBlob, setCapturedBlob] = useState<Blob | null>(null);
-  const [useAsProfile, setUseAsProfile] = useState(true);
+  const [internalUseAsProfile, setInternalUseAsProfile] = useState(true);
   const [uploading, setUploading] = useState(false);
+
+  const useAsProfile = controlledUseAsProfile ?? internalUseAsProfile;
+  const setUseAsProfile = onUseAsProfileChange ?? setInternalUseAsProfile;
 
   function releaseStream() {
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -84,51 +111,78 @@ export function SelfieCaptureDialog({
     };
   }, [previewUrl]);
 
-  function captureFrame() {
+  async function captureFrame() {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas) return;
-    const w = video.videoWidth || 640;
-    const h = video.videoHeight || 640;
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.drawImage(video, 0, 0, w, h);
-    canvas.toBlob(
-      (blob) => {
-        if (!blob) return;
-        if (previewUrl) URL.revokeObjectURL(previewUrl);
-        setCapturedBlob(blob);
-        setPreviewUrl(URL.createObjectURL(blob));
-        stopStream();
-      },
-      "image/jpeg",
-      0.9,
-    );
+    const w = video.videoWidth || SQUARE_SIZE;
+    const h = video.videoHeight || SQUARE_SIZE;
+    const blob = await cropToSquareBlob(canvas, video, w, h);
+    if (!blob) return;
+    if (blob.size > maxBytes) {
+      toast.error(`Files must be under ${maxMb} MB`);
+      return;
+    }
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setCapturedBlob(blob);
+    setPreviewUrl(URL.createObjectURL(blob));
+    stopStream();
   }
 
-  function handleFilePick(file: File) {
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    setCapturedBlob(file);
-    setPreviewUrl(URL.createObjectURL(file));
-    stopStream();
+  async function handleFilePick(file: File) {
+    if (file.size > maxBytes) {
+      toast.error(`Files must be under ${maxMb} MB`);
+      return;
+    }
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const tempUrl = URL.createObjectURL(file);
+    try {
+      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const el = new Image();
+        el.onload = () => resolve(el);
+        el.onerror = () => reject(new Error("Could not read image"));
+        el.src = tempUrl;
+      });
+      const blob = await cropToSquareBlob(canvas, img, img.naturalWidth, img.naturalHeight);
+      if (!blob) {
+        toast.error("Could not process selected image");
+        return;
+      }
+      if (blob.size > maxBytes) {
+        toast.error(`Files must be under ${maxMb} MB`);
+        return;
+      }
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      setCapturedBlob(blob);
+      setPreviewUrl(URL.createObjectURL(blob));
+      stopStream();
+    } catch {
+      toast.error("Please choose a valid JPG, PNG, or WebP image");
+    } finally {
+      URL.revokeObjectURL(tempUrl);
+    }
   }
 
   function retake() {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setPreviewUrl(null);
     setCapturedBlob(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
   async function submitSelfie() {
     if (!capturedBlob) return;
+    if (capturedBlob.size > maxBytes) {
+      toast.error(`Files must be under ${maxMb} MB`);
+      return;
+    }
     setUploading(true);
     try {
       const form = new FormData();
       form.append("doc_type", "photo");
       form.append("use_as_profile_photo", useAsProfile ? "true" : "false");
-      form.append("file", capturedBlob, capturedBlob instanceof File ? capturedBlob.name : "selfie.jpg");
+      form.append("file", capturedBlob, "selfie.jpg");
       await api("/api/rider/documents", { method: "POST", body: form });
       toast.success(useAsProfile ? "Selfie uploaded & set as profile photo" : "Selfie uploaded for verification");
       retake();
@@ -152,7 +206,7 @@ export function SelfieCaptureDialog({
         onOpenChange(next);
       }}
     >
-      <DialogContent className="max-w-sm">
+      <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-sm">
         <DialogHeader>
           <DialogTitle>Clear Face Selfie</DialogTitle>
           <DialogDescription>Centre your face in good lighting with no sunglasses or mask.</DialogDescription>
@@ -201,7 +255,11 @@ export function SelfieCaptureDialog({
             accept="image/jpeg,image/png,image/webp"
             capture="user"
             className="hidden"
-            onChange={(e) => e.target.files?.[0] && handleFilePick(e.target.files[0])}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (file) void handleFilePick(file);
+            }}
           />
         </div>
 
@@ -209,7 +267,7 @@ export function SelfieCaptureDialog({
           {!capturedBlob ? (
             <>
               {cameraReady && (
-                <Button type="button" className="h-11 w-full" onClick={captureFrame}>
+                <Button type="button" className="h-11 w-full" onClick={() => void captureFrame()}>
                   <Camera /> Capture Selfie
                 </Button>
               )}

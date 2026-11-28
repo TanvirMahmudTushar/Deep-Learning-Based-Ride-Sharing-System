@@ -3,13 +3,14 @@ cancellation reasons and late fees (#5) and the assistant's live answers (#6).""
 
 import csv
 import io
+from datetime import timedelta
 
 import pytest
 from sqlalchemy import update
 
 from app.config import settings
 from app.db import SessionLocal
-from app.models import Rider
+from app.models import Rider, Trip
 
 from .test_auth import _register
 
@@ -32,7 +33,7 @@ def _free_the_demo_rider(client, rider_h) -> None:
     if active and active["status"] == "accepted":
         client.post(f"/api/rider/trips/{active['id']}/cancel", headers=rider_h)
     elif active and active["status"] == "ongoing":
-        client.post(f"/api/rider/trips/{active['id']}/complete", headers=rider_h)
+        _complete_at_dropoff(client, active["id"], rider_h)
     with SessionLocal() as db:
         db.execute(update(Rider).where(Rider.is_simulated.is_(True)).values(is_online=False))
         db.commit()
@@ -49,9 +50,19 @@ def _book(client, passenger_h, rider_h, accept: bool = True) -> dict:
     return client.get(f"/api/trips/{trip['id']}", headers=passenger_h).json()
 
 
+def _complete_at_dropoff(client, trip_id: str, rider_h) -> dict:
+    assert client.post("/api/rider/location", headers=rider_h, json={**DHANMONDI, "speed_kmh": 25}).status_code == 200
+    with SessionLocal() as db:
+        t = db.get(Trip, trip_id)
+        if t and t.started_at:
+            t.started_at = t.started_at - timedelta(minutes=1)
+            db.commit()
+    return client.post(f"/api/rider/trips/{trip_id}/complete", headers=rider_h).json()
+
+
 def _finish(client, trip_id: str, rider_h) -> dict:
     assert client.post(f"/api/rider/trips/{trip_id}/start", headers=rider_h).json()["status"] == "ongoing"
-    return client.post(f"/api/rider/trips/{trip_id}/complete", headers=rider_h).json()
+    return _complete_at_dropoff(client, trip_id, rider_h)
 
 
 @pytest.fixture
@@ -285,3 +296,23 @@ def test_only_passengers_can_ask_for_nearby_riders(client, rider_h, admin_h):
     assert client.get("/api/trips/nearby-riders", params=GULSHAN).status_code == 401
     assert client.get("/api/trips/nearby-riders", params=GULSHAN, headers=rider_h).status_code == 403
     assert client.get("/api/trips/nearby-riders", params=GULSHAN, headers=admin_h).status_code == 403
+
+
+def test_offer_includes_passenger_rating_for_repeat_passengers(client, rider_h):
+    p = _passenger(client, "repeat.offer.rating@example.com")
+    first = _book(client, p, rider_h, accept=False)
+    offer1 = client.get("/api/rider/offer", headers=rider_h).json()
+    assert offer1 is not None
+    assert offer1["trip"]["passenger_rating"] is None
+    assert offer1["trip"]["passenger_rating_count"] == 0
+
+    assert client.post(f"/api/rider/offers/{first['id']}/accept", headers=rider_h).status_code == 200
+    _finish(client, first["id"], rider_h)
+    assert client.post(f"/api/trips/{first['id']}/rate", headers=p, json={"stars": 4, "comment": "Good"}).status_code == 200
+
+    _book(client, p, rider_h, accept=False)
+    offer2 = client.get("/api/rider/offer", headers=rider_h).json()
+    assert offer2 is not None
+    assert offer2["trip"]["passenger_rating"] == 4.0
+    assert offer2["trip"]["passenger_rating_count"] == 1
+    client.post(f"/api/trips/{offer2['trip']['id']}/cancel", headers=p)

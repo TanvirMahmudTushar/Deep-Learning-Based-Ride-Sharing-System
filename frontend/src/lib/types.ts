@@ -15,6 +15,7 @@ export interface Profile {
   role: Role;
   /** Support agents only. */
   approval_status?: "pending" | "approved" | "revoked" | null;
+  phone_verified?: boolean;
   avatar_url?: string | null;
 }
 
@@ -187,12 +188,16 @@ export interface RiderMe {
   missing_documents: string[];
   commission_due: number;
   avatar_url?: string | null;
+  live_eta_min?: number | null;
 }
 
 export interface Offer {
   trip: Trip;
   expires_at: string;
+  remaining_seconds: number;
   pickup_distance_km: number;
+  estimated_earning?: number | null;
+  commission_pct?: number | null;
 }
 
 export interface AdminSupportAgent {
@@ -728,6 +733,14 @@ export interface PaymentsOverview {
 
 export type CancelReason = "changed_plans" | "wait_too_long" | "rider_not_moving" | "wrong_pickup" | "found_other_ride" | "price_too_high" | "other";
 
+export type RiderCancelReason =
+  | "passenger_no_show"
+  | "unreachable_pickup"
+  | "vehicle_issue"
+  | "safety_concern"
+  | "too_many_passengers"
+  | "other";
+
 export interface TripMessage {
   id: string;
   sender_role: "user" | "rider";
@@ -765,6 +778,8 @@ export interface VehicleChange {
   vehicle_type: VehicleType;
   plate_no: string;
   model: string;
+  color: string | null;
+  registration_no: string | null;
   status: "pending" | "approved" | "rejected";
   review_note: string | null;
   created_at: string | null;

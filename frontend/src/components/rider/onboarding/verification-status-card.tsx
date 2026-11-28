@@ -20,13 +20,14 @@ export function VerificationStatusCard({
   onEditStep,
 }: {
   me: RiderMe;
-  onRefresh: () => Promise<void>;
+  onRefresh: () => Promise<RiderMe | undefined | void>;
   onEnterApp: () => void;
   onEditStep: (step: "vehicle" | "documents") => void;
 }) {
   const { data: docs, mutate: refreshDocs } = useSWR<DocumentsOverview>("/api/rider/documents", fetcher);
   const [checking, setChecking] = useState(false);
 
+  const hasPhone = Boolean(me.phone?.trim());
   const hasVehicle = !!me.vehicle && !!me.license_no;
   const uploadedCount = docs ? docs.required.filter((d) => d.document !== null).length : 0;
   const totalDocs = docs ? docs.required.length : 4;
@@ -35,29 +36,42 @@ export function VerificationStatusCard({
   const suspended = me.status === "suspended";
 
   const steps = [
-    { label: "Account Created", done: true, detail: "Done" },
+    {
+      label: "Account & Phone OTP",
+      done: hasPhone,
+      detail: hasPhone ? `${me.phone} · Verified` : "Phone required",
+    },
     {
       label: "Vehicle Details",
       done: hasVehicle,
       detail: me.vehicle ? `${VEHICLE_LABEL[me.vehicle.vehicle_type]} · ${me.vehicle.plate_no}` : "Pending",
     },
     {
-      label: "Documents (optional)",
+      label: "Documents (Optional)",
       done: allUploaded,
-      detail: `${uploadedCount}/${totalDocs} uploaded`,
+      detail: docs ? `${uploadedCount}/${totalDocs} uploaded` : "Checking…",
     },
     {
-      label: "Account Active",
+      label: "Admin Verification",
       done: verified,
-      detail: suspended ? "Suspended" : "Active",
+      detail: verified ? "Verified" : suspended ? "Suspended" : "In review",
     },
   ];
 
   async function handleRefresh() {
     setChecking(true);
     try {
-      await Promise.all([onRefresh(), refreshDocs()]);
-      toast.success(verified ? "Your account is verified!" : "Status refreshed");
+      const [freshMe] = await Promise.all([onRefresh(), refreshDocs()]);
+      const nextStatus = freshMe?.status ?? me.status;
+      if (nextStatus === "verified") {
+        toast.success("Your account is verified!");
+      } else if (nextStatus === "suspended") {
+        toast.error("Your account is currently suspended.");
+      } else {
+        toast.success("Status refreshed");
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to refresh verification status");
     } finally {
       setChecking(false);
     }
@@ -94,7 +108,7 @@ export function VerificationStatusCard({
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-base font-semibold">
-              {verified ? "You're all set" : suspended ? "Account suspended" : "Verification in progress"}
+              {verified ? "Background verification complete" : suspended ? "Account suspended" : "Verification in progress"}
             </h3>
             <Badge variant="outline" className="capitalize">
               {me.status}
@@ -102,10 +116,10 @@ export function VerificationStatusCard({
           </div>
           <p className="text-xs text-muted-foreground">
             {verified
-              ? "No admin check is needed. Add your vehicle and you can go online and start accepting trips."
+              ? "Your account is verified. You can now unlock the rider app and start accepting trips."
               : suspended
                 ? "Your account has been suspended. Please contact support."
-                : "Add your vehicle details to start."}
+                : "Until an admin verifies your account, the rider app remains locked."}
           </p>
         </div>
       </div>
@@ -120,15 +134,15 @@ export function VerificationStatusCard({
             transition={{ ...SPRING_UI, delay: idx * 0.05 }}
             className="flex items-center justify-between gap-3 rounded-xl border bg-card/60 px-3.5 py-2.5"
           >
-            <div className="flex items-center gap-2.5">
+            <div className="flex min-w-0 items-center gap-2.5">
               {s.done ? (
                 <CheckCircle2 className="size-4 shrink-0 text-emerald-400" />
               ) : (
                 <Clock className="size-4 shrink-0 text-amber-400" />
               )}
-              <span className="text-sm font-medium">{s.label}</span>
+              <span className="truncate text-sm font-medium">{s.label}</span>
             </div>
-            <span className="text-xs text-muted-foreground">{s.detail}</span>
+            <span className="max-w-[48%] shrink-0 truncate text-right text-xs text-muted-foreground">{s.detail}</span>
           </motion.div>
         ))}
       </div>

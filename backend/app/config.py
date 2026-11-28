@@ -60,6 +60,8 @@ class Settings(BaseSettings):
     late_cancel_grace_seconds: int = 120
     # Cancelling is also free once the rider is this many minutes later than the pickup time they were given.
     rider_late_grace_minutes: float = 5.0
+    # Wait time after arrival before a rider's passenger_no_show cancel is exempt from cancel_rate.
+    no_show_wait_seconds: int = 300
     # Rides must start and end within this distance of the city centre (city_lat, city_lng).
     service_radius_km: float = 40.0
     # Pickup and drop-off closer than this are refused: nobody needs a ride for a few steps.
@@ -73,6 +75,10 @@ class Settings(BaseSettings):
     gps_max_accuracy_m: float = 75.0
     # Rider within this distance of the pickup counts as "arrived".
     arrival_radius_m: float = 150.0
+    # Rider within this distance of the drop-off may complete a trip.
+    dropoff_radius_m: float = 300.0
+    # Minimum elapsed seconds between trip start and manual completion.
+    min_trip_duration_seconds: float = 15.0
 
     # Cash payments: platform share of each fare when no per-vehicle rate is set.
     default_commission_pct: float = 15.0
@@ -80,6 +86,9 @@ class Settings(BaseSettings):
     # Rider documents
     upload_dir: str = "./uploads"
     max_upload_mb: float = 5.0
+
+    # TEMPORARY TESTING OTP: replace with a real SMS/OTP provider before production.
+    default_test_otp: str = "000000"
 
     def model_post_init(self, _context: object) -> None:
         # Without a real secret, sign with a random one: everyone is logged out on restart, but

@@ -77,4 +77,37 @@ def free_riders_near(db: Session, p: Point, vehicle_type: str, radius_km: float,
         .options(selectinload(Rider.vehicles), selectinload(Rider.profile))
     ).unique()
     blocked = busy_rider_ids(db) | (exclude or set())
-    return [r for r in riders if r.id not in blocked and distance_to(r, p) <= radius_km]
+    return [
+        r
+        for r in riders
+        if r.id not in blocked
+        and r.profile is not None
+        and r.profile.account_status in (None, "active")
+        and distance_to(r, p) <= radius_km
+    ]
+
+
+def is_rider_eligible(
+    rider: Rider | None,
+    pickup: Point,
+    vehicle_type: str,
+    radius_km: float,
+    now: datetime | None = None,
+) -> bool:
+    """Return True if *rider* currently meets all requirements to receive an offer."""
+    if rider is None or rider.profile is None:
+        return False
+    if rider.status != "verified" or rider.profile.account_status not in (None, "active"):
+        return False
+    if not rider.is_online:
+        return False
+    if rider.current_lat is None or rider.current_lng is None:
+        return False
+    now = now or utcnow()
+    if not rider.is_simulated and (
+        rider.last_seen is None or rider.last_seen < now - timedelta(seconds=settings.rider_stale_seconds)
+    ):
+        return False
+    if not any(v.retired_at is None and v.verified and v.vehicle_type == vehicle_type for v in rider.vehicles):
+        return False
+    return distance_to(rider, pickup) <= radius_km
